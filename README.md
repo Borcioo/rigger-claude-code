@@ -1,4 +1,11 @@
+<p align="center">
+  <img src="assets/rigger-logo.webp" alt="Claude Code Rigger logo" width="560">
+</p>
+
 # Rigger
+
+> Rigger is an independent community project. It is not affiliated with, endorsed by or
+> sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC.
 
 Rigger is a Claude Code plugin marketplace: a working harness for Claude Code sessions and
 subagents. It ships seven plugins: working rules (verification, tests, scope, git) injected at
