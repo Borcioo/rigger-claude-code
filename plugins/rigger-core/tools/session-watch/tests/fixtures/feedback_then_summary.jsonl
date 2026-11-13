@@ -1,0 +1,7 @@
+{"type": "api-request-blob", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "", "signature": "sig"}, {"type": "tool_use", "id": "toolu_01LZVCoKZQwQSaYPtDDdVqG8", "name": "Edit", "input": {}}]}}
+{"type": "api-request", "timestamp": "2026-11-09T23:08:10.029Z"}
+{"type": "attachment", "timestamp": "2026-11-09T23:08:14.030Z", "isSidechain": false, "attachment": {"type": "deferred_tools_record"}}
+{"type": "assistant", "timestamp": "2026-11-09T23:08:14.029Z", "uuid": "df5a10c5-0a5c-4d4f-8ec7-de958f044a55", "isSidechain": false, "message": {"role": "assistant", "id": "msg_011CgtCHRrjZnC5kyD9AA3mD", "stop_reason": "end_turn", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "user", "timestamp": "2026-11-09T23:08:16.404Z", "uuid": "130b9424-fa4c-4360-8147-1c4b2774fca3", "isSidechain": false, "isMeta": true, "message": {"role": "user", "content": "Stop hook feedback: neutral text"}}
+{"type": "attachment", "timestamp": "2026-11-09T23:08:16.403Z", "isSidechain": false, "attachment": {"type": "hook_blocking_error"}}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-09T23:08:16.406Z", "uuid": "b02239ba-cd80-4823-9171-3c3ad812c5ce", "isSidechain": false, "level": "suggestion", "hookCount": 5}

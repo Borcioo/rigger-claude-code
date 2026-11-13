@@ -1,0 +1,93 @@
+# Allowlist for scripts/sweep.py: one `path<TAB>exact text` per line (path relative to the repo
+# root, forward slashes). Each line suppresses only findings inside that exact text in that file;
+# `path<TAB><binary>` allows that file to be binary. A line whose file or text is gone, or which
+# suppresses nothing, is reported as stale-allow.
+# Masking fixtures of the lessons lint: fake paths and e-mails the mask must rewrite.
+plugins/rigger-lessons/tests/test_lessons_lint.py	"error_text_short": (set_meta(B, error_text='"Error 404 at C:/srv/app/x.log"'),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"/home/someone/.claude/CLAUDE.md", "E:\\home\\someone\\.Claude\\CLAUDE.md",
+plugins/rigger-lessons/tests/test_lessons_lint.py	"email": ("mail to jan.nowak@example.org failed", "mail to <email> failed"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"email_short_parts": ("mail to a@b.example failed", "mail to <email> failed"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"email_not_letters_then_digit": ("cannot resolve pkg@1.2.rc1 here", "cannot resolve pkg@<n>.<n>.rc<n> here"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path": ("cannot open C:\\temp\\app\\x.txt now", "cannot open <path> now"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_after_letters": ("see abcC:\\temp\\x now", "see abcC:\\temp\\x now"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_after_digit": ("see ab9C:\\temp\\x now", "see ab<n>C:\\temp\\x now"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_double_slash": ("open C://host/share now", "open C://host/share now"),
+plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_double_backslash": ("open C:\\\\share\\x now", "open C:\\\\share\\x now"),
+# shell-guard rule fixtures: fake Windows paths (drive, UNC, Git Bash forms) the rules under test must see
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\timer
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x\\tests\\
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:/x
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	D:/x
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:/tools/php.exe
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:/src/x
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\\\src\\\\x\\\\tool.exe
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	D:\\x
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x;
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\msg.txt
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\body.txt
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	D:\\tools\\safe-edit\\safe-edit.ps1
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\scan.ps1
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\a.txt
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\Windows\System32\bash.exe
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	F:\\x;
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\\Program
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\\Windows\\System32\\bash.exe
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\other.ps1
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\tmp\g1g5
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\a
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x\\a.php
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:/tmp/a.txt
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\\\server\\share\\a.txt
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\\Windows\\System32\\drivers\\etc
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\srv\share\x
+# drift-lint fixtures: fake drive and backslash paths the path check under test must find or skip
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*\\skills\\
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\<domain
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\no-such\\he?e.md
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he?e.md
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\pre-<task
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he*.md
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\name...
+plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\caf\xff.md
+# shell-guard fixtures: profile-derived Herd and Composer paths that the unset-env and derived-path checks compare
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\.config\\herd\\bin\\php84\\php.exe\
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\.config\\herd\\bin\\
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\.config\\herd\\bin
+plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\Composer\\vendor\\bin
+# token-audit fixtures: Windows paths and two example hosts that the error-line normaliser and the lessons lint must rewrite or tell apart
+plugins/rigger-core/tools/token-audit/tests/test_archive.py	C:\\Users\\someone\\.claude\\plugins\\cache\\superpowers-marketplace\\episodic-memory\\1.6.0\\
+plugins/rigger-core/tools/token-audit/tests/test_archive.py	C:\Users\someone\.claude\skills\x\SKILL.md#A
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	X:\\sites\\x;
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	a.example.com
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	b.example.com
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	X:\\Temp\\x\\out.json
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	X:\\\\Temp\\\\x\\\\out.json
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	\\sites\\a.txt
+plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	X:\\sites\\b.txt
+# Transcript reader: its timestamp regex and the check commands its tests read.
+plugins/rigger-windows/tools/shell-guard/turn_evidence.py	d:\d\d:\d\d(?:\.\d+
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:/Program
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:/py/python.exe
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:/py/python.exe\
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:\\py\\python.exe
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	X:/w/app
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	\\\r\n
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	\\other\\tests
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	x:/w/app
+plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	x:/w/other/tests
+# rigger-panel fixtures: fake config dirs in Windows and POSIX form the resolver must handle
+plugins/rigger-panel/hooks/register.test.tsx	const CONFIG = '/Users/boss/.claude'
+plugins/rigger-panel/hooks/register.test.tsx	['Windows variable, backslashes', { CLAUDE_CONFIG_DIR: 'C:\\Users\\boss\\.claude' }, '/Users/boss/.claude'],
+plugins/rigger-panel/hooks/register.test.tsx	['Windows variable, forward slashes', { CLAUDE_CONFIG_DIR: 'D:/data/cfg' }, '/data/cfg'],
+plugins/rigger-panel/hooks/register.test.tsx	['Windows variable, trailing backslash', { CLAUDE_CONFIG_DIR: 'C:\\Users\\boss\\.claude\\' }, '/Users/boss/.claude'],
+plugins/rigger-panel/hooks/register.test.tsx	['Windows home', { USERPROFILE: 'C:\\Users\\boss' }, '/Users/boss/.claude'],
+plugins/rigger-panel/hooks/register.test.tsx	['POSIX variable', { CLAUDE_CONFIG_DIR: '/Users/boss/.claude' }, '/Users/boss/.claude'],
+plugins/rigger-panel/hooks/register.test.tsx	['POSIX variable, trailing slash', { CLAUDE_CONFIG_DIR: '/Users/boss/.claude/' }, '/Users/boss/.claude'],
+plugins/rigger-panel/hooks/register.test.tsx	['POSIX home', { HOME: '/home/boss' }, '/home/boss/.claude'],
+plugins/rigger-panel/tests/test_panel.py	MACHINE_PATH_RE = re.compile(r"""['"`]([A-Za-z]:[\\/]|/Users/|/home/)""")
+# The SVG namespace, which an SVG drawn as an image needs.
+plugins/rigger-panel/hooks/plan.ts	xmlns="http://www.w3.org/2000/svg"
+plugins/rigger-panel/hooks/look.tsx	xmlns="http://www.w3.org/2000/svg"

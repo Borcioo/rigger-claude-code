@@ -1,0 +1,11 @@
+{
+  "name": "rigger-panel",
+  "description": "Panes beside the chat: session context and cost, your GitHub issues (read-only, via gh), the task list and the project's environments; /harness opens them",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  },
+  "types": "./types/index.d.ts"
+}

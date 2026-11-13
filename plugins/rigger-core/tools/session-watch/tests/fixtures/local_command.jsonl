@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-08-25T23:44:03.257Z", "uuid": "bf0e48ae-651f-4506-979b-e68758af07e6", "isSidechain": false, "level": "suggestion", "hookCount": 4}
+{"type": "attachment", "timestamp": "2026-08-25T23:46:14.939Z", "isSidechain": false, "attachment": {"type": "goal_status"}}
+{"type": "user", "timestamp": "2026-08-25T23:46:14.938Z", "uuid": "70e5e3de-928b-42a3-abd9-4b0a0955ddf0", "isSidechain": false, "message": {"role": "user", "content": "neutral text"}}
+{"type": "system", "subtype": "local_command", "timestamp": "2026-08-25T23:46:14.939Z", "uuid": "f53293c2-f0fc-45da-81c7-5e3bf411efa0", "isSidechain": false, "isMeta": false, "level": "info", "content": "<local-command-stdout> neutral text"}

@@ -1,0 +1,31 @@
+# LF in the repository and in every checkout, so hooks and rules files keep LF on Windows too.
+* text=auto eol=lf
+
+# cmd.exe misreads labels in LF batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# SVG is text
+*.svg text eol=lf
+
+# Binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mo binary
+*.mp3 binary
+*.mp4 binary
+*.webm binary
+*.phar binary

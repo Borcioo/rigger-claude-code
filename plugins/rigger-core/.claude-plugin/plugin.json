@@ -1,0 +1,10 @@
+{
+  "name": "rigger-core",
+  "description": "Skills (git workflow, subagent orchestration, tooling, e2e speed, UI traps), agents, commands (doctor, setup, coordinate, environments) and context, compaction and side-session guards",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  }
+}

@@ -1,0 +1,4 @@
+{"type": "queue-operation", "operation": "dequeue", "timestamp": "2026-06-01T11:49:12.925Z"}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-06-01T11:48:16.930Z", "uuid": "df2e7c6a-a624-4f7d-bfa5-0b6784fe5a0b", "isSidechain": false, "level": "suggestion", "hookCount": 5}
+{"type": "user", "timestamp": "2026-06-01T11:49:12.933Z", "uuid": "e96731e6-ec6f-4d08-99ae-181714abab08", "isSidechain": false, "message": {"role": "user", "content": "neutral text"}}
+{"type": "user", "timestamp": "2026-06-01T11:49:44.866Z", "uuid": "435046b6-3c0d-43e3-9e75-8b231cde3c48", "isSidechain": false, "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]}}

@@ -1,0 +1,43 @@
+# Closed vocabulary for `class:` in the case files. One `slug: meaning` per line.
+# Before adding a slug, look for one that already names the same failure; a new slug needs a line here.
+agent-report-trusted: an agent's status or report accepted without checking the process or the tree
+allowlist-on-generated-name: an allowlist keyed on a name a tool generates and changes between runs
+brief-carries-context: a brief or agent prompt carries the author's context and history instead of instructions
+build-green-runtime-crash: a green build taken as proof that the program runs
+change-kind-shift-unannounced: a request of one kind (content) carried out as another (code, release) without saying so first
+check-without-positive-control: a check, gate, eval or aggregate that went blind or reported nothing, with no known case to catch
+collateral-removal: removing a named item also removed something else rendered or stored with it
+design-decided-in-fix-round: a finding that needed a design decision went straight into a fix brief
+design-unmeasured-on-corpus: a detection or guard layer proposed without its catch and false-positive rate on real data
+done-marker-before-verify: a done or version marker recorded before the step's result was checked
+edit-during-test-run: code changed in a tree a running suite reads
+false-positive-fix-overbroad: a false-positive fix that also let the failing form through
+fixture-not-hostile-as-production: test fixtures simpler or friendlier than the real input
+framework-path-skipped-in-test: a test called the function directly, so the framework steps around it never ran
+guard-bypass-path-unchecked: a guard called complete or fail-closed while a path around it went unchecked
+idea-rejected-with-package: an external tool's idea rejected because its code targets another platform
+idle-wake-turns: a wait that ends or wakes turns without a result
+integration-installed-never-called: a plugin, server or integration counted as installed without one real call
+load-flaky-suite: tests that pass alone and fail under suite or machine load
+main-context-overspent: a session spent its context on reading it did not need
+manual-change-overwritten-by-deploy: a hand change on a deployed system that the next deploy overwrote
+narration-between-steps: progress prose posted between steps of an autonomous run
+off-goal-item-relayed: a status or report offered an item outside the session's goal as pending
+permission-matrix-missed-old-entry: a permission test that skipped an existing entry point that gained a destructive effect
+prod-keys-on-copy: production ids, keys or webhooks active on a development copy
+project-class-promoted: a lesson from one project promoted to a global or skill rule before a second project had the class
+relative-path-in-child-cwd: a relative path handed to a tool that resolves it in another working directory
+release-script-unchecked-failure: a release, deploy or commit script that went on after a failed call
+render-not-viewed: generated visual output handed over without viewing one render
+report-lists-gross-not-net: a work report listing actions instead of the net change
+scripted-edit-unchecked: a scripted source edit that matched nothing, too much or mangled escapes, without a hit count
+slow-gate-in-work-loop: a slow full suite used as a per-task gate
+stop-by-name-kills-others: a background run stopped or waited on by process name, not by its id
+test-cannot-fail: a test or red run that passed or failed for a reason other than the behaviour
+third-party-assumed-not-observed: third-party behaviour assumed from a label, stub or estimate instead of observed
+token-lifetime-shorter-than-human-step: a token that expires before the slowest human step it guards
+token-not-bound-to-credential: a proof token not bound to the credential it proves
+tool-unescapes-backslash: a tool layer decoded the backslash escapes of a script, so the file held another character
+untested-gate-in-brief: a gate command put in a brief without being run once
+user-session-removed-mid-task: a sign-in, server or account the user was still using removed before the task ended
+verifier-lacked-review-context: a verifier or repair stage without the review's accepted facts

@@ -1,0 +1,15 @@
+# Gate baseline for the empty-home run: references to files of a configured user machine, absent from an empty home. Not drift.
+rigger-core/skills/e2e-playwright-speed/SKILL.md	path	~/.wp-env/
+rigger-windows/skills/node-versions/SKILL.md	path	$env:USERPROFILE\.config\herd\bin\nvm\
+rigger-windows/skills/php-herd-tooling/SKILL.md	path	$HOME/.config/herd/bin/php83.bat
+rigger-windows/skills/php-herd-tooling/SKILL.md	path	$env:USERPROFILE\.config\herd\bin\composer.phar
+rigger-windows/skills/windows-dev-env/SKILL.md	path	$env:USERPROFILE\.config\herd\bin\php84\php.exe
+rigger-windows/skills/windows-dev-env/SKILL.md	path	~/.claude.json
+rigger-windows/skills/windows-dev-env/SKILL.md	path	~/bin
+# Reached through the rigger-windows installPath read from installed_plugins.json, not by a path relative to this plugin.
+rigger-lessons/skills/curate-lessons/SKILL.md	repo-path	tools/shell-guard/lessons_guard.py
+# A separate optional plugin, absent from an empty home; the README says these rules apply only where it is installed.
+rigger-rules/rules/skills.md	skill	superpowers:brainstorming
+rigger-rules/rules/skills.md	skill	superpowers:writing-plans
+rigger-rules/rules/skills.md	skill	superpowers:test-driven-development
+rigger-rules/rules/skills.md	skill	superpowers:systematic-debugging

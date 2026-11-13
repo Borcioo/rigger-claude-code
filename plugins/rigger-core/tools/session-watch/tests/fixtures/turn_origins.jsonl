@@ -1,0 +1,23 @@
+{"type": "user", "timestamp": "2026-11-09T23:07:33.301Z", "isSidechain": false, "isMeta": true, "turnOrigin": "peer", "message": {"role": "user", "content": "neutral text"}}
+{"type": "assistant", "timestamp": "2026-11-09T23:07:35.773Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "thinking", "thinking": "", "signature": "sig"}]}}
+{"type": "assistant", "timestamp": "2026-11-09T23:07:38.589Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "toolu_01WUKizAARaciFk4urRhZN5P", "name": "Edit", "input": {}}]}}
+{"type": "user", "timestamp": "2026-11-09T23:07:39.237Z", "isSidechain": false, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01WUKizAARaciFk4urRhZN5P", "content": "x"}]}}
+{"type": "assistant", "timestamp": "2026-11-09T23:07:42.797Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-09T23:07:48.194Z", "isSidechain": false}
+{"type": "user", "timestamp": "2026-11-09T23:08:00.145Z", "isSidechain": false, "turnOrigin": "human", "message": {"role": "user", "content": [{"type": "text", "text": "neutral text"}, {"type": "text", "text": "neutral text"}]}}
+{"type": "assistant", "timestamp": "2026-11-09T23:08:03.323Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "thinking", "thinking": "", "signature": "sig"}]}}
+{"type": "assistant", "timestamp": "2026-11-09T23:08:08.830Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "toolu_01LZVCoKZQwQSaYPtDDdVqG8", "name": "Edit", "input": {}}]}}
+{"type": "user", "timestamp": "2026-11-09T23:08:09.981Z", "isSidechain": false, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01LZVCoKZQwQSaYPtDDdVqG8", "content": "x"}]}}
+{"type": "assistant", "timestamp": "2026-11-09T23:08:14.029Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "user", "timestamp": "2026-11-09T23:08:16.404Z", "isSidechain": false, "isMeta": true, "message": {"role": "user", "content": "neutral text"}}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-09T23:08:16.406Z", "isSidechain": false}
+{"type": "user", "timestamp": "2026-11-10T00:45:25.790Z", "isSidechain": false, "turnOrigin": "sdk", "message": {"role": "user", "content": "neutral text"}}
+{"type": "assistant", "timestamp": "2026-11-10T00:45:30.128Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-10T00:45:35.248Z", "isSidechain": false}
+{"type": "user", "timestamp": "2026-11-10T00:47:39.578Z", "isSidechain": false, "turnOrigin": "task_notification", "message": {"role": "user", "content": "neutral text"}}
+{"type": "assistant", "timestamp": "2026-11-10T00:47:48.407Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "toolu_01KV1qknVz91KEqSjGSXmaYb", "name": "PowerShell", "input": {}}]}}
+{"type": "user", "timestamp": "2026-11-10T00:47:48.884Z", "isSidechain": false, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01KV1qknVz91KEqSjGSXmaYb", "content": "x"}]}}
+{"type": "assistant", "timestamp": "2026-11-10T00:47:49.061Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "toolu_01LKnZpzcJv1fwzoCsSBg2qr", "name": "mcp__ccd_session_mgmt__list_events", "input": {}}]}}
+{"type": "user", "timestamp": "2026-11-10T00:47:49.085Z", "isSidechain": false, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01LKnZpzcJv1fwzoCsSBg2qr", "content": "x"}]}}
+{"type": "assistant", "timestamp": "2026-11-10T00:47:50.810Z", "isSidechain": false, "message": {"role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-10T00:47:52.981Z", "isSidechain": false}

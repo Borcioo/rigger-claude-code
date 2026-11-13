@@ -1,0 +1,15 @@
+{
+  "as_of": "2026-10-06",
+  "source": "claude-api skill, CLI 2.1.316",
+  "notes": "Haiku 5.5 rates hold up to 100K prompt tokens; beyond that they are 0.50 input, 2.50 output, so a larger Haiku 5.5 prompt is under-reported.",
+  "usd_per_mtok": {
+    "claude-fable-5-1": {"input": 10, "output": 50, "cache_read": 0.25, "cache_write_5m": 12.5, "cache_write_1h": 20},
+    "claude-fable-5": {"input": 10, "output": 50, "cache_read": 1, "cache_write_5m": 12.5, "cache_write_1h": 20},
+    "claude-opus-5-5": {"input": 4, "output": 20, "cache_read": 0.20, "cache_write_5m": 5, "cache_write_1h": 8},
+    "claude-opus-5": {"input": 5, "output": 25, "cache_read": 0.50, "cache_write_5m": 6.25, "cache_write_1h": 10},
+    "claude-sonnet-5-5": {"input": 2, "output": 10, "cache_read": 0.20, "cache_write_5m": 2.5, "cache_write_1h": 4},
+    "claude-sonnet-5": {"input": 2, "output": 10, "cache_read": 0.20, "cache_write_5m": 2.5, "cache_write_1h": 4},
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write_5m": 0.125, "cache_write_1h": 0.20, "prompt_limit": 100000},
+    "claude-haiku-4-5-20251001": {"input": 1, "output": 5, "cache_read": 0.10, "cache_write_5m": 1.25, "cache_write_1h": 2}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "commit": "shadow",
+  "checks": [
+    "scripts[\\\\/](gate|run_tests)\\.py(?:\\s|$)",
+    "tests[\\\\/]test_\\w+\\.py(?:\\s|$)",
+    "-m unittest(?:\\s|$)"
+  ],
+  "scope_commit": ["plugins/**/*", "scripts/**/*", "tests/**/*", "evals/**/*"],
+  "scope_stop": ["plugins/**/*", "scripts/**/*", "tests/**/*", "evals/**/*"]
+}

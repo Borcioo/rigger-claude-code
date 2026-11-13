@@ -1,0 +1,10 @@
+{
+  "name": "rigger-wp",
+  "description": "Opt-in, for WordPress developers: WordPress traps skill and the upstream WordPress agent skills behind a router",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  }
+}

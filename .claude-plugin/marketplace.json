@@ -1,0 +1,44 @@
+{
+  "name": "rigger",
+  "owner": {
+    "name": "Borcioo"
+  },
+  "description": "Claude Code harness: engineering rules for every session and subagent, lessons capture, portable skills and agents, context and compaction guards, a side panel, and opt-in reply-format, Windows and WordPress packs",
+  "plugins": [
+    {
+      "name": "rigger-lessons",
+      "source": "./plugins/rigger-lessons",
+      "description": "Capture lessons learned as you work, count the inbox at session start, curate them into rules"
+    },
+    {
+      "name": "rigger-core",
+      "source": "./plugins/rigger-core",
+      "description": "Skills (git workflow, subagent orchestration, tooling, e2e speed, UI traps), agents, commands (doctor, setup, coordinate, environments) and context, compaction and side-session guards"
+    },
+    {
+      "name": "rigger-rules",
+      "source": "./plugins/rigger-rules",
+      "description": "Working rules (verification, tests, scope, git) injected at session start and into subagents, plus your own rules.d folder"
+    },
+    {
+      "name": "rigger-talk",
+      "source": "./plugins/rigger-talk",
+      "description": "Reply-format rules for the main session: language, length and report order"
+    },
+    {
+      "name": "rigger-wp",
+      "source": "./plugins/rigger-wp",
+      "description": "Opt-in, for WordPress developers: WordPress traps skill and the upstream WordPress agent skills behind a router"
+    },
+    {
+      "name": "rigger-windows",
+      "source": "./plugins/rigger-windows",
+      "description": "Native Windows only: shell guards, red-run and drift tools, and Windows, PHP (Herd) and Node skills"
+    },
+    {
+      "name": "rigger-panel",
+      "source": "./plugins/rigger-panel",
+      "description": "Panes beside the chat: session context and cost, your GitHub issues (read-only, via gh), the task list and the project's environments; /harness opens them"
+    }
+  ]
+}

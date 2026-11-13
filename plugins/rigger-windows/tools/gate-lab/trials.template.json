@@ -1,0 +1,22 @@
+[
+ {
+  "name": "commit-unchecked",
+  "gate": "commit",
+  "mode": "shadow",
+  "started": "",
+  "review": "",
+  "keep": "Would-deny at most 1 commit in 20 for reasons the user rejects, 30 user labels, 2 projects",
+  "kill": "Precision under 10% on the newer half",
+  "rollback": "Remove the commit key from each project's .claude/gates.json"
+ },
+ {
+  "name": "stop-done",
+  "gate": "stop",
+  "mode": "shadow",
+  "started": "",
+  "review": "",
+  "keep": "Precision at least 10%, or 2 real catches in 14 days",
+  "kill": "Neither, after 30 labels",
+  "rollback": "Disable the plugin's Stop hook"
+ }
+]

@@ -1,0 +1,10 @@
+{
+  "name": "rigger-windows",
+  "description": "Native Windows only: shell guards, red-run and drift tools, and Windows, PHP (Herd) and Node skills",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  }
+}

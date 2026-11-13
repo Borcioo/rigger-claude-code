@@ -1,0 +1,5 @@
+{"type": "assistant", "timestamp": "2026-11-09T23:52:51.631Z", "uuid": "8f9a4074-9db6-4d09-81d8-579bddbc7261", "isSidechain": false, "message": {"role": "assistant", "id": "msg_011CgtFgDWLNtNdPUFVTgvs8", "stop_reason": "end_turn", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-11-09T23:52:55.636Z", "uuid": "da42538b-45bb-45f5-81bd-063ac92d59a9", "isSidechain": false, "level": "suggestion", "hookCount": 5}
+{"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-11-09T23:55:43.919Z"}
+{"type": "queue-operation", "operation": "dequeue", "timestamp": "2026-11-09T23:55:43.948Z"}
+{"type": "user", "timestamp": "2026-11-09T23:55:43.970Z", "uuid": "20fa20ff-f322-45b7-a3cb-d118ee5e455a", "isSidechain": false, "turnOrigin": "human", "message": {"role": "user", "content": "neutral text"}}

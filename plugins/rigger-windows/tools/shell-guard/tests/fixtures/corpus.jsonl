@@ -1,0 +1,18 @@
+{"tool": "PowerShell", "cmd": "npm test 2>&1 | tail -20", "error": "tail : The term 'tail' is not recognized", "rule": "ps-unix-command"}
+{"tool": "PowerShell", "cmd": "Get-Content a.txt | grep foo", "error": "grep : The term 'grep' is not recognized", "rule": "ps-unix-command"}
+{"tool": "PowerShell", "cmd": "export FOO=1; node x.js", "error": "export : The term 'export' is not recognized", "rule": "ps-unix-command"}
+{"tool": "Bash", "cmd": "php artisan test --filter=\"FooTest|BarTest\"", "error": "'BarTest' is not recognized as an internal or external command", "rule": "bat-metachar"}
+{"tool": "PowerShell", "cmd": "composer require 'a/b:^1'", "error": "Could not find a matching version of package a/b", "rule": "bat-metachar"}
+{"tool": "PowerShell", "cmd": "Select-String -Path app -Pattern x -Recurse", "error": "A parameter cannot be found that matches parameter name 'Recurse'", "rule": "ps-bad-parameter"}
+{"tool": "Bash", "cmd": "vendor/bin/pint --dirty 2>&1 | tail -5", "error": "dir=$(cd \"${0%[/\\\\]*}\" > /dev/null; pwd)", "rule": "bash-vendor-bin-shebang"}
+{"tool": "PowerShell", "cmd": "git checkout -- src/a.js", "error": "the uncommitted edit was discarded", "rule": "git-restore-discards"}
+{"tool": "Bash", "cmd": "make once", "error": "make: *** No rule to make target 'once'."}
+{"tool": "PowerShell", "cmd": "npm test 2>&1 | Select-Object -Last 20"}
+{"tool": "PowerShell", "cmd": "rg -n 'tail|head' ."}
+{"tool": "Bash", "cmd": "grep -n 'a\\|b' file.txt"}
+{"tool": "PowerShell", "cmd": "composer require 'wordpress/mcp-adapter:0.5.*'"}
+{"tool": "PowerShell", "cmd": "Get-ChildItem -Recurse -Filter *.php | Select-String -Pattern x -Context 2,2"}
+{"tool": "Bash", "cmd": "for f in *.php; do php -l \"$f\"; done"}
+{"tool": "PowerShell", "cmd": "Get-Date"}
+{"tool": "PowerShell", "cmd": "git checkout -- b.txt"}
+{"tool": "PowerShell", "cmd": "ls -la", "flagged_as": "ps-bad-parameter"}

@@ -1,0 +1,13 @@
+{
+  "name": "rigger-rules",
+  "description": "Working rules (verification, tests, scope, git) injected at session start and into subagents, plus your own rules.d folder",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  },
+  "dependencies": [
+    "rigger-core"
+  ]
+}

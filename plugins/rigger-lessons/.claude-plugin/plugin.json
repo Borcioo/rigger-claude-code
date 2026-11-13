@@ -1,0 +1,10 @@
+{
+  "name": "rigger-lessons",
+  "description": "Capture lessons learned as you work, count the inbox at session start, curate them into rules",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  }
+}

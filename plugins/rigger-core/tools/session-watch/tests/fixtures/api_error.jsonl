@@ -1,0 +1,4 @@
+{"type": "user", "timestamp": "2026-08-25T11:24:54.523Z", "uuid": "e48a09f5-4285-4fb0-be74-1fe1b4f08bac", "isSidechain": false, "message": {"role": "user", "content": [{"type": "text", "text": "neutral text"}]}}
+{"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-08-25T11:25:06.884Z"}
+{"type": "queue-operation", "operation": "dequeue", "timestamp": "2026-08-25T11:25:06.885Z"}
+{"type": "system", "subtype": "api_error", "timestamp": "2026-08-25T11:23:42.710Z", "uuid": "f767c1b8-d767-4cbe-bad6-a388e576ce12", "isSidechain": false, "level": "error"}

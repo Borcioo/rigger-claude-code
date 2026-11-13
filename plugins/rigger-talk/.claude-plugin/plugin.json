@@ -1,0 +1,30 @@
+{
+  "name": "rigger-talk",
+  "description": "Reply-format rules for the main session: language, length and report order",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  },
+  "userConfig": {
+    "reply_language": {
+      "type": "string",
+      "title": "Reply language",
+      "description": "Language of replies. Empty follows Claude Code's language setting.",
+      "default": ""
+    },
+    "reply_lines": {
+      "type": "number",
+      "title": "Reply lines",
+      "description": "Default reply length in lines.",
+      "default": 5
+    },
+    "report_lines": {
+      "type": "number",
+      "title": "Report lines",
+      "description": "Final-report length in lines.",
+      "default": 15
+    }
+  }
+}
