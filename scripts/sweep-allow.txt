@@ -91,3 +91,5 @@ plugins/rigger-panel/tests/test_panel.py	MACHINE_PATH_RE = re.compile(r"""['"`](
 # The SVG namespace, which an SVG drawn as an image needs.
 plugins/rigger-panel/hooks/plan.ts	xmlns="http://www.w3.org/2000/svg"
 plugins/rigger-panel/hooks/look.tsx	xmlns="http://www.w3.org/2000/svg"
+# README logo
+assets/rigger-logo.webp	<binary>
