@@ -13,6 +13,8 @@ Only the session the user drives as orchestrator adds `coordinator: true` to the
   handoff.
   A coordinator rewrites the file with `true` before every turn end in which it waits for
   a side session or an agent, and sets `false` only around such a step, back to `true` right after.
+  A coordinator's running sessions are the output of the `show` call of
+  `/rigger-core:coordinate`, not memory.
 - **The state file stays under 9 000 characters,** all that comes back after compaction.
   `## Next step` is the first section: rewrite it, never append to it, at most ~15 lines. History
   (results per session, tallies, lifted orders) goes to `<session id>.log.md` next to it, linked

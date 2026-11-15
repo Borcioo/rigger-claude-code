@@ -246,10 +246,12 @@ class StateFileTests(unittest.TestCase):
         lines = rules_text("rigger-core", "state-file.md").decode("utf-8").split("\n")
         self.assertEqual(heading_lines("\n".join(lines)), ["## State file for long sessions"])
         self.assertEqual(lines[2], "- **Long sessions keep a state file; they never hand off.** Main session only (subagents never")
-        self.assertEqual(lines[12:16], [
+        self.assertEqual(lines[12:18], [
             "  handoff.",
             "  A coordinator rewrites the file with `true` before every turn end in which it waits for",
             "  a side session or an agent, and sets `false` only around such a step, back to `true` right after.",
+            "  A coordinator's running sessions are the output of the `show` call of",
+            "  `/rigger-core:coordinate`, not memory.",
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
         self.assertEqual(lines[-2:], ["  from the state file.", ""])
 
