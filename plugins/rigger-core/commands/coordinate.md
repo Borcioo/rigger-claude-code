@@ -21,9 +21,15 @@ command (tests, lint and any other check it requires); a **gate lock** is a lock
 one full gate runs on the machine at a time.
 
 1. Add `coordinator: true` to this session's state file frontmatter (`state-file.md` rule), and
-   refresh that file each time a part starts or finishes: running sessions, heads, Next step.
+   refresh that file each time a part starts or finishes: running sessions (the output of the
+   `show` call), heads, Next step. Part states live in a script, not in your notes. Create its file with
+   `sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" "${CLAUDE_PLUGIN_ROOT}/tools/coord-state/coord_state.py" init`,
+   then call `add <part> [--waits-on a,b]` once per part of the plan; every call below uses the same
+   prefix and names only its command (`show` prints the table). Output without a `coord-state: ok` line is a refusal: a refused move
+   (`coord-state: refused: <reason>`, exit 2) stops that step; put the reason line into the state file.
 2. Split the approved plan by real inputs: parts that need nothing from each other start now, each
-   in its own session; a part that waits names the exact input it waits for. List every stage up
+   in its own session (`move <part> started --session <id>` or `--branch <branch>`); a part that
+   waits names the exact input it waits for. List every stage up
    front as a step in its own session, review and fix rounds included: running this command is the
    user's ask for each. A review goes through a session, not a background agent, so the next turn
    may start the fix round. Each listed stage names the model it runs on.
@@ -50,8 +56,12 @@ one full gate runs on the machine at a time.
    the project has a gate lock, your run blocks every building session. Answer questions; after a
    second failure on one step split the task or move it to a stronger model. A follow-up of a few
    lines for an idle session's files may go to the integrating session as its own commit when no
-   other writer is active on those files.
-5. Merge only on the user's OK. Close a session once its result is checked and relayed, except: a
+   other writer is active on those files. After the evidence check, call
+   `move <part> built --head <sha> --evidence "<its gate pass line>"`; after a review with no
+   finding for the part, `move <part> reviewed --evidence "<review result>"`; a fix round sends it
+   back with `move <part> started --evidence "<finding>"`.
+5. Merge only on the user's OK, and call `move <part> merged --head <merge sha> --evidence "<text>"`
+   with the evidence quoting the user's OK in quotes (`"…"`, `“…”` or `„…”`). Close a session once its result is checked and relayed, except: a
    builder session stays until the review of its part has no finding for it or its fix is verified
    and merged, and the review session until its re-review; list each under `## Side sessions kept`
    with that reason.
