@@ -5,6 +5,8 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-15
+
 ### Fixed
 
 - `coord_state.py show` now ends with `coord-state: ok show` (its absence read as a refusal) and its table has `session` and `branch` columns; an unset cell prints `-`.
