@@ -28,8 +28,11 @@ class CoordinateWiring(unittest.TestCase):
     def test_merge_evidence_quotes_the_users_ok(self):
         self.assertRegex(COORDINATE, r"merged[^\n]*(?:\n[^\n]*){0,2}quot[^\n]*OK")
 
-    def test_state_file_rule_points_at_show(self):
-        self.assertIn("coord_state.py\" show", STATE_FILE)
+    def test_state_file_rule_points_at_show_without_a_plugin_root_path(self):
+        # Rules reach the model as literal text, so `${CLAUDE_PLUGIN_ROOT}` there stays unexpanded.
+        self.assertIn("/rigger-core:coordinate", STATE_FILE)
+        self.assertIn("`show`", STATE_FILE)
+        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", STATE_FILE)
 
     def test_empty_output_is_not_an_ok(self):
         for out in ("", "\n", "coord-state: refused: x\n", "Python 3.9+ not found\n"):
