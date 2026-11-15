@@ -90,9 +90,9 @@ class Case(unittest.TestCase):
         self.assertTrue(out.startswith(OK), out)
         return out
 
-    def write_parts(self, **states):
+    def write_parts(self, updated=NOW, **states):
         os.makedirs(self.state_dir, exist_ok=True)
-        parts = {name: {"state": state, "branch": None, "session": None, "head": None, "updated": NOW,
+        parts = {name: {"state": state, "branch": None, "session": None, "head": None, "updated": updated,
                         "waits_on": [], "history": []} for name, state in states.items()}
         with open(self.path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump({"version": 1, "parts": parts}, handle)
@@ -111,12 +111,16 @@ class Transitions(Case):
         self.assertEqual(cs.TRANSITIONS[None], {"planned": ()})
         for src, dst, needs in rows():
             with self.subTest(src=src, dst=dst):
-                self.write_parts(p=src)
+                self.write_parts(updated="2000-01-01T00:00:00Z", p=src)
                 code, out = self.run_main("move", "p", dst, *args_for(needs))
                 self.assertEqual(code, 0, out)
                 self.assertEqual(out, OK + "p %s\n" % dst)
                 entry = self.part("p")
                 self.assertEqual(entry["state"], dst)
+                self.assertEqual(entry["updated"], NOW)
+                passed = {name.split("|")[0] for name in needs} - {"evidence"}
+                for field in ("head", "branch", "session"):
+                    self.assertEqual(entry[field], ARGS[field] if field in passed else None, field)
                 self.assertEqual(entry["history"][-1],
                                  {"from": src, "to": dst, "at": NOW, "evidence": ARGS["evidence"]})
 
