@@ -22,7 +22,7 @@ HUNG_BOUND = 6.0
 SID = "abc123def4567890"
 AID = "def456abc7890123"
 AGENT_TYPE = "rigger-core:worker"
-FIELDS = ["agent8", "agent_type", "ms", "sid8", "source", "status", "ts", "verdict"]
+FIELDS = ["agent8", "agent_type", "has_summary", "ms", "sid8", "source", "status", "ts", "verdict"]
 TAIL = 256 * 1024
 
 # Runs the script's main with `stub` applied first.
@@ -332,6 +332,45 @@ class Files(ShadowCase):
         self.assertEqual(self.files(), [])
 
 
+class Summaries(ShadowCase):
+    def has(self, message):
+        return self.row(self.event(message))["has_summary"]
+
+    def test_a_report_with_a_summary_of_three_to_five_bullets_has_it(self):
+        for n in (3, 4, 5):
+            with self.subTest(bullets=n):
+                shutil.rmtree(self.data, ignore_errors=True)
+                self.assertIs(self.has("STATUS: DONE\n\n## Summary\n" + "- x\n" * n + "\n## Details\n"), True)
+
+    def test_too_few_or_too_many_bullets_or_no_heading_has_none(self):
+        for msg in ("STATUS: DONE\n## Summary\n- a\n- b\n", "STATUS: DONE\n## Summary\n" + "- x\n" * 6,
+                    "STATUS: DONE\nSummary\n- a\n- b\n- c\n", "STATUS: DONE\nbody\n## Summary\n- a\n- b\n- c\n",
+                    "## Summary\n- a\n- b\n- c\n", "STATUS: BOGUS\n## Summary\n- a\n- b\n- c\n"):
+            with self.subTest(msg=msg):
+                shutil.rmtree(self.data, ignore_errors=True)
+                self.assertIs(self.has(msg), False)
+
+    def test_crlf_report_with_summary_has_it(self):
+        self.assertIs(self.has("STATUS: DONE\r\n\r\n## Summary\r\n- a\r\n- b\r\n- c\r\n\r\nrest"), True)
+
+    def test_unread_report_has_no_summary(self):
+        self.assertIs(self.row(self.event())["has_summary"], False)
+
+    def test_summary_counts_rows_with_a_summary(self):
+        self.run_hook(self.event("STATUS: DONE\n## Summary\n- a\n- b\n- c\n"))
+        self.run_hook(self.event("STATUS: DONE\nbody", agent_id="second"))
+        os.makedirs(self.rows_dir, exist_ok=True)
+        with open(os.path.join(self.rows_dir, "old.json"), "wb") as handle:   # a row written before the field existed
+            handle.write(b'{"agent_type": "old", "verdict": "ok"}\n')
+        with open(os.path.join(self.rows_dir, "odd.json"), "wb") as handle:   # a field of the wrong shape counts as false
+            handle.write(b'{"agent_type": "old", "verdict": "ok", "has_summary": "yes"}\n')
+        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", SCRIPT, "--summary", "--data", self.data],
+                              cwd=self.base, stdin=subprocess.DEVNULL, capture_output=True, timeout=KILL_AFTER)
+        self.assertEqual(proc.stdout.decode("utf-8").replace("\r\n", "\n"),
+                         "old ok 2 missing 0 bad-value 0 unread 0 error 0 summary 0\n"
+                         + AGENT_TYPE + " ok 2 missing 0 bad-value 0 unread 0 error 0 summary 1\n# rows 4\n")
+
+
 class Summary(ShadowCase):
     def put(self, name, content):
         os.makedirs(self.rows_dir, exist_ok=True)
@@ -357,13 +396,13 @@ class Summary(ShadowCase):
         ]):
             self.good("r%d.json" % number, kind, verdict)
         self.assertEqual(self.summary(), (0, (
-            "reviewer ok 1 missing 0 bad-value 1 unread 1 error 0\n"
-            "worker ok 2 missing 1 bad-value 0 unread 1 error 1\n"
+            "reviewer ok 1 missing 0 bad-value 1 unread 1 error 0 summary 0\n"
+            "worker ok 2 missing 1 bad-value 0 unread 1 error 1 summary 0\n"
             "# rows 8\n")))
 
     def test_an_empty_agent_type_is_listed_under_a_dash(self):
         self.good("r1.json", "", "missing")
-        self.assertEqual(self.summary(), (0, "- ok 0 missing 1 bad-value 0 unread 0 error 0\n# rows 1\n"))
+        self.assertEqual(self.summary(), (0, "- ok 0 missing 1 bad-value 0 unread 0 error 0 summary 0\n# rows 1\n"))
 
     def test_zero_rows_print_the_count_and_exit_one(self):
         self.assertEqual(self.summary(), (1, "# rows 0\n"))
@@ -384,7 +423,7 @@ class Summary(ShadowCase):
         self.put("type-number.json", {"agent_type": 5, "verdict": "ok"})
         self.put("type-missing.json", {"verdict": "ok"})
         os.mkdir(os.path.join(self.rows_dir, "dir.json"))
-        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0\n# rows 1\n"
+        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0 summary 0\n# rows 1\n"
                                              "# unreadable 12\n"))
 
     def test_only_unreadable_files_still_exit_one(self):
@@ -394,7 +433,7 @@ class Summary(ShadowCase):
     def test_files_that_are_not_row_files_are_ignored(self):
         self.good("ok.json", "worker", "ok")
         self.put("note.txt", "hello")
-        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0\n# rows 1\n"))
+        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0 summary 0\n# rows 1\n"))
 
     def test_a_missing_data_argument_is_a_usage_error(self):
         proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", SCRIPT, "--summary"], cwd=self.base,
@@ -405,7 +444,7 @@ class Summary(ShadowCase):
     def test_the_summary_reads_the_rows_a_hook_run_wrote(self):
         self.run_hook(self.event("STATUS: DONE"))
         self.run_hook(self.event("no status", agent_id="second"))
-        self.assertEqual(self.summary(), (0, AGENT_TYPE + " ok 1 missing 1 bad-value 0 unread 0 error 0\n# rows 2\n"))
+        self.assertEqual(self.summary(), (0, AGENT_TYPE + " ok 1 missing 1 bad-value 0 unread 0 error 0 summary 0\n# rows 2\n"))
 
 
 if __name__ == "__main__":

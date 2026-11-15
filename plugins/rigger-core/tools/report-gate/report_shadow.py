@@ -3,7 +3,8 @@
 Shadow only: it never holds a subagent. Runs as an async SubagentStop hook, prints nothing and exits 0. One row file per
 (session, agent) is created with O_EXCL and holds one JSON line; it never holds report text.
 
-    report_shadow.py --summary --data <plugin data dir>   one line per agent_type, then `# rows N`
+    report_shadow.py --summary --data <plugin data dir>   one line per agent_type (verdict counts, then `summary <n>`
+                                                          rows with an opening `## Summary`), then `# rows N`
 """
 import hashlib
 import json
@@ -30,6 +31,20 @@ def classify(text):
                 return "ok", found.group(1)
             return ("bad-value" if line.startswith("STATUS:") else "missing"), ""
     return "missing", ""
+
+
+def has_summary(text):
+    """True when a valid STATUS line, then `## Summary`, then 3 to 5 `- ` lines open the report."""
+    lines = text.splitlines()
+    heading = [number for number, line in enumerate(lines) if line.strip()][1:2]
+    if not heading or classify(text)[0] != "ok" or lines[heading[0]].rstrip() != "## Summary":
+        return False
+    bullets = 0
+    for line in lines[heading[0] + 1:]:
+        if not line.startswith("- "):   # a blank line, a heading or other text ends the list
+            break
+        bullets += 1
+    return 3 <= bullets <= 5
 
 
 def _assistant_text(raw_line):
@@ -60,10 +75,10 @@ def read_transcript_tail(path):
 
 
 def judge(event):
-    """(verdict, status, source) of one SubagentStop event."""
+    """(verdict, status, source, has_summary) of one SubagentStop event."""
     message = event.get("last_assistant_message")
     if isinstance(message, str):
-        return classify(message) + ("event",)
+        return classify(message) + ("event", has_summary(message))
     path = event.get("agent_transcript_path")
     if isinstance(path, str):   # an empty path fails in open
         try:
@@ -71,8 +86,8 @@ def judge(event):
         except OSError:
             text = None
         if text is not None:
-            return classify(text) + ("transcript",)
-    return "unread", "", "none"
+            return classify(text) + ("transcript", has_summary(text))
+    return "unread", "", "none", False
 
 
 def _text(value):
@@ -93,9 +108,9 @@ def log_stop(event, started):
     row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "sid8": session[:8], "agent8": agent[:8],
            "agent_type": _text(fields.get("agent_type"))[:TYPE_CAP]}
     try:   # an event that is not an object fails in judge, on `.get`
-        row["verdict"], row["status"], row["source"] = judge(event)
+        row["verdict"], row["status"], row["source"], row["has_summary"] = judge(event)
     except Exception:
-        row.update(verdict="error", status="", source="none")
+        row.update(verdict="error", status="", source="none", has_summary=False)
     if session or agent:
         key = hashlib.sha256((session + "\0" + agent).encode("utf-8", "replace")).hexdigest()[:16]
     else:
@@ -110,12 +125,13 @@ def log_stop(event, started):
 
 
 def _read_row(path):
-    """The row's agent_type and verdict; ValueError, OSError or UnicodeDecodeError when the file is not a row."""
+    """The row's agent_type, verdict and has_summary (an absent or non-bool field reads False); ValueError, OSError or
+    UnicodeDecodeError when the file is not a row."""
     with open(path, "rb") as handle:
         row = json.loads(handle.read().decode("utf-8").splitlines()[0])
     if not isinstance(row, dict) or not isinstance(row.get("agent_type"), str) or row.get("verdict") not in VERDICTS:
         raise ValueError("not a row")
-    return row["agent_type"], row["verdict"]
+    return row["agent_type"], row["verdict"], row.get("has_summary") is True
 
 
 def summary(data):
@@ -126,14 +142,15 @@ def summary(data):
         if not name.endswith(".json"):
             continue
         try:
-            agent_type, verdict = _read_row(os.path.join(folder, name))
+            agent_type, verdict, summarised = _read_row(os.path.join(folder, name))
         except (ValueError, IndexError, OSError):   # UnicodeDecodeError is a ValueError
             unreadable += 1
             continue
-        counts.setdefault(agent_type, dict.fromkeys(VERDICTS, 0))[verdict] += 1
+        counts.setdefault(agent_type, dict.fromkeys(VERDICTS + ("summary",), 0))[verdict] += 1
+        counts[agent_type]["summary"] += summarised
     for agent_type in sorted(counts):
-        print((agent_type or "-") + "".join(" %s %d" % (verdict, counts[agent_type][verdict]) for verdict in VERDICTS))
-    total = sum(sum(per.values()) for per in counts.values())
+        print((agent_type or "-") + "".join(" %s %d" % (key, counts[agent_type][key]) for key in VERDICTS + ("summary",)))
+    total = sum(per[verdict] for per in counts.values() for verdict in VERDICTS)
     print("# rows %d" % total)
     if unreadable:
         print("# unreadable %d" % unreadable)

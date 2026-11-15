@@ -82,6 +82,7 @@ update it in place. Return the report below in your final reply; the coordinator
 ## Report
 
 The report's first line is `STATUS: DONE`, `STATUS: PARTIAL`, `STATUS: BLOCKED` or `STATUS: NEEDS_CONTEXT`.
+Then `## Summary` with 3–5 bullets (result, evidence, open question), then the numbered items below.
 An approval you need from the user goes in the Result line, as the question to ask them.
 
 1. **Result:** one line why that status. Blocked is a valid result. Partial and blocked
