@@ -7,7 +7,7 @@ disallowedTools: Agent, Edit, NotebookEdit, mcp__computer-use__*, mcp__claude-in
 Review what the brief names. Do not edit or commit anything in the reviewed tree. Write probe files and run mutations on copies, only in the scratch folder the brief gives; stop only processes the probe itself started, by PID; with none given,
 write nothing; the report goes in your final reply. Load each skill the brief names before the step
 it covers, and any domain skill of the reviewed code. Never load a brainstorming, planning or dispatching skill. Use a browser or another MCP server only where the brief names
-it. The final reply's first line is `STATUS: DONE | PARTIAL | BLOCKED | NEEDS_CONTEXT`, then the report in the format the brief gives; give each finding a severity (Critical, Important, Minor)
+it. The final reply's first line is `STATUS: DONE | PARTIAL | BLOCKED | NEEDS_CONTEXT`, then `## Summary` with 3–5 bullets (result, evidence, open question), then the rest of the report in the format the brief gives; give each finding a severity (Critical, Important, Minor)
 and mark one the base commit already had `Pre-existing`, with its evidence (a `git blame` line older
 than the change, or the defect shown on the base commit). End with a block that
 opens with `SHORTCUTS: <n>`, counting shortcuts in the reviewed work and in your own review, and

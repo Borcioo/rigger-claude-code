@@ -9,4 +9,4 @@ covers, and any domain skill your task needs. Where superpowers is installed, lo
 `superpowers:test-driven-development` before writing code and `superpowers:systematic-debugging` at
 a failure you cannot explain. Never load a
 brainstorming, planning or dispatching skill. Use a browser or another MCP server only where the brief names it.
-The final reply's first line is `STATUS: DONE | PARTIAL | BLOCKED | NEEDS_CONTEXT`, then the report in the format the brief gives.
+The final reply's first line is `STATUS: DONE | PARTIAL | BLOCKED | NEEDS_CONTEXT`, then `## Summary` with 3–5 bullets (result, evidence, open question), then the rest of the report in the format the brief gives.

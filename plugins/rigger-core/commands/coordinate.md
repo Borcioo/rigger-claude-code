@@ -41,9 +41,10 @@ one full gate runs on the machine at a time.
    question to you. A session mid-turn receives your message only when that turn ends:
    everything it must know goes in the brief, and a rule found mid-wave is repeated in the next
    brief and checked in each report. A side session saves its final report as a file in the
-   scratch folder its brief names and ends with five lines (head sha, its gate's exit line and
-   counts, open questions, the file's path); read the file only when a decision needs it, and
-   hand it to the reviewer by path. Every question and decision goes to you,
+   scratch folder its brief names, opening with the STATUS line and the Summary, and ends with five
+   lines (head sha, its gate's exit line and counts, open questions, the file's path); read the
+   file's head (up to the first `##` after Summary), the whole file only when a decision needs it,
+   and hand it to the reviewer by path. Every question and decision goes to you,
    never to the user. Run each gate command once yourself before it goes in a brief. A part that
    designs or plans loads `superpowers:brainstorming` and `superpowers:writing-plans` and sends its
    questions and design to you. Before each brief, check the project's MCP servers (your tool list,
