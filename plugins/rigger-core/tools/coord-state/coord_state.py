@@ -5,10 +5,10 @@ CLAUDE_CODE_SESSION_ID). Only this script writes the file.
   coord_state.py init                                   create an empty file (refused when it exists)
   coord_state.py add <part> [--waits-on a,b]            new part in `planned`
   coord_state.py move <part> <state> [--head <sha>] [--branch <b>] [--session <id>] [--evidence <text>]
-  coord_state.py show                                   Markdown table: part, state, head, updated; then `# <state> <n>`
+  coord_state.py show                                   Markdown table: part, state, session, branch, head, updated; then `# <state> <n>`, then `ok show`
   coord_state.py check <part> <state>                   ok only when the part is in that state
 
-Exit 0 prints `coord-state: ok <part> <state>` (`ok init`; `show` prints the table). Exit 2 prints one line
+Exit 0 prints `coord-state: ok <part> <state>` (`ok init`; `show` prints the table, then `coord-state: ok show`; an unset cell is `-`). Exit 2 prints one line
 `coord-state: refused: <reason>`. Output without a `coord-state: ok` line is a refusal: `bin/py.sh` exits 0
 silently when it finds no Python.
 """
@@ -228,14 +228,15 @@ def run(argv, environ):
         if actual != asked:
             raise Refused("%s is %s, not %s" % (part, actual, asked if asked in ALL else "(unknown state)"))
         return [OK + "%s %s" % (part, actual)]
-    lines = ["| part | state | head | updated |", "|---|---|---|---|"]
+    lines = ["| part | state | session | branch | head | updated |", "|---|---|---|---|---|---|"]
     counts = {}
     for name in sorted(parts):
         entry = parts[name]
-        lines.append("| %s | %s | %s | %s |" % (name, entry["state"], entry.get("head") or "", entry.get("updated") or ""))
+        cells = [name, entry["state"]] + [entry.get(key) or "-" for key in ("session", "branch", "head", "updated")]
+        lines.append("| " + " | ".join(str(cell).replace("|", "\\|") for cell in cells) + " |")
         counts[entry["state"]] = counts.get(entry["state"], 0) + 1
     lines += ["# %s %d" % (state, counts[state]) for state in sorted(counts)]
-    return lines
+    return lines + [OK + "show"]
 
 
 def main(argv, environ=os.environ):
