@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -278,9 +279,34 @@ class Commands(Case):
         with open(self.path, "w", encoding="utf-8") as handle:
             json.dump(data, handle)
         self.assertEqual(self.run_main("show"), (0,
-                         "| part | state | head | updated |\n|---|---|---|---|\n"
-                         "| a | merged | abc1234 | 2026-01-02T03:04:05Z |\n| b | planned |  | 2026-01-02T03:04:05Z |\n"
-                         "# merged 1\n# planned 1\n"))
+                         "| part | state | session | branch | head | updated |\n|---|---|---|---|---|---|\n"
+                         "| a | merged | - | - | abc1234 | 2026-01-02T03:04:05Z |\n"
+                         "| b | planned | - | - | - | 2026-01-02T03:04:05Z |\n"
+                         "# merged 1\n# planned 1\ncoord-state: ok show\n"))
+
+    def test_show_ends_with_one_ok_line(self):
+        self.ok("init")
+        code, out = self.run_main("show")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines()[-1], "coord-state: ok show")
+        self.assertEqual(out.count("coord-state: ok"), 1)
+
+    def test_show_puts_session_and_branch_in_their_columns(self):
+        self.ok("init")
+        self.ok("add", "p")
+        self.ok("move", "p", "started", "--session", "sess-9", "--branch", "feature/x")
+        rows = [line for line in self.run_main("show")[1].splitlines() if line.startswith("| p ")]
+        self.assertEqual(len(rows), 1)
+        cells = [cell.strip() for cell in rows[0].strip("|").split("|")]
+        self.assertEqual(cells[:4], ["p", "started", "sess-9", "feature/x"])
+
+    def test_show_keeps_a_pipe_in_a_value_inside_its_cell(self):
+        self.ok("init")
+        self.ok("add", "p")
+        self.ok("move", "p", "started", "--session", "a|b", "--branch", "c|d")
+        row = [line for line in self.run_main("show")[1].splitlines() if line.startswith("| p ")][0]
+        self.assertEqual(len(re.split(r"(?<!\\)\|", row.strip())) - 2, 6)
+        self.assertIn("a\\|b", row)
 
     def test_check_on_another_state_is_refused(self):
         self.write_parts(p="started")
