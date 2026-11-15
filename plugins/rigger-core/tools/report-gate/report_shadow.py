@@ -34,16 +34,21 @@ def classify(text):
 
 
 def has_summary(text):
-    """True when a valid STATUS line, then `## Summary`, then 3 to 5 `- ` lines open the report."""
+    """True when a valid STATUS line, then `## Summary` (one blank line may follow it), then 3 to 5 `- ` lines (each may be continued by lines indented two
+    spaces or more) open the report."""
     lines = text.splitlines()
     heading = [number for number, line in enumerate(lines) if line.strip()][1:2]
     if not heading or classify(text)[0] != "ok" or lines[heading[0]].rstrip() != "## Summary":
         return False
+    first = heading[0] + 1
+    if first < len(lines) and not lines[first].strip():   # one blank line may follow the heading
+        first += 1
     bullets = 0
-    for line in lines[heading[0] + 1:]:
-        if not line.startswith("- "):   # a blank line, a heading or other text ends the list
-            break
-        bullets += 1
+    for line in lines[first:]:
+        if line.startswith("- "):
+            bullets += 1
+        elif not (bullets and line.startswith("  ") and line.strip()):   # an indented line continues its bullet
+            break   # a blank line, a heading or other text ends the list
     return 3 <= bullets <= 5
 
 

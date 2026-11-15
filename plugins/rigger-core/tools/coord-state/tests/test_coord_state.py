@@ -337,6 +337,49 @@ class ReviewFocus(Case):
         self.assertIn(CURLY_OK.encode("utf-8"), self.raw())
         self.assertEqual(self.part("p")["history"][-1]["evidence"], CURLY_OK)
 
+    def test_check_refuses_a_bad_part_name(self):
+        self.ok("init")
+        self.assertEqual(self.run_main("check", "a\nb", "planned"), (2, REFUSED + "bad part name\n"))
+
+    def test_merged_evidence_accepts_the_english_curly_quote_form(self):
+        self.write_parts(p="reviewed")
+        evidence = "user: " + chr(0x201C) + "Tak, scalaj" + chr(0x201D)
+        self.assertEqual(self.ok("move", "p", "merged", "--head", "abc1234", "--evidence", evidence), OK + "p merged\n")
+
+    def test_waits_on_items_of_the_wrong_shape_are_refused(self):
+        os.makedirs(self.state_dir)
+        for waits in ("[5]", '["a b"]'):
+            with self.subTest(waits=waits):
+                content = ('{"version": 1, "parts": {"p": {"state": "built", "waits_on": %s, "history": []}}}'
+                           % waits).encode("utf-8")
+                with open(self.path, "wb") as handle:
+                    handle.write(content)
+                self.assertEqual(self.run_main("move", "p", "blocked", "--evidence", "x"),
+                                 (2, REFUSED + "wrong shape: part p waits_on must be a list of part names\n"))
+                self.assertEqual(self.raw(), content)
+
+    def test_a_waits_on_part_missing_from_the_file_refuses_the_start(self):
+        self.write_parts(p="planned")
+        data = json.loads(self.raw())
+        data["parts"]["p"]["waits_on"] = ["gone"]
+        with open(self.path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        before = self.raw()
+        self.assertEqual(self.run_main("move", "p", "started", "--session", "x"),
+                         (2, REFUSED + "p waits on gone (missing)\n"))
+        self.assertEqual(self.raw(), before)
+
+    def test_branch_and_session_must_be_non_empty_without_control_characters(self):
+        self.write_parts(p="planned")
+        before = self.raw()
+        for option in ("branch", "session"):
+            for value in ("", "a\nb", "a\tb", "a\rb"):
+                with self.subTest(option=option, value=value):
+                    other = ("--session", "ok") if option == "branch" else ("--branch", "ok")
+                    self.assertEqual(self.run_main("move", "p", "started", "--" + option, value, *other),
+                                     (2, REFUSED + "bad --%s\n" % option))
+                    self.assertEqual(self.raw(), before)
+
     def test_no_session_id_is_refused_and_writes_nothing(self):
         environ = {"CLAUDE_CONFIG_DIR": self.config}
         for argv in (["init"], ["add", "p"], ["show"]):

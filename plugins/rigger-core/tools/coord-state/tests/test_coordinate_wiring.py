@@ -19,6 +19,11 @@ class CoordinateWiring(unittest.TestCase):
                      "move <part> reviewed", "move <part> merged", "show"):
             self.assertIn(call, COORDINATE)
 
+    def test_calls_carry_their_options(self):
+        for call in ("move <part> built --head <sha> --evidence '", "move <part> reviewed --evidence '",
+                     "move <part> merged --head <merge sha> --evidence '"):
+            self.assertIn(call, COORDINATE)
+
     def test_missing_ok_line_is_a_refusal(self):
         self.assertIn("Output without a `coord-state: ok` line is a refusal", COORDINATE)
 

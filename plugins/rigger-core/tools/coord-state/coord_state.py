@@ -35,6 +35,7 @@ TRANSITIONS = {
 PART_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 SHA = re.compile(r"[0-9a-f]{7,40}")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # The user's OK in straight, English curly or Polish low-high quotes, spelled with chr() so no editor turns
 # them into ASCII ones.
 LEFT_DOUBLE, RIGHT_DOUBLE, LOW_DOUBLE = chr(0x201C), chr(0x201D), chr(0x201E)
@@ -136,6 +137,9 @@ def apply_move(data, part, to, args, now):
         raise Refused("not allowed: %s -> %s" % (src, to))
     if args.get("head") is not None and not SHA.fullmatch(args["head"]):
         raise Refused("bad --head")
+    for option in ("branch", "session"):
+        if args.get(option) is not None and (not args[option] or CONTROL.search(args[option])):
+            raise Refused("bad --" + option)
     for name in needs:
         if not any(args.get(option) for option in name.split("|")):
             raise Refused("missing --" + name.replace("|", " or --"))

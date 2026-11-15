@@ -58,11 +58,11 @@ one full gate runs on the machine at a time.
    second failure on one step split the task or move it to a stronger model. A follow-up of a few
    lines for an idle session's files may go to the integrating session as its own commit when no
    other writer is active on those files. After the evidence check, call
-   `move <part> built --head <sha> --evidence "<its gate pass line>"`; after a review with no
-   finding for the part, `move <part> reviewed --evidence "<review result>"`; a fix round sends it
-   back with `move <part> started --evidence "<finding>"`.
-5. Merge only on the user's OK, and call `move <part> merged --head <merge sha> --evidence "<text>"`
-   with the evidence quoting the user's OK in quotes (`"…"`, `“…”` or `„…”`). Close a session once its result is checked and relayed, except: a
+   `move <part> built --head <sha> --evidence '<its gate pass line>'`; after a review with no
+   finding for the part, `move <part> reviewed --evidence '<review result>'`; a fix round sends it
+   back with `move <part> started --evidence '<finding>'`.
+5. Merge only on the user's OK, and call `move <part> merged --head <merge sha> --evidence '<text>'`
+   with the evidence quoting the user's OK in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Close a session once its result is checked and relayed, except: a
    builder session stays until the review of its part has no finding for it or its fix is verified
    and merged, and the review session until its re-review; list each under `## Side sessions kept`
    with that reason.

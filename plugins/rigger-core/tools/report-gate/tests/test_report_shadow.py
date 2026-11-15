@@ -353,6 +353,30 @@ class Summaries(ShadowCase):
     def test_crlf_report_with_summary_has_it(self):
         self.assertIs(self.has("STATUS: DONE\r\n\r\n## Summary\r\n- a\r\n- b\r\n- c\r\n\r\nrest"), True)
 
+    def test_a_report_read_from_the_transcript_has_its_summary_judged(self):
+        for report, expected in (("STATUS: DONE\n## Summary\n- a\n- b\n- c\n", True), ("STATUS: DONE\nbody", False)):
+            with self.subTest(expected=expected):
+                shutil.rmtree(self.data, ignore_errors=True)
+                path = self.transcript([assistant(text_block(report))])
+                row = self.row(self.event(agent_transcript_path=path))
+                self.assertEqual((row["source"], row["has_summary"]), ("transcript", expected))
+
+    def test_one_blank_line_before_the_first_bullet_is_allowed_two_are_not(self):
+        shutil.rmtree(self.data, ignore_errors=True)
+        self.assertIs(self.has("STATUS: DONE\n## Summary\n\n- a\n- b\n- c\n"), True)
+        shutil.rmtree(self.data, ignore_errors=True)
+        self.assertIs(self.has("STATUS: DONE\n## Summary\n\n\n- a\n- b\n- c\n"), False)
+
+    def test_an_indented_line_after_a_bullet_continues_it(self):
+        shutil.rmtree(self.data, ignore_errors=True)
+        self.assertIs(self.has("STATUS: DONE\n## Summary\n- a\n  more of a\n- b\n    and b\n- c\n"), True)
+        shutil.rmtree(self.data, ignore_errors=True)   # a continuation is not a bullet: 2 bullets stay too few
+        self.assertIs(self.has("STATUS: DONE\n## Summary\n- a\n  x\n  y\n- b\n  z\n"), False)
+        shutil.rmtree(self.data, ignore_errors=True)   # one space is not an indent; an indented line with no bullet before it ends the list
+        self.assertIs(self.has("STATUS: DONE\n## Summary\n- a\n - x\n- b\n- c\n"), False)
+        shutil.rmtree(self.data, ignore_errors=True)
+        self.assertIs(self.has("STATUS: DONE\n## Summary\n\n  x\n- a\n- b\n- c\n"), False)
+
     def test_unread_report_has_no_summary(self):
         self.assertIs(self.row(self.event())["has_summary"], False)
 
