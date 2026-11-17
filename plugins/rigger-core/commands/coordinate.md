@@ -20,7 +20,8 @@ the default branch; a **merge point** is each merge into it; a **gate** is the p
 command (tests, lint and any other check it requires); a **gate lock** is a lock file or script a project may use so only
 one full gate runs on the machine at a time.
 
-1. Add `coordinator: true` to this session's state file frontmatter (`state-file.md` rule), and
+1. Add `coordinator: true` and `plan: <plan path>` to this session's state file frontmatter
+   (`state-file.md` rule), and
    refresh that file each time a part starts or finishes: running sessions (the output of the
    `show` call), heads, Next step. Part states live in a script, not in your notes. Create its file with
    `sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" "${CLAUDE_PLUGIN_ROOT}/tools/coord-state/coord_state.py" init`,
@@ -61,12 +62,18 @@ one full gate runs on the machine at a time.
    `move <part> built --head <sha> --evidence '<its gate pass line>'`; after a review with no
    finding for the part, `move <part> reviewed --evidence '<review result>'`; a fix round sends it
    back with `move <part> started --evidence '<finding>'`.
-5. Merge only on the user's OK, and call `move <part> merged --head <merge sha> --evidence '<text>'`
-   with the evidence quoting the user's OK in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Close a session once its result is checked and relayed, except: a
+5. Merge each reviewed part into the integration branch (the approved plan is
+   the user's OK; the default branch only on their explicit instruction, at
+   `stop: main`, also when it is the integration branch), and call
+   `move <part> merged --head <merge sha> --evidence '<text>'` with the evidence
+   quoting the user's plan approval (for the default branch, their
+   instruction) in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Its session removes its worktree once it merges; branches stay. Close a
+   session once its result is checked and relayed, except: a
    builder session stays until the review of its part has no finding for it or its fix is verified
    and merged, and the review session until its re-review; list each under `## Side sessions kept`
    with that reason.
-6. Ask the user only what is theirs to decide, in plain words, by what they get. When a side
+6. Ask the user only at a stop of the `plans-main.md` rule, with `stop:` set (clear it once they
+   answer), in plain words, by what they get. When a side
    session's report names an approval it needs, put that question first in your reply, in the
    session's words, with the session's link.
 7. While the plan is open, every turn updates the task list, a turn a side session's note woke too:
@@ -90,10 +97,13 @@ one full gate runs on the machine at a time.
    in a permission mode other than `bypassPermissions`), started again on each notice. A turn a
    background notice began cannot start a session (the app refuses until the user writes): a
    stage due then goes with `SendMessage` to an open session that has its context (a re-review to
-   the review session: no start, so no refusal), else to the user as the `wrap_up` question with
-   a start button, so one click starts it.
+   the review session: no start, so no refusal), else set `stop: app-refused` and send the user the
+   `wrap_up` question with a start button, so one click starts it.
 9. On a `quiet` line, tell the user in one line, with the session's link, that it may wait for
    their approval or answer in its own window.
+10. When every part is merged, write one final summary (decisions taken, follow-ups, estimate
+   overruns), set `stop: done` and ask once whether to delete the merged branches; after the
+   answer, or when the user says stop, remove `plan:` and `stop:` from the frontmatter.
 
 In a turn an event started, ask a decision that leads to a session start through the `wrap_up` box,
 not AskUserQuestion: its button answer starts a user turn, where the start works.

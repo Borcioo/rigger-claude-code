@@ -28,7 +28,7 @@ verification, no edits).
   Windows) as MISSING when they are not installed: they are the recommended set, not a hard
   dependency of this plugin.
 - `/rigger-core:harness-setup`: runs doctor, then writes the Compact Instructions section into your
-  user `CLAUDE.md` and, if you opt in, the `autoCompactWindow` setting and the worktree root. It
+  user `CLAUDE.md` and, if you opt in, the `autoCompactWindow` setting. It
   asks before each change and changes nothing else.
 - `/rigger-core:coordinate [plan]`: runs an approved plan with each independent part in its own
   session. Needs the Claude desktop app (its session tools) and the superpowers plugin; elsewhere it
@@ -43,7 +43,7 @@ verification, no edits).
 | SessionStart (startup, clear, compact) | the state-file rule for the main session (subagents never get it); `harness_start` warns about hooks that run twice (in both `settings.json` and a plugin) and about `## ` sections of your user `CLAUDE.md` that an enabled plugin already injects |
 | UserPromptSubmit, PreCompact, PostCompact, SessionStart (compact) | the context guard: reminds a long session to keep its state file and holds automatic compaction until the state file says `safe_to_compact: true`, then puts the file back after compaction (`tools/context-guard/INSTALL.md`) |
 | PostToolUse (Write, Edit of `.claude/environments.json`) | `tools/env-check` returns the reason the rigger-panel Environments pane would refuse the file |
-| PreToolUse (`wrap_up`), Stop | the side-session guard, desktop app only: a main session cannot end its turn while a side session it started has delivered a result it has neither archived nor listed under `## Side sessions kept` in its state file; the denial says both ways out |
+| PreToolUse (`wrap_up`, `AskUserQuestion`), Stop | the side-session guard, desktop app only: a main session cannot end its turn while a side session it started has delivered a result it has neither archived nor listed under `## Side sessions kept` in its state file; the denial says both ways out. While the state file frontmatter has `plan:` and no allowed `stop:`, it also denies `AskUserQuestion` and a `wrap_up` with an `ask`: an approved plan runs without mid-plan questions |
 | SubagentStop | `report_shadow` records, without blocking, whether each subagent's report opens with `STATUS: <word>` |
 
 ## Tools

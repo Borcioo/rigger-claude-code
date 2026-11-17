@@ -554,7 +554,6 @@ if [ -n "$settings_bad" ]; then
 elif get "$settings" /env/HARNESS_WORKTREE_ROOT && [ "$jtype" = s ] && [ -n "$jval" ]; then
   check worktree-root OK "$jval" "$how_settings env"
 else
-  check worktree-root WARN 'HARNESS_WORKTREE_ROOT not set' "$how_settings env"
-  fix worktree-root /rigger-core:harness-setup
+  check worktree-root OK 'unset: app setting or .claude/worktrees/' "$how_settings env"
 fi
 exit 0

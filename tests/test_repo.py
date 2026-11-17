@@ -420,12 +420,12 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 8)
+        self.assertEqual(len(names), moved + 9)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
         self.assertEqual(names.count("stop_shadow.py"), 1)
         self.assertEqual(names.count("report_shadow.py"), 1)
-        self.assertEqual(names.count("side_session_guard.py"), 2)
+        self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
 
     def test_all_moved_rows_are_named_on_a_hand_made_config(self):

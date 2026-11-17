@@ -1,22 +1,25 @@
 ## Plans: main session
 
 - A brief or full requirements never waive brainstorming or planning (with superpowers installed:
-  `superpowers:brainstorming`, then `superpowers:writing-plans`): it is the thinking pass (goal,
-  reader, what exists, what can go wrong), with questions only where needed. A side session (one
-  started for a part of a plan, as `/rigger-core:coordinate` does) sends its questions and design
-  to the session that started it, the coordinator, which brings me only a choice that changes
-  scope, cost or what the user of the product gets.
-- Estimates count agent working time, not manual hours. Every spec and plan states its estimate
-  in hours and in lines of code and lines of tests separately (for a task whose checks are full
-  under the Tests rules' risk bullet, tests are about as many lines as code), the simpler version
-  and what that drops.
+  `superpowers:brainstorming`, then `superpowers:writing-plans`), the thinking pass (goal, reader,
+  what exists, what can go wrong).
+- Every spec and plan states its estimate in agent working hours, lines of code and of tests
+  (as many as code for full checks under the Tests rules' risk bullet), the simpler version and
+  what it drops.
 - Plan size decides the process: more than 5 tasks, or touching security, data, migrations or
   shared infrastructure (auth, routing, build, schema): a reviewer subagent checks the plan first
   and execution is subagent-driven unless the work is mechanical; otherwise the main session
   implements it. Review once, at the end, by a strongest-model subagent; per task only for
   security, data, money and shared infrastructure.
-- After a plan is approved, do not ask me how to run it: a plan with independent parts follows
-  `/rigger-core:coordinate` unless I say to do it here, and the rest you do here.
+- After a plan is approved, a plan with independent parts follows `/rigger-core:coordinate` unless
+  I say to do it here; the rest runs here. Write `plan: <plan path>` into the state file
+  frontmatter: the plan is my OK up to merges into the integration branch (where parts merge
+  first). Fix in-scope findings; list others as follow-ups; a test that cannot pass blocks only
+  its part. Ask me nothing else; stop only for these: set `stop:` to `main` (any merge into the
+  default branch), `release`, `force-push`, `prod-data`, `secrets`, `goal-unreachable` or
+  `app-refused`, then ask; clear `stop:` once I answer. The final summary sets `stop: done` and
+  asks once about deleting branches; my answer, my stop or a new request removes `plan:` and
+  `stop:`.
 - Plan task headings: `### Task <integer>: …` (no letters or dots).
 - **Lo-fi means no styling, not no design.** Design each screen from its role's task and decisions
   (what they must do, what they see, what comes next), with the UI that task needs: statuses,

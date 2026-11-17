@@ -73,7 +73,7 @@ Restart Claude Code (or run `/reload-plugins`), then check with `claude plugin l
 
 It runs `/rigger-core:doctor` first, then offers to write the Compact Instructions section into
 your user `CLAUDE.md` (Claude Code reads Compact Instructions only from `CLAUDE.md`, so a plugin
-cannot supply them) and, if you agree, the `autoCompactWindow` setting and a worktree root. It shows
+cannot supply them) and, if you agree, the `autoCompactWindow` setting. It shows
 each change first and writes nothing without your agreement. The compaction guards also work
 without the setting, with Claude Code's default window.
 

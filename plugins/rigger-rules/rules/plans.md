@@ -8,6 +8,6 @@
   one does only after observing it; a greenfield choice follows the spike rule alone. Judge an
   external tool's mechanism apart from its package: a wrong platform rejects the code, never the
   idea.
-- Work past twice its estimate stops and reports before going on: code lines count against the
-  code estimate and test lines against the test estimate. A fix round adds a test only for
-  the finding it fixes.
+- Work past twice its estimate (code and test lines each against their own estimate) stops and
+  reports before going on; inside an approved plan it goes on, reported in the final summary. A
+  fix round adds a test only for the finding it fixes.

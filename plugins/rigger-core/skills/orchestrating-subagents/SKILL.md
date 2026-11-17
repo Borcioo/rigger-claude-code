@@ -108,7 +108,8 @@ failure on the stronger model goes to the user with the diagnosis.
   resuming.
 - A report whose first line is `STATUS: PARTIAL` or `STATUS: BLOCKED` is accepted only with the exact call, its raw output and one
   alternative route with its raw output. Re-run the failing call once, in the agent's worktree with
-  the brief's environment. Still red: the blocker stands; fix it at the source or ask the user.
+  the brief's environment. Still red: the blocker stands; fix it at the source or ask the user
+  (inside an approved plan, block that part and list it in the final summary).
   Green after one command or setting: a shortcut or a brief gap; append it to the
   lessons inbox (rigger-lessons: `lessons-inbox.md` in the config dir) and put it in the next briefs.
 - Check any agent silent for 20+ minutes; when one reports waiting on background work, check at

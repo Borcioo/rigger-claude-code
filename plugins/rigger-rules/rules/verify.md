@@ -3,7 +3,7 @@
 - After each task that changes what I see (a coherent visible change, not every edit), do a short
   hands-on check in the real app (browser, real data, my locale; look at caches, fonts, scroll,
   theme CSS, permissions), then send me a screenshot and one short question ("is this what you
-  want?"). A subagent does the check and reports; the main session sends the screenshot.
+  want?"), inside a plan in the final summary.
 - **A copy of production carries production keys.** Before the first test run or hands-on check on
   a copy of a live site or database (local or staging), and again after every sync or import into
   it, list the third-party integrations it can reach (analytics, e-mail marketing, webhooks,

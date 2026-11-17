@@ -1,6 +1,7 @@
 """The rules of rigger-core, rigger-windows, and rigger-wp: wiring and what each hook prints."""
 
 import json
+import os
 import re
 import sys
 import unittest
@@ -26,6 +27,9 @@ WINDOWS = PLUGINS / "rigger-windows"
 ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
+# Every session loads these files: they may be rewritten, never grown. Lower the ceiling when they shrink.
+RULES_CEILING_BYTES = 30293
+RULES_MIN_FILES = 19
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
 ROW_RE = re.compile(r"\| .+ \| `([a-z-]+):([a-z-]+)` \|")
 
@@ -232,8 +236,9 @@ class CrossPluginWordingTests(unittest.TestCase):
 
     def test_every_committed_change_is_made_in_a_worktree(self):
         self.assertIn(
-            "- Every change that ends in a commit is made in its own worktree under the worktree root the "
-            "SessionStart line names (unset: next to the repo, never inside it), on a `feature/`, `fix/` or "
+            "- Every change that ends in a commit is made in its own worktree where the app's Worktree location "
+            "setting puts it, else under the worktree root the SessionStart line names, else in "
+            "`.claude/worktrees/` inside the repo (git-ignored), on a `feature/`, `fix/` or "
             "`chore/` branch from the default branch, and reaches it through a pull request (a squash merge "
             "where the repo has no remote); the main checkout stays on the default branch and is only read and "
             "merged into. Exception: a project whose running app or container serves the main checkout (its "
@@ -254,6 +259,42 @@ class StateFileTests(unittest.TestCase):
             "  `/rigger-core:coordinate`, not memory.",
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
         self.assertEqual(lines[-2:], ["  from the state file.", ""])
+
+
+class PlanStopTests(unittest.TestCase):
+    """The stop values the plan-active guard in side_session_guard.py accepts, named in the plans rule."""
+
+    def test_the_plan_rule_writes_plan_and_lists_every_stop_value(self):
+        text = " ".join(rules_text("rigger-rules", "plans-main.md").decode("utf-8").split())
+        self.assertIn("Write `plan: <plan path>` into the state file frontmatter", text)
+        self.assertIn("the plan is my OK up to merges into the integration branch", text)
+        self.assertIn("set `stop:` to `main` (any merge into the default branch)", text)
+        stops = re.search(r"set `stop:` to (.+?), then ask", text)
+        self.assertIsNotNone(stops)
+        self.assertEqual(re.findall(r"`([a-z-]+)`", stops.group(1)),
+                         ["main", "release", "force-push", "prod-data", "secrets", "goal-unreachable", "app-refused"])
+        self.assertIn("sets `stop: done`", text)
+        self.assertIn("then ask; clear `stop:` once I answer", text)
+        self.assertIn("my answer, my stop or a new request removes `plan:` and `stop:`", text)
+
+    def test_the_rule_names_exactly_the_stop_values_the_guard_accepts(self):
+        guard = (PLUGINS / "rigger-core" / "tools" / "side-session-guard" / "side_session_guard.py").read_text(encoding="utf-8")
+        accepted = set(re.findall(r'"([a-z-]+)"', re.search(r"STOPS = frozenset\(\((.+?)\)\)", guard, re.S).group(1)))
+        text = " ".join(rules_text("rigger-rules", "plans-main.md").decode("utf-8").split())
+        named = set(re.findall(r"`([a-z-]+)`", re.search(r"set `stop:` to (.+?), then ask", text).group(1)))
+        self.assertEqual(accepted, named | {"done"})
+
+    def test_the_state_file_rule_names_the_plan_and_stop_keys(self):
+        text = " ".join(rules_text("rigger-core", "state-file.md").decode("utf-8").split())
+        self.assertIn("`updated: <ISO time>` / `plan:`, `stop:` when set / `---`", text)
+
+
+class RulesSizeTests(unittest.TestCase):
+    def test_rules_text_stays_under_the_ceiling(self):
+        root = Path(os.environ.get("RIGGER_RULES_ROOT") or PLUGINS)
+        files = sorted(root.glob("*/rules/*.md"))
+        self.assertGreaterEqual(len(files), RULES_MIN_FILES, "rules files read from %s" % root)
+        self.assertLessEqual(sum(path.stat().st_size for path in files), RULES_CEILING_BYTES)
 
 
 if __name__ == "__main__":

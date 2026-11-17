@@ -38,6 +38,8 @@ change: `CONTRIBUTING.md`.
 - **`rg -g '!<glob>'` with an absolute search path excludes nothing** (globs match the path as given): run exclusion globs from the repo root with `.` as the path and print the count of excluded files as the control.
 - **"Ran under Windows PowerShell 5.1" holds only when the test spawns that shell** and the version is printed by the same invocation that runs the code under test (a separate probe call stays green when the install call hard-codes pwsh); red-run it by hard-coding the other shell in that invocation only.
 - **JSON read from outside gets one test per wrong shape** (a list where a dict is expected, a number where a list is expected — a string iterates harmlessly and kills no `isinstance(…, list)` mutant); run the mutant to prove each.
+- **A plan that adds or removes a hook handler lists `tests/test_repo.py`** (`DuplicateHookTests` pins the handler count per plugin).
+- **`claude -p` disables `AskUserQuestion`:** a hook proof on it runs in SDK mode (`--input-format stream-json --output-format stream-json --permission-prompt-tool stdio`) and first checks the tool reached the stub's request.
 - **Hook wiring is proven against `plugins/rigger-rules/tests/stub_api.py` behind `ANTHROPIC_BASE_URL`** in an isolated config (no cost, no real model); the report says "stub".
 - **Test stubs:** a stub recognises a call by its content, not its argv position; a stub for an `.exe` is a real `.exe` (a `.cmd` changes the quoting the code sees, and `exit /b N` inside a nested block returns 0); check a stub's exit code directly.
 - **Read the CLI version right before the first real run:** auto-update can move the `claude` on PATH mid-task, and a desktop app may run its own copy.

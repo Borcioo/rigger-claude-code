@@ -30,8 +30,30 @@ class CoordinateWiring(unittest.TestCase):
     def test_a_refusal_stops_the_step_and_goes_into_the_state_file(self):
         self.assertRegex(COORDINATE, r"(?s)refused.{0,200}stop.{0,100}state file")
 
-    def test_merge_evidence_quotes_the_users_ok(self):
-        self.assertRegex(COORDINATE, r"merged[^\n]*(?:\n[^\n]*){0,2}quot[^\n]*OK")
+    def test_merge_evidence_quotes_the_plan_approval(self):
+        self.assertRegex(COORDINATE, r"merged[^\n]*(?:\n[^\n]*){0,2}quot[^\n]*plan approval")
+
+    def test_plan_key_is_written_in_step_one(self):
+        self.assertRegex(COORDINATE, r"\n1\. [^\n]*(?:\n   [^\n]*)*`plan: <plan path>`")
+
+    def test_only_the_integration_branch_merges_on_the_plan(self):
+        self.assertRegex(COORDINATE, r"\n5\. Merge each reviewed part into the integration branch \(the approved plan is\s+"
+                                     r"the user's OK; the default branch only on their explicit instruction, at\s+"
+                                     r"`stop: main`, also when it is the integration branch\)")
+
+    def test_a_default_branch_merge_quotes_the_instruction(self):
+        self.assertRegex(COORDINATE, r"quoting the user's plan approval \(for the default branch, their\s+"
+                                     r"instruction\) in quotes")
+
+    def test_the_wrap_up_start_button_follows_app_refused(self):
+        self.assertRegex(COORDINATE, r"set `stop: app-refused`[^.]{0,60}`wrap_up` question with a start button")
+
+    def test_a_mid_plan_stop_is_cleared_once_answered(self):
+        self.assertRegex(COORDINATE, r"with `stop:` set \(clear it once they\s+answer\)")
+
+    def test_the_final_summary_sets_done_then_asks_about_branches_once(self):
+        self.assertRegex(COORDINATE, r"(?s)final summary.{0,200}`stop: done`.{0,100}ask once whether to delete"
+                                     r".{0,200}remove `plan:` and `stop:`")
 
     def test_state_file_rule_points_at_show_without_a_plugin_root_path(self):
         # Rules reach the model as literal text, so `${CLAUDE_PLUGIN_ROOT}` there stays unexpanded.
