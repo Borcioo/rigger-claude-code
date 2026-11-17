@@ -523,6 +523,73 @@ def window_checks(root):
     check("a cached offset before the window does not widen the read", case.run(transcript_path=path)[1].count("local_"), 1)
 
 
+ASK = "AskUserQuestion"
+QUESTIONS = {"questions": [{"question": "Which way?", "header": "Route", "multiSelect": False,
+                            "options": [{"label": "A", "description": "a"}, {"label": "B", "description": "b"}]}]}
+STOP_VALUES = ("main", "release", "force-push", "prod-data", "secrets", "goal-unreachable", "app-refused", "done")
+
+
+def plan_state(*lines, body="## Goal\nship it\n"):
+    return "---\nsafe_to_compact: true\n%s\n---\n%s" % ("\n".join(lines), body)
+
+
+def plan_decision(case, **extra):
+    """"deny" with the reason checked, "allow" for no output, a marker for anything else."""
+    code, out, err = case.run(**extra)
+    if code != 0 or err:
+        return "<exit %s, stderr %r>" % (code, err[:200])
+    if not out:
+        return "allow"
+    reason = reason_of(out)
+    if "plan is active" in reason and "stop:" in reason:
+        return "deny"
+    return "<not a plan denial: %r>" % out[:200]
+
+
+def plan_checks(root):
+    active = plan_state("plan: docs/p.md")
+    for label, ask in (("a string", "Merge it?"), ("a dict", {"description": "x"}), ("a list", ["x"])):
+        check("a plan is active: wrap_up with an ask as %s is denied" % label,
+              plan_decision(Case(root, [], state=active), tool_input={"recap": "r", "ask": ask}), "deny")
+    check("a plan is active: AskUserQuestion is denied",
+          plan_decision(Case(root, [], state=active), tool_name=ASK, tool_input=QUESTIONS), "deny")
+    check("a plan is active: the denial does not need a readable transcript",
+          plan_decision(Case(root, None, state=active), tool_name=ASK, tool_input=QUESTIONS,
+                        transcript_path=os.path.join(root, "nope.jsonl")), "deny")
+    for value in STOP_VALUES + ('"main"',):
+        check("stop: %s allows the question" % value,
+              plan_decision(Case(root, [], state=plan_state("plan: docs/p.md", "stop: " + value)),
+                            tool_name=ASK, tool_input=QUESTIONS), "allow")
+    for value in ("Main", "later"):
+        check("stop: %s is not a stop: denied" % value,
+              plan_decision(Case(root, [], state=plan_state("plan: docs/p.md", "stop: " + value)),
+                            tool_name=ASK, tool_input=QUESTIONS), "deny")
+    for label, state in (("plan: empty", plan_state("plan:")), ('plan: ""', plan_state('plan: ""')),
+                         ("no plan: key", plan_state("updated: 2026-11-16T10:00:00+00:00")),
+                         ("plan: only in the body", plan_state("updated: x", body="## Goal\nplan: docs/p.md\n")),
+                         ("no frontmatter, plan: above a --- rule", "## Goal\nplan: docs/p.md\n---\nx\n"),
+                         ("an opening --- never closed", "---\nplan: docs/p.md\n## Goal\nship it\n"),
+                         ("no state file", None)):
+        check("%s: AskUserQuestion allowed" % label,
+              plan_decision(Case(root, [], state=state), tool_name=ASK, tool_input=QUESTIONS), "allow")
+    for label, tool_input in (("no ask", {"recap": "r"}), ('ask ""', {"recap": "r", "ask": ""}),
+                              ("ask null", {"recap": "r", "ask": None}), ("ask {}", {"recap": "r", "ask": {}}),
+                              ("ask []", {"recap": "r", "ask": []})):
+        check("a plan is active: wrap_up with %s is allowed" % label,
+              plan_decision(Case(root, [], state=active), tool_input=tool_input), "allow")
+    check("a plan is active: a subagent's question is allowed",
+          plan_decision(Case(root, [], state=active), tool_name=ASK, tool_input=QUESTIONS, agent_id="a42"), "allow")
+    check("no plan: AskUserQuestion with an open side session is allowed",
+          plan_decision(Case(root, [note(A)]), tool_name=ASK, tool_input=QUESTIONS), "allow")
+    check("control: the same transcript denies a wrap_up", Case(root, [note(A)]).fired(), [A])
+    case = Case(root, [], state=active)
+    check("the plan denial names the state file to edit",
+          case.state in reason_of(case.run(tool_name=ASK, tool_input=QUESTIONS)[1]), True)
+    plan_reason = reason_of(Case(root, [], state=active).run(tool_name=ASK, tool_input=QUESTIONS)[1])
+    check("a plan denial that names a side session leaves it open",
+          Case(root, [note(A), denial(plan_reason + " " + A)]).fired(), [A])
+
+
 def find_sh():
     if os.name == "nt":
         git_sh = os.path.join(os.environ.get("ProgramFiles", ""), "Git", "usr", "bin", "sh.exe")
@@ -530,30 +597,44 @@ def find_sh():
     return "/bin/sh"
 
 
-def shipped_hook(event="PreToolUse"):
-    """(group, handler) of the one handler of `event` that runs this script; empty ones when there is none."""
+def shipped_hooks(event="PreToolUse"):
+    """{matcher: (group, handler)} of the handlers of `event` that run this script ("" for no matcher);
+    a matcher with more than one such handler maps to empty ones."""
     with open(HOOKS, encoding="utf-8") as fh:
         groups = json.load(fh)["hooks"].get(event, [])
-    found = [(group, handler) for group in groups for handler in group["hooks"]
-             if "side_session_guard.py" in handler["command"]]
-    return found[0] if len(found) == 1 else ({}, {"command": ""})
+    found = {}
+    for group in groups:
+        for handler in group["hooks"]:
+            if "side_session_guard.py" in handler["command"]:
+                found.setdefault(group.get("matcher", ""), []).append((group, handler))
+    return {matcher: items[0] if len(items) == 1 else ({}, {"command": ""}) for matcher, items in found.items()}
+
+
+def shipped_hook(event="PreToolUse", matcher=WRAP_UP):
+    """(group, handler) of the one handler of `event` under `matcher`; empty ones when there is none."""
+    return shipped_hooks(event).get(matcher, ({}, {"command": ""}))
 
 
 def hook_checks(root):
-    stop_group, stop_handler = shipped_hook("Stop")
+    stop_group, stop_handler = shipped_hook("Stop", "")
     check("the Stop handler is the same command, synchronous, with no matcher",
-          (stop_handler["command"], stop_handler.get("async"), "matcher" in stop_group),
-          (shipped_hook()[1]["command"], None, False))
+          (stop_handler["command"], stop_handler.get("async"), "matcher" in stop_group, len(shipped_hooks("Stop"))),
+          (shipped_hook()[1]["command"], None, False, 1))
+    check("PreToolUse runs the script under exactly these matchers", sorted(shipped_hooks()), sorted([ASK, WRAP_UP]))
     group, handler = shipped_hook()
-    matcher = group.get("matcher", "")
-    check("one PreToolUse handler runs the script, through sh and the launcher",
+    ask_group, ask_handler = shipped_hook(matcher=ASK)
+    check("the AskUserQuestion handler is the same command, synchronous, timeout 10",
+          (ask_handler["command"], ask_handler.get("async"), ask_handler.get("timeout")), (handler["command"], None, 10))
+    check("the PreToolUse handler runs the script, through sh and the launcher",
           (handler["command"].startswith('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S '), handler["command"].endswith("|| true")),
           (True, True))
-    check("the matcher is the plain tool name (Claude Code matches such a name exactly)",
-          (matcher, bool(re.fullmatch(r"[A-Za-z0-9_]+", matcher))), (WRAP_UP, True))
-    names = (WRAP_UP, "Bash", "PowerShell", "SendMessage", "mcp__ccd_session_mgmt__archive_session", "mcp__ccd_turn__wrap_up_x",
-             "mcp__other__wrap_up", "wrap_up", "Mcp__ccd_turn__wrap_up")
-    check("only the app's wrap_up reaches the hook", [name for name in names if re.fullmatch(matcher, name)], [WRAP_UP])
+    names = (WRAP_UP, ASK, "Bash", "PowerShell", "SendMessage", "mcp__ccd_session_mgmt__archive_session",
+             "mcp__ccd_turn__wrap_up_x", "mcp__other__wrap_up", "wrap_up", "Mcp__ccd_turn__wrap_up",
+             "askUserQuestion", "AskUserQuestions", "mcp__x__AskUserQuestion")
+    for tool, matcher in ((WRAP_UP, group.get("matcher", "")), (ASK, ask_group.get("matcher", ""))):
+        check("the %s matcher is the plain tool name (Claude Code matches such a name exactly)" % tool,
+              (matcher, bool(re.fullmatch(r"[A-Za-z0-9_]+", matcher))), (tool, True))
+        check("only %s reaches its group" % tool, [name for name in names if re.fullmatch(matcher, name)], [tool])
     sh = find_sh()
     case = Case(root, [note(A)])
     data = os.path.join(root, "plugin-data")
@@ -568,6 +649,12 @@ def hook_checks(root):
     proc = subprocess.run([sh, "-c", handler["command"]], input=json.dumps(event_of(quiet.transcript)).encode("utf-8"),
                           capture_output=True, timeout=60, env=env)
     check("the shipped command is silent when nothing is open", (proc.returncode, proc.stdout), (0, b""))
+    planned = Case(root, [], state=plan_state("plan: docs/p.md"))
+    proc = subprocess.run([sh, "-c", ask_handler["command"]], capture_output=True, timeout=60, env=env,
+                          input=json.dumps(event_of(planned.transcript, tool_name=ASK, tool_input=QUESTIONS)).encode("utf-8"))
+    check("the shipped AskUserQuestion command denies while a plan is active, its output in LF",
+          (proc.returncode, b"\r" in proc.stdout, "plan is active" in reason_of(proc.stdout.decode("utf-8"))),
+          (0, False, True))
     proc = subprocess.run([sh, "-c", stop_handler["command"]], input=json.dumps(stop_event(case.transcript)).encode("utf-8"),
                           capture_output=True, timeout=60, env=env)
     check("the shipped Stop command blocks an open session, its output in LF",
@@ -590,6 +677,7 @@ def main():
         cache_checks(root)
         subagent_checks(root)
         window_checks(root)
+        plan_checks(root)
         hook_checks(root)
     finally:
         shutil.rmtree(root)

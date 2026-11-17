@@ -72,6 +72,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/side-session-guard/side_session_guard.py\" || true",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [

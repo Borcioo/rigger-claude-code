@@ -10,8 +10,9 @@
   and ask one concrete question — never speculative variants, edits to neighbouring pages, or
   offers to re-check the author's own facts.
 - One OK covers the whole request on the same target environment and the same kind of change
-  (content, settings, code): do its later points and report them instead of asking again; a
-  merge into the default branch or a deploy still needs its own OK (the Git rule). A request that
+  (content, settings, code): do its later points and report them instead of asking again; inside
+  an approved plan the plan is the OK; a merge into the default branch or a deploy needs its own.
+  A request that
   turns out to need another kind (content that needs a code release) gets one line naming the
   cheapest route before you start. Word questions by the goal (what the user of the product gets),
   not by the implementation.
@@ -19,9 +20,9 @@
   what the reader does or how they read the code. Sources, history, model names and "we decided"
   go in the PR or commit body. Keep a "because…" only where it stops someone from breaking the rule.
 - Tests these rules require for the changed code are part of the task.
-- A process guard inside the repo (test, lint rule, helper, template) lands as its own PR (its own
-  commit only without a remote) and is listed in the final report.
-- A CI or deploy-workflow change, a hook, settings.json, CLAUDE.md, a rules file or a skill is proposed in one
+- A process guard inside the repo (test, lint rule, helper, template) or a tidy-up lands as its own
+  PR (own commit only without a remote), never inside the current change; list a guard in the
+  final report.
+- A CI or deploy-workflow change, a hook, settings.json, CLAUDE.md, a rules file, a skill or a
+  tidy-up (`.gitattributes`, renormalize, moves) that no approved plan names is proposed in one
   line with the exact change and waits for my OK.
-- Tidy-ups and repo hygiene (`.gitattributes`, renormalize, moves) are proposed first; after my OK
-  they land as their own PR (own commit only without a remote), never inside the current change.

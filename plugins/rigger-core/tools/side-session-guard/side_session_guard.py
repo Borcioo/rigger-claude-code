@@ -12,6 +12,9 @@ a newer note arms it again.
 Also the Stop hook, for a turn that ends without wrap_up: the same decision as a block, and a block counts
 as a denial. A stop_hook_active that is not false allows, so a block never repeats in a row.
 
+Also PreToolUse on `AskUserQuestion`: while the state file frontmatter has a non-empty `plan:` and no `stop:`
+from STOPS, that call and a `wrap_up` with a non-empty `ask` are denied, before the transcript is read.
+
 State file: `<config dir>/state/<session id>.md`, as in compact_guard.py. Subagent events are ignored.
 Fails open: on any error, a missing transcript or an unreadable state file the hook prints nothing.
 It reads at most the last MAX_SCAN bytes of the transcript and calls no tool. From CACHE_FROM bytes up,
@@ -29,6 +32,8 @@ MAX_SCAN = 64 << 20      # bytes read from the end of the transcript
 CACHE_FROM = 1 << 20     # below this a full read costs less than the cache; `claude -p` runs leave no file
 CACHE_SUFFIX = ".side-guard.json"
 PREFIX = "side-session-guard:"
+PLAN_PREFIX = "plan-guard:"   # not PREFIX: a denial with PREFIX settles the side sessions its text names
+STOPS = frozenset(("main", "release", "force-push", "prod-data", "secrets", "goal-unreachable", "app-refused", "done"))
 KEPT_HEADING = "side sessions kept"
 TITLE_MAX = 60
 NOTE = re.compile(r'The session "(.*?)" you started \((local_[\w-]+)\) finished a turn')
@@ -201,6 +206,48 @@ def deny_reason(open_sessions, state):
             % (PREFIX, names, state))
 
 
+def frontmatter(path):
+    """`key: value` pairs between the state file's opening `---` and the next one, surrounding quotes
+    stripped, case kept; {} for None, no frontmatter or any error."""
+    try:
+        with open(path, "rb") as fh:
+            lines = fh.read().decode("utf-8-sig").splitlines()
+    except (OSError, TypeError, UnicodeDecodeError):
+        return {}
+    if not lines or lines[0].strip() != "---":
+        return {}
+    pairs = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return pairs
+        key, colon, value = line.partition(":")
+        value = value.strip()
+        if colon and len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if colon:
+            pairs[key.strip()] = value
+    return {}   # no closing `---`: no frontmatter
+
+
+def plan_deny_reason(state):
+    return ("%s the plan is active, so do not ask the user: decide, continue and list the decision in the final "
+            "summary. Only if this is `main`, a release, a force-push, DEV/PROD data, secrets, an unreachable goal, "
+            "an app refusal only the user can click through, or the final summary, set `stop: <%s>` in the "
+            "frontmatter of %s and retry; remove it after the user answers."
+            % (PLAN_PREFIX, "|".join(sorted(STOPS)), state))
+
+
+def _asks(event):
+    """True for a call that puts a question to the user (a Stop event names no tool)."""
+    if event.get("tool_name") == "AskUserQuestion":
+        return True
+    tool_input = event.get("tool_input")
+    ask = tool_input.get("ask") if isinstance(tool_input, dict) else None
+    return event.get("tool_name") == "mcp__ccd_turn__wrap_up" and (
+        (isinstance(ask, str) and ask != "") or (isinstance(ask, dict) and any(ask.values()))
+        or (isinstance(ask, list) and ask != []))
+
+
 def main():
     sys.path.insert(0, CONTEXT_GUARD)
     import context_guard as guard
@@ -211,6 +258,15 @@ def main():
     if event.get("agent_id") is not None or (stop and event.get("stop_hook_active") is not False):
         return 0
     state = guard.state_path(guard.default_state_dir(), event.get("session_id"))
+    if _asks(event):
+        keys = frontmatter(state)
+        if keys.get("plan") and keys.get("stop") not in STOPS:
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": plan_deny_reason(state)}}))
+            return 0
+    if event.get("tool_name") == "AskUserQuestion":
+        return 0
     cache = state[:-len(".md")] + CACHE_SUFFIX
     transcript = event.get("transcript_path")
     size = os.path.getsize(transcript)
