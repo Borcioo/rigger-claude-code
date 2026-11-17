@@ -5,6 +5,30 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
+### Added
+
+- Plan autonomy: while the state file frontmatter has `plan: <plan path>` and no `stop:` from
+  `main`, `release`, `force-push`, `prod-data`, `secrets`, `goal-unreachable`, `app-refused` or
+  `done`, the rigger-core side-session guard denies `AskUserQuestion` and any `wrap_up` with an
+  `ask`, with a reason naming the state file and the stop values. The guard now also runs on
+  `AskUserQuestion`.
+- A test pins the summed size of `plugins/*/rules/*.md` at 30295 bytes, so rules are rewritten
+  rather than grown.
+
+### Changed
+
+- An approved plan is the user's OK up to merges into the integration branch: the rules
+  (plans, scope, verify, talk, state file) and `/rigger-core:coordinate` say to decide, continue
+  and report in the final summary, and to ask only at a stop; merges into the default branch and
+  releases still need the user's own OK. `/rigger-core:coordinate` writes `plan:` in step 1,
+  merges reviewed parts into the integration branch and ends with a final summary that sets
+  `stop: done`.
+- Worktrees go where the desktop app's Worktree location setting puts them, else under
+  `HARNESS_WORKTREE_ROOT`, else in `.claude/worktrees/` inside the repo. `/rigger-core:harness-setup`
+  only reports the worktree root, and `/rigger-core:doctor` reports an unset root as OK.
+
 ## [0.2.1] - 2026-11-15
 
 ### Fixed
