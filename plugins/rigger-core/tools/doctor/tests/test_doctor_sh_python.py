@@ -239,15 +239,15 @@ class DoctorShTests(DoctorShCase):
         self.good_config()
         self.assertRow(self.run_doctor(), "worktree-root", "OK", WORKTREE_ROOT)
 
-    def test_worktree_root_unset_warns(self):
+    def test_worktree_root_unset_is_ok(self):
         settings = self.good_settings()
         del settings["env"]["HARNESS_WORKTREE_ROOT"]
         # Only the user env counts: not a nested env, an escaped string or this process's variable.
         settings["statusLine"] = {"type": "command", "command": 'echo "HARNESS_WORKTREE_ROOT": x', "env": {"HARNESS_WORKTREE_ROOT": "/decoy"}}
         self.write_config(settings, self.good_installed(), self.good_marketplaces())
         result = self.run_doctor(env={"HARNESS_WORKTREE_ROOT": "/decoy"})
-        self.assertRow(result, "worktree-root", "WARN", "HARNESS_WORKTREE_ROOT not set")
-        self.assertEqual(result.fixes["worktree-root"], ["/rigger-core:harness-setup"])
+        self.assertRow(result, "worktree-root", "OK", "unset: app setting or .claude/worktrees/")
+        self.assertNotIn("worktree-root", result.fixes)
 
     # -- config folder ------------------------------------------------------------------------------
 
@@ -258,7 +258,7 @@ class DoctorShTests(DoctorShCase):
         self.assertRow(result, "marketplace", "MISSING")
         self.assertRow(result, "plugin rigger-core", "MISSING")
         self.assertRow(result, "autoCompactWindow", "WARN")
-        self.assertRow(result, "worktree-root", "WARN")
+        self.assertRow(result, "worktree-root", "OK", "unset: app setting or .claude/worktrees/")
         self.assertEqual(result.checks["autoCompactWindow"][2], sh_path(self.config) + "/settings.json")
 
     def test_home_used_without_config_dir(self):

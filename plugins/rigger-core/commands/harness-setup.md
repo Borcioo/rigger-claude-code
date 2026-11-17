@@ -1,9 +1,9 @@
 ---
-description: Run the doctor checks, add Compact Instructions to the user CLAUDE.md and, if you opt in, set autoCompactWindow and the worktree root
+description: Run the doctor checks, add Compact Instructions to the user CLAUDE.md and, if you opt in, set autoCompactWindow
 ---
 
-Run the doctor, then set up the three things a plugin cannot ship. Install or write nothing until the
-user has seen the change and agreed. Running this again on a machine that is already set up changes
+Run the doctor, then set up the two things a plugin cannot ship and report the worktree root.
+Install or write nothing until the user has seen the change and agreed. Running this again on a machine that is already set up changes
 nothing unless the user picks something new.
 
 The config folder is `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
@@ -58,24 +58,11 @@ parse the result again. If the file is not valid JSON, report that and leave it 
 
 ## 3. Worktree root
 
-The target is the `HARNESS_WORKTREE_ROOT` key in the `env` object of `settings.json` in the config
-folder. The rigger-rules SessionStart hook prints it as `Worktree root: <path>`, and the Git rules
-put every worktree under it; unset, worktrees go next to the repo.
-
-- The key is set: report "Worktree root: already set (<value>)" and change nothing.
-- The key is not set: ask once, with AskUserQuestion where it exists; the option's text shows the
-  path, so picking is the agreement:
-
-| Option | Writes |
-|---|---|
-| `Worktrees` in the user's home folder (`<home>/Worktrees`; on Windows, `%USERPROFILE%\Worktrees`) (recommended) | that folder as an absolute path |
-| A folder the user types | that folder as an absolute path |
-| Leave it unset | nothing |
-
-Write it the way section 2 writes its key, adding `env` when it is missing, and create the folder
-when it does not exist. Then tell the user, when they use the Claude desktop app, to set Settings →
-Claude Code → Worktree location to the same folder: the app makes the worktrees of the sessions it
-starts there, and Claude cannot change that setting.
+The Git rules put a worktree where the Claude desktop app's Worktree location setting puts it, else
+under `HARNESS_WORKTREE_ROOT` (the `env` key of `settings.json` in the config folder, printed by the
+rigger-rules SessionStart hook as `Worktree root: <path>`), else in `.claude/worktrees/` inside the
+repo. Report the key's value, or "Worktree root: unset (app setting or `.claude/worktrees/`)", and
+change nothing: the recommended setup leaves it unset.
 
 ## 4. Report
 

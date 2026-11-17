@@ -28,7 +28,7 @@ verification, no edits).
   Windows) as MISSING when they are not installed: they are the recommended set, not a hard
   dependency of this plugin.
 - `/rigger-core:harness-setup`: runs doctor, then writes the Compact Instructions section into your
-  user `CLAUDE.md` and, if you opt in, the `autoCompactWindow` setting and the worktree root. It
+  user `CLAUDE.md` and, if you opt in, the `autoCompactWindow` setting. It
   asks before each change and changes nothing else.
 - `/rigger-core:coordinate [plan]`: runs an approved plan with each independent part in its own
   session. Needs the Claude desktop app (its session tools) and the superpowers plugin; elsewhere it

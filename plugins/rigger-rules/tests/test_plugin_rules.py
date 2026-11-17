@@ -232,8 +232,9 @@ class CrossPluginWordingTests(unittest.TestCase):
 
     def test_every_committed_change_is_made_in_a_worktree(self):
         self.assertIn(
-            "- Every change that ends in a commit is made in its own worktree under the worktree root the "
-            "SessionStart line names (unset: next to the repo, never inside it), on a `feature/`, `fix/` or "
+            "- Every change that ends in a commit is made in its own worktree where the app's Worktree location "
+            "setting puts it, else under the worktree root the SessionStart line names, else in "
+            "`.claude/worktrees/` inside the repo (git-ignored), on a `feature/`, `fix/` or "
             "`chore/` branch from the default branch, and reaches it through a pull request (a squash merge "
             "where the repo has no remote); the main checkout stays on the default branch and is only read and "
             "merged into. Exception: a project whose running app or container serves the main checkout (its "
