@@ -63,9 +63,11 @@ one full gate runs on the machine at a time.
    finding for the part, `move <part> reviewed --evidence '<review result>'`; a fix round sends it
    back with `move <part> started --evidence '<finding>'`.
 5. Merge each reviewed part into the integration branch (the approved plan is
-   the user's OK; the default branch only on their explicit instruction), and call
+   the user's OK; the default branch only on their explicit instruction, at
+   `stop: main`, also when it is the integration branch), and call
    `move <part> merged --head <merge sha> --evidence '<text>'` with the evidence
-   quoting the user's plan approval in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Its session removes its worktree once it merges; branches stay. Close a
+   quoting the user's plan approval (for the default branch, their
+   instruction) in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Its session removes its worktree once it merges; branches stay. Close a
    session once its result is checked and relayed, except: a
    builder session stays until the review of its part has no finding for it or its fix is verified
    and merged, and the review session until its re-review; list each under `## Side sessions kept`

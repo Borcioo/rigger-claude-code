@@ -13,10 +13,10 @@
   security, data, money and shared infrastructure.
 - After a plan is approved, a plan with independent parts follows `/rigger-core:coordinate` unless
   I say to do it here; the rest runs here. Write `plan: <plan path>` into the state file
-  frontmatter: the plan is my OK up to merges into the integration branch (where parts merge before
-  the default branch). Fix in-scope findings; list others as follow-ups; a test that cannot pass
-  blocks only its part. Ask me nothing else; stop only for these: set `stop:` to `main` (default
-  branch), `release`, `force-push`, `prod-data`, `secrets`, `goal-unreachable` or
+  frontmatter: the plan is my OK up to merges into the integration branch (where parts merge
+  first). Fix in-scope findings; list others as follow-ups; a test that cannot pass blocks only
+  its part. Ask me nothing else; stop only for these: set `stop:` to `main` (any merge into the
+  default branch), `release`, `force-push`, `prod-data`, `secrets`, `goal-unreachable` or
   `app-refused`, then ask; clear `stop:` once I answer. The final summary sets `stop: done` and
   asks once about deleting branches; my answer, my stop or a new request removes `plan:` and
   `stop:`.

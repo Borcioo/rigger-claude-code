@@ -38,7 +38,12 @@ class CoordinateWiring(unittest.TestCase):
 
     def test_only_the_integration_branch_merges_on_the_plan(self):
         self.assertRegex(COORDINATE, r"\n5\. Merge each reviewed part into the integration branch \(the approved plan is\s+"
-                                     r"the user's OK; the default branch only on their explicit instruction\)")
+                                     r"the user's OK; the default branch only on their explicit instruction, at\s+"
+                                     r"`stop: main`, also when it is the integration branch\)")
+
+    def test_a_default_branch_merge_quotes_the_instruction(self):
+        self.assertRegex(COORDINATE, r"quoting the user's plan approval \(for the default branch, their\s+"
+                                     r"instruction\) in quotes")
 
     def test_the_wrap_up_start_button_follows_app_refused(self):
         self.assertRegex(COORDINATE, r"set `stop: app-refused`[^.]{0,60}`wrap_up` question with a start button")

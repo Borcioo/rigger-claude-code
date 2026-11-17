@@ -548,7 +548,8 @@ def plan_decision(case, **extra):
 
 def plan_checks(root):
     active = plan_state("plan: docs/p.md")
-    for label, ask in (("a string", "Merge it?"), ("a dict", {"description": "x"}), ("a list", ["x"])):
+    for label, ask in (("a string", "Merge it?"), ("a dict", {"description": "x"}), ("a list", ["x"]),
+                       ("true", True), ("a number", 1)):
         check("a plan is active: wrap_up with an ask as %s is denied" % label,
               plan_decision(Case(root, [], state=active), tool_input={"recap": "r", "ask": ask}), "deny")
     check("a plan is active: AskUserQuestion is denied",
@@ -569,12 +570,16 @@ def plan_checks(root):
                          ("plan: only in the body", plan_state("updated: x", body="## Goal\nplan: docs/p.md\n")),
                          ("no frontmatter, plan: above a --- rule", "## Goal\nplan: docs/p.md\n---\nx\n"),
                          ("an opening --- never closed", "---\nplan: docs/p.md\n## Goal\nship it\n"),
+                         ("plan: null", plan_state("plan: null")), ("plan: ~", plan_state("plan: ~")),
+                         ("plan: false", plan_state("plan: false")),
+                         ("plan: indented under another key", plan_state("updated: x\n  plan: docs/p.md")),
                          ("no state file", None)):
         check("%s: AskUserQuestion allowed" % label,
               plan_decision(Case(root, [], state=state), tool_name=ASK, tool_input=QUESTIONS), "allow")
     for label, tool_input in (("no ask", {"recap": "r"}), ('ask ""', {"recap": "r", "ask": ""}),
                               ("ask null", {"recap": "r", "ask": None}), ("ask {}", {"recap": "r", "ask": {}}),
-                              ("ask []", {"recap": "r", "ask": []})):
+                              ("ask []", {"recap": "r", "ask": []}), ("ask false", {"recap": "r", "ask": False}),
+                              ("ask 0", {"recap": "r", "ask": 0})):
         check("a plan is active: wrap_up with %s is allowed" % label,
               plan_decision(Case(root, [], state=active), tool_input=tool_input), "allow")
     check("a plan is active: a subagent's question is allowed",
@@ -585,6 +590,9 @@ def plan_checks(root):
     case = Case(root, [], state=active)
     check("the plan denial names the state file to edit",
           case.state in reason_of(case.run(tool_name=ASK, tool_input=QUESTIONS)[1]), True)
+    reason = reason_of(Case(root, [], state=active).run(tool_name=ASK, tool_input=QUESTIONS)[1])
+    check("the plan denial glosses main as the default branch and says live data",
+          ("`main` (default branch)" in reason, "live data" in reason, "DEV" in reason), (True, True, False))
     plan_reason = reason_of(Case(root, [], state=active).run(tool_name=ASK, tool_input=QUESTIONS)[1])
     check("a plan denial that names a side session leaves it open",
           Case(root, [note(A), denial(plan_reason + " " + A)]).fired(), [A])

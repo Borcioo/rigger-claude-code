@@ -14,7 +14,7 @@ format. Releases are tagged `v<version>`.
   `done`, the rigger-core side-session guard denies `AskUserQuestion` and any `wrap_up` with an
   `ask`, with a reason naming the state file and the stop values. The guard now also runs on
   `AskUserQuestion`.
-- A test pins the summed size of `plugins/*/rules/*.md` at 30295 bytes, so rules are rewritten
+- A test pins the summed size of `plugins/*/rules/*.md` at 30293 bytes (their size at this release), so rules are rewritten
   rather than grown.
 
 ### Changed

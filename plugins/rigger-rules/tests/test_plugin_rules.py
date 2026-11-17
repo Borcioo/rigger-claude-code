@@ -28,7 +28,7 @@ ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these files: they may be rewritten, never grown. Lower the ceiling when they shrink.
-RULES_CEILING_BYTES = 30295
+RULES_CEILING_BYTES = 30293
 RULES_MIN_FILES = 19
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
 ROW_RE = re.compile(r"\| .+ \| `([a-z-]+):([a-z-]+)` \|")
@@ -268,6 +268,7 @@ class PlanStopTests(unittest.TestCase):
         text = " ".join(rules_text("rigger-rules", "plans-main.md").decode("utf-8").split())
         self.assertIn("Write `plan: <plan path>` into the state file frontmatter", text)
         self.assertIn("the plan is my OK up to merges into the integration branch", text)
+        self.assertIn("set `stop:` to `main` (any merge into the default branch)", text)
         stops = re.search(r"set `stop:` to (.+?), then ask", text)
         self.assertIsNotNone(stops)
         self.assertEqual(re.findall(r"`([a-z-]+)`", stops.group(1)),

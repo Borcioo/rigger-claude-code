@@ -12,7 +12,7 @@ a newer note arms it again.
 Also the Stop hook, for a turn that ends without wrap_up: the same decision as a block, and a block counts
 as a denial. A stop_hook_active that is not false allows, so a block never repeats in a row.
 
-Also PreToolUse on `AskUserQuestion`: while the state file frontmatter has a non-empty `plan:` and no `stop:`
+Also PreToolUse on `AskUserQuestion`: while the state file frontmatter has a top-level `plan:` not in NO_PLAN and no `stop:`
 from STOPS, that call and a `wrap_up` with a non-empty `ask` are denied, before the transcript is read.
 
 State file: `<config dir>/state/<session id>.md`, as in compact_guard.py. Subagent events are ignored.
@@ -33,6 +33,7 @@ CACHE_FROM = 1 << 20     # below this a full read costs less than the cache; `cl
 CACHE_SUFFIX = ".side-guard.json"
 PREFIX = "side-session-guard:"
 PLAN_PREFIX = "plan-guard:"   # not PREFIX: a denial with PREFIX settles the side sessions its text names
+NO_PLAN = frozenset(("", "null", "~", "false"))   # `plan:` values that mean no active plan
 STOPS = frozenset(("main", "release", "force-push", "prod-data", "secrets", "goal-unreachable", "app-refused", "done"))
 KEPT_HEADING = "side sessions kept"
 TITLE_MAX = 60
@@ -220,6 +221,8 @@ def frontmatter(path):
     for line in lines[1:]:
         if line.strip() == "---":
             return pairs
+        if line[:1] in (" ", "\t"):
+            continue   # a nested value, not a top-level key
         key, colon, value = line.partition(":")
         value = value.strip()
         if colon and len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
@@ -231,7 +234,7 @@ def frontmatter(path):
 
 def plan_deny_reason(state):
     return ("%s the plan is active, so do not ask the user: decide, continue and list the decision in the final "
-            "summary. Only if this is `main`, a release, a force-push, DEV/PROD data, secrets, an unreachable goal, "
+            "summary. Only if this is `main` (default branch), a release, a force-push, live data, secrets, an unreachable goal, "
             "an app refusal only the user can click through, or the final summary, set `stop: <%s>` in the "
             "frontmatter of %s and retry; remove it after the user answers."
             % (PLAN_PREFIX, "|".join(sorted(STOPS)), state))
@@ -245,7 +248,7 @@ def _asks(event):
     ask = tool_input.get("ask") if isinstance(tool_input, dict) else None
     return event.get("tool_name") == "mcp__ccd_turn__wrap_up" and (
         (isinstance(ask, str) and ask != "") or (isinstance(ask, dict) and any(ask.values()))
-        or (isinstance(ask, list) and ask != []))
+        or (isinstance(ask, list) and ask != []) or (isinstance(ask, (int, float)) and ask != 0))
 
 
 def main():
@@ -260,7 +263,7 @@ def main():
     state = guard.state_path(guard.default_state_dir(), event.get("session_id"))
     if _asks(event):
         keys = frontmatter(state)
-        if keys.get("plan") and keys.get("stop") not in STOPS:
+        if keys.get("plan", "") not in NO_PLAN and keys.get("stop") not in STOPS:
             sys.stdout.write(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny",
                 "permissionDecisionReason": plan_deny_reason(state)}}))
