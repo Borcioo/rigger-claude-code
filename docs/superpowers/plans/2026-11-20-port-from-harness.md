@@ -37,8 +37,8 @@ lines. Hours are agent working hours (code and tests together).
 
 | Batch | Items | Est. h | Status |
 |---|---|---|---|
-| 1 (now) | 1 (#41), 2 (#42), 3 (#35), 4 (#31); #24 and #25 confirmed already present | 1.2 | implemented in the 0.3.1 PR |
-| 2 (testing core) | 16 (#26), 9 (#27), 10 (#40), 11a (#33) | 3.1 | waits |
+| 1 (now) | 1 (#41), 2 (#42), 3 (#35), 4 (#31); #24 and #25 confirmed already present | 1.2 | PR 12 (open) |
+| 2 (testing core) | 16 (#26), 9 (#27), 10 (#40), 11a (#33) | 3.1 | PR on branch `feature/port-batch-2-testing`, based on batch 1 |
 | 3 (lessons into skills) | 12 (#44+#45), 14 (#29) | 2.7 | waits |
 | 4 (weak-test-guard) | 13 (#30), 11 (#32) | 3.8 | waits |
 | 5 (evals) | 17 (#34), 18 (#36) | 3.2 | waits |
@@ -57,3 +57,17 @@ Batches 2 to 7 total about 22.6 agent hours. The order follows the dependencies 
 - No version bump or tag in the PR: CONTRIBUTING says a user-visible change adds a line under
   `## [Unreleased]` in `CHANGELOG.md`, and a release is tagged from `main` with the user's OK. The
   title says `0.3.1` as the intended next release only.
+
+## Owner decisions and process
+
+- The owner decided to port everything that applies, the testing skill (#27) and its dependents
+  included, and to continue past Batch 1 with one PR per batch, each with its own full gate and
+  `--verify`. Foreto, MyDevil, Nexus and WCAG items, #23 and #43 stay skipped. Nothing is merged,
+  tagged or released without the owner's OK.
+- Batches are stacked: each batch branch starts from the previous one and its PR targets the
+  previous branch, so each diff shows only its own commits (the batches touch the same files, for
+  example `coordinate.md`). Merge them in order.
+- Source patches are applied with the paths and names renamed (`foreto` to `rigger`); hunks that do
+  not fit Rigger's text are redone by hand. Batch 2: `tests.md` is replaced by the source's cut text
+  with the safe-edit wording adapted, the rules ceiling is lowered to 28059 bytes, and
+  `testing-skill-loads` is added to Rigger's `evals/CASES.md` without a `source_ref` column.
