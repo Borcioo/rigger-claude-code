@@ -39,7 +39,7 @@ lines. Hours are agent working hours (code and tests together).
 |---|---|---|---|
 | 1 (now) | 1 (#41), 2 (#42), 3 (#35), 4 (#31); #24 and #25 confirmed already present | 1.2 | PR 12 (open) |
 | 2 (testing core) | 16 (#26), 9 (#27), 10 (#40), 11a (#33) | 3.1 | PR on branch `feature/port-batch-2-testing`, based on batch 1 |
-| 3 (lessons into skills) | 12 (#44+#45), 14 (#29) | 2.7 | waits |
+| 3 (lessons into skills) | 12 (#44+#45), 14 (#29) | 2.7 | PR on branch `feature/port-batch-3-lessons`, based on batch 2 |
 | 4 (weak-test-guard) | 13 (#30), 11 (#32) | 3.8 | waits |
 | 5 (evals) | 17 (#34), 18 (#36) | 3.2 | waits |
 | 6 (coordinate CLI) | 20 (#37), 21 (#39) | 3.3 | waits |
@@ -71,3 +71,8 @@ Batches 2 to 7 total about 22.6 agent hours. The order follows the dependencies 
   not fit Rigger's text are redone by hand. Batch 2: `tests.md` is replaced by the source's cut text
   with the safe-edit wording adapted, the rules ceiling is lowered to 28059 bytes, and
   `testing-skill-loads` is added to Rigger's `evals/CASES.md` without a `source_ref` column.
+- Batch 3: Rigger's skills are leaner than the harness's, so a curated hunk whose anchoring text is
+  absent was left out (git-workflow's site-release comparison, the recount of agent totals in
+  orchestrating-subagents, every MyDevil hunk, the drift-lint MyDevil fixture, the owner CLAUDE.md
+  hunk of #29). #44 and #45 were applied as one end state; rejects were redone by hand in their
+  final wording. `rigger-wp-traps` gained a Page caching and an Environment guards section.
