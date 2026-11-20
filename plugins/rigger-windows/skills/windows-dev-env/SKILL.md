@@ -97,6 +97,9 @@ description: >-
 - **Python's `select()` works only on sockets on Windows**, so a script that polls a subprocess pipe
   with it raises. Read the pipe in a thread, and patch such a tool only in a copy. In any probe,
   never send stderr to `DEVNULL`: an expired CLI session then reads as "the feature did not fire".
+- **`subprocess.run(timeout=…)` with a pipe hangs past its timeout on Windows while a grandchild
+  holds the pipe:** after the kill it calls `communicate()`, which waits for EOF. Where a grandchild
+  may inherit the pipe, read it in a thread with a bounded `join`, then release the child.
 - **`HOME` is not the profile on Windows:** Windows OpenSSH and Node read `USERPROFILE`, Git Bash,
   Python and other ssh builds read `HOME`. A test that fakes a home sets the variable each program
   reads and prints which build ran.

@@ -84,6 +84,15 @@ Each entry: the fact, then what to do.
   (WPML's `IWPML_Backend_Action` classes) never run, so a probe of an admin notice or hook reports
   "nothing" with or without the cause. Run the probe with `--exec='define("WP_ADMIN",true);'`,
   first on the state that must show the defect.
+- **A script is portable only after its selftest ran as the next environment.** A fixture with the
+  local host hard-coded would have stopped it on DEV. Build fixture URLs from `home_url()` and run
+  the selftest once with `pre_option_home` and `pre_option_siteurl` returning the next
+  environment's address.
+- **An all-digit page slug never survives.** `wp_unique_post_slug()` saves `2024` on a hierarchical
+  post type as `2024-2`, while `/2024/` still answers 200 (the year archive), so a crawl misses it.
+  Before a plan promises such a URL, run
+  `wp eval 'echo wp_unique_post_slug("2024", 0, "publish", "page", 0);'` on the site, and check
+  built pages by `post_name`, not status code.
 - **`wp_update_post()` / `wp_insert_post()` unslash their input,** and so does
   `update_post_meta()`. Without `wp_slash()` on the data, block JSON loses its backslashes and
   markup leaks into the page as `u003cbru003e`.
@@ -137,6 +146,10 @@ Each entry: the fact, then what to do.
 - **A catalogue lookup keys by the whole identity.** Keying a `.po` file by `msgid` alone lets a
   `msgctxt` entry replace the plain one. Key by `msgctxt` + `msgid` and give the helper a unit test
   with a collision in both insertion orders.
+- **A WXR mapping decides every field.** An export that read `wp:status` but not
+  `wp:post_password` published a protected page's heading. List every element of the item
+  (`wp:post_password`, `excerpt:encoded`, `wp:post_parent`, `wp:postmeta`…), record map, drop or
+  block for each, and give the mapper a protected, a private and a draft item that must stay out.
 
 ## REST routes and feeds
 
@@ -162,6 +175,10 @@ Each entry: the fact, then what to do.
 
 ## Environment guards
 
+- **`wp_get_environment_type()` returns `'production'` when nothing sets it,** so a guard built on
+  it alone fails open on a copy with a fresh `wp-config.php`. A production-only switch for a real
+  third-party id (analytics, Clarity, pixels) also requires the production host from `home_url()`;
+  grep the project for other such guards, and test with the constant undefined on another host.
 - **Proof that `templates/wp-outbound-block.php` holds is the active-plugin list plus a blocked `wp_remote_get()`, never "no requests seen":** plugins whose SDKs call curl or Guzzle directly (its header lists the gaps) are deactivated on the copy.
 
 ## WooCommerce and consent
@@ -203,3 +220,8 @@ Each entry: the fact, then what to do.
   register it with `woocommerce_register_additional_checkout_field()` and
   `'location' => 'address'`, mirror derived keys (meta another plugin reads, such as an invoicing plugin) on save, and list
   what checkout, My account, admin, e-mails and REST then show without code.
+- **A write to a `wc/store/*` data store is not a form change.** `wp.data` actions such as
+  `setBillingAddress` update the store and the screen but skip the checkout component's
+  `experimental__woocommerce_blocks-checkout-*` actions that integrations (Klaviyo, Pixel Manager)
+  listen to. Before replacing a field change with a store write, grep the installed plugins for
+  those hooks; if any listen, drive the change through the field.

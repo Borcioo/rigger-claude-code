@@ -109,7 +109,9 @@ failure on the stronger model goes to the user with the diagnosis.
   (full gates, every test, registry and pinned list it edits) before fanning out or calling units
   file-disjoint. Every count, line number, baseline or code value a plan or brief
   names comes from a command run now and pasted (`git ls-files` for file counts, the gate's own
-  scanner for lines), or from reading every route that sets the value, never from a summary.
+  scanner for lines), or from reading every route that sets the value, never from a summary. A count passed between
+  agents names its unit and the tree or commit it was counted on; recount an agent's total before
+  relaying it.
 - After the first fix round, dispatch a fresh implementation agent (brief + last report) instead of
   resuming.
 - A report whose first line is `STATUS: PARTIAL` or `STATUS: BLOCKED` is accepted only with the exact call, its raw output and one
@@ -121,7 +123,10 @@ failure on the stronger model goes to the user with the diagnosis.
 - Check any agent silent for 20+ minutes; when one reports waiting on background work, check at
   once that the process runs and its output is fresh, and again within 20 minutes. A session that
   waits runs one background check that exits on the condition (a Monitor prints only that line)
-  and ends a turn only with a result or a decision, never "still waiting".
+  and ends a turn only with a result or a decision, never "still waiting". The condition is the started
+  PID's exit or an end marker the script writes last, on failure too, never a guessed count of
+  output lines (a wait for 29 lines met 28 and held a task open for 40 minutes); every wait loop
+  has a time bound and prints why it stopped.
 - Work inherited from an agent that stopped mid-task is unverified: run it before reading it as
   done. Compare each agent's reported changes (Commits, `git diff --stat`) with
   `git status --porcelain` before trusting its report.

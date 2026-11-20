@@ -30,6 +30,9 @@ never force-push it.
   updated strings at their old value.
 - A claim that a later merge is clean comes with `git merge-tree <base> <a> <b>` output, and each
   branch's repo-wide tests run against the other's files first: text can merge while a test breaks.
+  Run them in a checkout with the dependencies installed (a fresh `git worktree add` has no
+  `node_modules` or `vendor`); a failure count far off the baseline is a setup fault until the
+  setup is shown complete.
   An "expected failures" claim is a list of test names, never a count.
 
 ## Commits
