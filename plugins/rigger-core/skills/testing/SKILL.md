@@ -118,6 +118,9 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
   a public URL); a case no layer between the test and the code can fake. A parser's fixtures are lines
   copied from real files, one per line shape.
 - State only the values that matter to the test; a builder or factory fills the rest.
+- A fake secret in a fixture is assembled at runtime (`'sk_' + 'live_…'`), never one literal in a
+  provider's shape (Stripe, GitHub, AWS, Slack): the host's push protection rejects the push
+  (GitHub GH013) after every local gate passed.
 - A loop that deletes rows or moves them out of its own filter gets a test that seeds more than two
   chunks: paging by offset skips every second chunk; iterate by key (`chunkById()`, `lazyById()`)
   or use one query.

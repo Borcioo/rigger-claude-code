@@ -28,7 +28,7 @@ ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these files: they may be rewritten, never grown. Lower the ceiling when they shrink.
-RULES_CEILING_BYTES = 28059
+RULES_CEILING_BYTES = 28057
 RULES_MIN_FILES = 19
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"

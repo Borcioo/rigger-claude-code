@@ -26,9 +26,12 @@ Each entry: what happens, then what to do.
    context )`), or keep a test per pair checking the translated name starts with the translated
    label. A button with visible extra text (key cap, count) is named by that text: drop the
    `aria-label`.
-4. **Absence checks are scoped to the component.** "The error is gone" matched the same text still
-   sitting in the app-wide live region, so a correct fix looked red. Query inside the component
-   (`within(table)`, a locator under it), never screen-wide, for any message that is also announced.
+4. **Absence checks are scoped to the component, and a wait targets the settled state.** "The error
+   is gone" matched the same text still sitting in the app-wide live region, so a correct fix looked
+   red. Query inside the component (`within(table)`, a locator under it), never screen-wide, for any
+   message that is also announced. A wait for an old marker to vanish passes on any intermediate
+   state ("unsaved changes" became "Saving…"): wait for the settled text ("Saved") or the response,
+   and when a change alters a marker, `rg` the tests for every wait on its old text.
 5. **Opt-in controls render unticked on every visit.** A new optional consent checkbox (a
    WooCommerce additional checkout field) came back ticked on the next checkout: WooCommerce restores
    the last value from the customer session and the draft order, and Firefox restores form state on
