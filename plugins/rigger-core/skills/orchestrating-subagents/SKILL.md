@@ -30,10 +30,16 @@ findings fixed once at the phase's end.
   same holds for separate sessions: one that writes works in its own worktree, not the shared
   checkout (except under the shared-tree bullet below). First `git worktree list` shows which
   branches others hold and `git -C <path> status --short` on each the files they touch; stay out of
-  those.
+  those. On macOS/Linux a worktree may symlink `node_modules` only when it is absent (`[ -e node_modules ] || ln -s …`; `ln -s` into an existing dir nests the link and the runner loads two copies); never link `vendor` (Composer then loads the main checkout's code), and on Windows copy or install instead.
+- A worktree session that fails to start is reproduced by hand before any retry (`git worktree add -b claude/probe <path>`, removed after). The desktop app names branches `claude/<slug>`, which git refuses while a local branch `claude` exists (`git branch --list claude`).
 - A plan names for each task what it needs (a sha, a file, a decision) and which files it writes;
   tasks with disjoint files start as soon as their inputs exist, up to the load limit. An "A → B"
   order needs a reason. Split a worker that spans several plugins or folders into one per folder.
+- A spec names the class, task or hook it integrates with only after tracing this case's runtime
+  path to it (CMS, branch, entry point): that point decides whether existing guards wrap the new
+  code or are bypassed. A plan never names two files in one folder that differ only in case or
+  extension (`userFilters.ts`, `UserFilters.tsx`): a case-insensitive file system
+  resolves an extensionless import to one of them.
 - Settle an architecture fork (two designs with different build work) with the user before
   building on either; offer the simpler one first.
 - While a question waits for the user, start the read-only work that follows; ask independent
@@ -46,7 +52,7 @@ findings fixed once at the phase's end.
   Heavy jobs (WSL, Docker, wp-env, e2e) run at most 2 at once.
   Without a lock, count the heavy jobs you dispatched that are still running, and wait while the
   limit is reached. The plan names the suites that assert on timing: their final tally runs alone,
-  or the brief states the N-of-10 pass threshold.
+  or the brief states the N-of-10 pass threshold. A brief for sessions that run in parallel names its unit-test gate with a worker cap (e.g. `npx vitest run --maxWorkers=2`). A full run that is red only under load is rerun once alone with the cap: a pass there is reported as load-sensitive with both outputs, never as a plain pass.
 - The site the user clicks through runs a pinned checkout of reviewed commits, never a tree agents
   edit.
 - **Before dispatching agents that test against one database or site, read what the shared test
@@ -103,7 +109,9 @@ failure on the stronger model goes to the user with the diagnosis.
   (full gates, every test, registry and pinned list it edits) before fanning out or calling units
   file-disjoint. Every count, line number, baseline or code value a plan or brief
   names comes from a command run now and pasted (`git ls-files` for file counts, the gate's own
-  scanner for lines), or from reading every route that sets the value, never from a summary.
+  scanner for lines), or from reading every route that sets the value, never from a summary. A count passed between
+  agents names its unit and the tree or commit it was counted on; recount an agent's total before
+  relaying it.
 - After the first fix round, dispatch a fresh implementation agent (brief + last report) instead of
   resuming.
 - A report whose first line is `STATUS: PARTIAL` or `STATUS: BLOCKED` is accepted only with the exact call, its raw output and one
@@ -115,7 +123,10 @@ failure on the stronger model goes to the user with the diagnosis.
 - Check any agent silent for 20+ minutes; when one reports waiting on background work, check at
   once that the process runs and its output is fresh, and again within 20 minutes. A session that
   waits runs one background check that exits on the condition (a Monitor prints only that line)
-  and ends a turn only with a result or a decision, never "still waiting".
+  and ends a turn only with a result or a decision, never "still waiting". The condition is the started
+  PID's exit or an end marker the script writes last, on failure too, never a guessed count of
+  output lines (a wait for 29 lines met 28 and held a task open for 40 minutes); every wait loop
+  has a time bound and prints why it stopped.
 - Work inherited from an agent that stopped mid-task is unverified: run it before reading it as
   done. Compare each agent's reported changes (Commits, `git diff --stat`) with
   `git status --porcelain` before trusting its report.

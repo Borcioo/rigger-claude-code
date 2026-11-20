@@ -111,6 +111,7 @@ When two runs share one backend (two branches, two agents, a stream and a checkp
   `"runtime":"docker"` back). Serialise `wp-env run` calls; before parallelising any tool's CLI,
   find where it writes state.
 - Before trusting a red run on a shared environment, check whether another run is active on it.
+- **Basic auth for a test environment goes in `httpCredentials` with `origin`** (scheme://host:port), so the browser sends it only to that host. Never set it through `route.continue({headers})` or `extraHTTPHeaders`: those headers follow every redirect, so a 3xx carries the password off-host. Prove it with a two-server spike where the allowed host redirects off-host and the second server logs no `Authorization`.
 
 ## 6. Coverage must not move
 
@@ -131,6 +132,7 @@ When two runs share one backend (two branches, two agents, a stream and a checkp
 
 - Before merge, run each new or changed spec with `--repeat-each=<n>` (most flaky tests are flaky
   from the start); `--fail-on-flaky-tests` makes a pass on retry fail the run.
+- A failed setup or teardown command (`Command failed: wp …`) is an environment fault (wrong PHP on PATH, low `memory_limit`), not a flake: fix the environment; unlike a one-off ECONNRESET (§7), it is never retried. A failed teardown fails the run and names the fixtures it left.
 - Log what the test saw at the moment it read it (element rect, computed `display`, URL, count)
   before forming a theory.
 - Never compute a point in one round trip and click it in another without asserting that the rect

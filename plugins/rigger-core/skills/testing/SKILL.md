@@ -39,7 +39,8 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
 - Write no test to raise coverage, for logic-free code (getters, constants, framework calls) or
   that restates the implementation (a change detector). Delete or rewrite one you find.
 - Assert only what the behaviour needs; a test that prints values instead of asserting them is
-  not a test.
+  not a test. Assert a parsed value, never a substring of its serialised form (`'page=2'` matches
+  `per_page=250`).
 - A test per event order (click twice, response before render) only for an order that already
   failed.
 
@@ -72,7 +73,7 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
   that guards storage, a visibility filter, a sanitiser, a transaction or lock, an amount): mutate
   each match branch, each row of a pattern or name table, each stage (prefilter, chunk edge, page,
   batch) and the wiring (unhook the callback). A check whose removal stays green is untested
-  (write the test) or redundant (delete it, naming the layer that guarantees it).
+  (write the test) or redundant (delete it, naming the layer that guarantees it, once an independent implementation of that layer, such as a second parser for markup, also fails to break it); a comment states only guarantees a test proves.
 - **Other full-risk work** (shared infrastructure, migrations): one mutation per branch, up to 5
   per check, chosen by what callers rely on, the branches the brief lists under Risk first. Here
   only, a surviving mutant
@@ -97,9 +98,13 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
   intent"); a tool that misses it is unfit, not tuned. One known-answer control per input class.
 - A diagnostic or spike gets an input whose answer you know, read back before the run; an
   aggregate's top bucket is checked for a catch-all; a before/after measurement finds its run by a
-  unique marker in the probe's prompt, never as the newest file.
+  unique marker in the probe's prompt, never as the newest file. "Already fixed" needs the reported symptom reproduced in the environment the report names (a nearby fix in history proves nothing), or says it was not reproduced.
 - A refusal, control or rehearsal is judged by its printed reason line (and no traceback), never by
   a non-zero exit alone; a script's mismatch counter sets its exit code.
+- A denial test (401/403, a redirect to login) sends a request that succeeds without the gate (valid
+  fields, token, CSRF) and asserts the exact error code. An auth test, or a spike that decides
+  whether to stop, runs each side it claims (each guard, each token type) with a real credential
+  through the real guard, never an `actingAs`-style shortcut.
 - A port or rewrite is proved by running original and copy on the same input and listing every
   difference, the guards its callers supplied included.
 - Input read from outside gets one test per wrong shape (a list where a dict is expected, a number
@@ -109,12 +114,21 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
 
 - Fixtures as hostile as production: the app's own wrappers and providers; ids, slugs and
   timestamps derived by the framework, never hand-set; the worst-case row (build it when the data
-  has none); a case no layer between the test and the code can fake. A parser's fixtures are lines
+  has none), including one that breaks the contract a guard relies on (a record marked deleted that still has
+  a public URL); a case no layer between the test and the code can fake. A parser's fixtures are lines
   copied from real files, one per line shape.
 - State only the values that matter to the test; a builder or factory fills the rest.
+- A fake secret in a fixture is assembled at runtime (`'sk_' + 'live_…'`), never one literal in a
+  provider's shape (Stripe, GitHub, AWS, Slack): the host's push protection rejects the push
+  (GitHub GH013) after every local gate passed.
+- A loop that deletes rows or moves them out of its own filter gets a test that seeds more than two
+  chunks: paging by offset skips every second chunk; iterate by key (`chunkById()`, `lazyById()`)
+  or use one query.
 - Asserting the options passed to a library, or finding a CSS rule's text, is not testing the
   result: for visual, network or storage behaviour assert on the real output (pixels, HTTP
   response, DB row, file).
+- Code that attaches to routes or config at boot gets one test that boots as production does
+  (Laravel: `route:cache`, `config:cache`) and then requests the route.
 
 ## Flakiness and speed
 

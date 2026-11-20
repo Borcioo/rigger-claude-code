@@ -11,10 +11,10 @@
   the date of the copy; a new integration id or key goes to production only. Send test mail only
   to an address whose delivery you have confirmed (check the MX before trusting `+tag`).
 - Evidence before cause: read the raw log, response or value where it happened, then diagnose.
-  Before reporting something removed or fixed, check where it is loaded or served from now. Before
-  blaming code for a before/after mismatch, list what you ran in between; snapshot the baseline
-  before the first step. Async work (a queued job, a bulk API, a UI still filling) is judged after
-  it settles: poll, don't peek. Before debugging an error, `rg -i` its text or the tool's name in
-  the folder the `HARNESS_LESSONS_ARCHIVE` environment variable names, when it is set. To answer "did X ever happen", aggregate
-  (count per day and per endpoint, files in explicit chronological order) and read the newest file
-  on its own; never tail a concatenation.
+  Before reporting something removed, fixed or absent, look where it is served or stored now; a 403
+  or a guessed name proves nothing. Before blaming code for a before/after mismatch, list what you
+  ran in between; snapshot the baseline before the first step. Async work (a queued job, a bulk
+  API, a UI still filling) is judged after it settles: poll, don't peek. Before debugging an error,
+  `rg -i` its text or the tool's name in the folder the `HARNESS_LESSONS_ARCHIVE` environment
+  variable names, when it is set. To answer "did X ever happen", aggregate (count per day and
+  endpoint, files in date order) and read the newest file alone; never tail a concatenation.
