@@ -295,6 +295,14 @@ class HookFileTests(unittest.TestCase):
         self.assertIs(handler.get("async"), True)
         self.assertEqual(handler["timeout"], 10)
 
+    def test_core_pre_tool_use_handlers_allow_twenty_seconds(self):
+        """At 10 s a busy Windows machine timed out and the action went unchecked."""
+        path = ROOT / "plugins" / "rigger-core" / "hooks" / "hooks.json"
+        found = [handler for event, _group, handler in hook_handlers(path) if event == "PreToolUse"]
+        self.assertEqual(len(found), 2)
+        for handler in found:
+            self.assertEqual(handler["timeout"], 20)
+
     def test_the_report_shadow_command_writes_its_row_through_the_launcher(self):
         found = self.report_shadow_handlers()
         self.assertEqual(len(found), 1)
