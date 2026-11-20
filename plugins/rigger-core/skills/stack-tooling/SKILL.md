@@ -72,6 +72,18 @@ Run `actionlint` before committing a workflow change, `shellcheck` on bash scrip
 `jq`/`yq` for JSON/YAML; on Windows with rigger-windows installed, details in
 `rigger-windows:windows-dev-env`.
 
+## Test guards (set once per project; how to test is in `rigger-core:testing`)
+
+| Guard | Stack | Setting |
+|---|---|---|
+| A test with no assertions fails | PHPUnit | `failOnRisky="true"` (risky is only marked by default; the run exits 0) |
+| | Jest, Vitest | `expect.hasAssertions()` in async tests (off by default) |
+| Shuffled order | PHPUnit | `--order-by=random`, replay with `--random-order-seed` |
+| | pytest | `pytest-randomly` (on once installed, prints the seed) |
+| | Vitest, Jest | Vitest `sequence.shuffle`; Jest `--randomize` (within a file) |
+| Cheaper mutation runs | PHP | Infection, mutating only the files changed in the pull request |
+| | Python | mutmut (covered tests only, cached; on Windows only inside WSL) |
+
 ## Open spikes (do one when you next touch that project)
 
 - WordPress block or admin JS in the spaces-in-parens style: oxlint `jsPlugins` with

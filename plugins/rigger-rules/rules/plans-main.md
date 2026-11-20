@@ -3,9 +3,8 @@
 - A brief or full requirements never waive brainstorming or planning (with superpowers installed:
   `superpowers:brainstorming`, then `superpowers:writing-plans`), the thinking pass (goal, reader,
   what exists, what can go wrong).
-- Every spec and plan states its estimate in agent working hours, lines of code and of tests
-  (as many as code for full checks under the Tests rules' risk bullet), the simpler version and
-  what it drops.
+- Every spec and plan states its estimate in agent working hours, lines of code and of tests,
+  the simpler version and what it drops.
 - Plan size decides the process: more than 5 tasks, or touching security, data, migrations or
   shared infrastructure (auth, routing, build, schema): a reviewer subagent checks the plan first
   and execution is subagent-driven unless the work is mechanical; otherwise the main session

@@ -28,9 +28,10 @@ ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these files: they may be rewritten, never grown. Lower the ceiling when they shrink.
-RULES_CEILING_BYTES = 30293
+RULES_CEILING_BYTES = 28059
 RULES_MIN_FILES = 19
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
+TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"
 ROW_RE = re.compile(r"\| .+ \| `([a-z-]+):([a-z-]+)` \|")
 
 
@@ -223,8 +224,8 @@ class CrossPluginWordingTests(unittest.TestCase):
 
     def test_safe_edit_is_conditional_and_the_worktree_route_is_not(self):
         self.assertIn(
-            "Red runs: in a worktree, or in place only through `<rigger-windows root>/tools/safe-edit/safe-edit.ps1 -Run` "
-            "with rigger-windows installed (usage in its header).", self.text("tests.md"))
+            "Red runs: in a worktree, or in place only through `safe-edit.ps1 -Run` (needs rigger-windows).",
+            self.text("tests.md"))
         self.assertIn(
             "go through the Edit tool or `safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows)",
             self.text("defects.md"))
@@ -287,6 +288,25 @@ class PlanStopTests(unittest.TestCase):
     def test_the_state_file_rule_names_the_plan_and_stop_keys(self):
         text = " ".join(rules_text("rigger-core", "state-file.md").decode("utf-8").split())
         self.assertIn("`updated: <ISO time>` / `plan:`, `stop:` when set / `---`", text)
+
+
+class TestingSkillTriggerTests(unittest.TestCase):
+    """Where the TDD skill is loaded, the testing skill that overrides it is loaded too."""
+
+    def test_the_testing_skill_rides_every_tdd_trigger(self):
+        # The Skill cell (the last one) of every row that loads TDD loads the testing skill first.
+        rows = [line.split("|") for line in rules_text("rigger-rules", "skills.md").decode("utf-8").splitlines()
+                if line.startswith("|")]
+        cells = [row[-2] for row in rows if "superpowers:test-driven-development" in row[-2]]
+        self.assertTrue(cells, "no TDD row read from skills.md")
+        for cell in cells:
+            self.assertIn("`rigger-core:testing`, then `superpowers:test-driven-development`", cell)
+        worker = " ".join((PLUGINS / "rigger-core" / "agents" / "worker.md").read_text(encoding="utf-8").split())
+        self.assertIn("Load `rigger-core:testing` before writing code or tests and, where superpowers is "
+                      "installed, `superpowers:test-driven-development` after it", worker)
+        lines = TESTING_SKILL.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines[:4], ["---", "name: testing", "description: >-",
+                                     "  Load BEFORE writing, changing or reviewing tests or a red run: a feature or bugfix test, a test"])
 
 
 class RulesSizeTests(unittest.TestCase):
