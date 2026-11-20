@@ -30,10 +30,16 @@ findings fixed once at the phase's end.
   same holds for separate sessions: one that writes works in its own worktree, not the shared
   checkout (except under the shared-tree bullet below). First `git worktree list` shows which
   branches others hold and `git -C <path> status --short` on each the files they touch; stay out of
-  those.
+  those. On macOS/Linux a worktree may symlink `node_modules` only when it is absent (`[ -e node_modules ] || ln -s …`; `ln -s` into an existing dir nests the link and the runner loads two copies); never link `vendor` (Composer then loads the main checkout's code), and on Windows copy or install instead.
+- A worktree session that fails to start is reproduced by hand before any retry (`git worktree add -b claude/probe <path>`, removed after). The desktop app names branches `claude/<slug>`, which git refuses while a local branch `claude` exists (`git branch --list claude`).
 - A plan names for each task what it needs (a sha, a file, a decision) and which files it writes;
   tasks with disjoint files start as soon as their inputs exist, up to the load limit. An "A → B"
   order needs a reason. Split a worker that spans several plugins or folders into one per folder.
+- A spec names the class, task or hook it integrates with only after tracing this case's runtime
+  path to it (CMS, branch, entry point): that point decides whether existing guards wrap the new
+  code or are bypassed. A plan never names two files in one folder that differ only in case or
+  extension (`userFilters.ts`, `UserFilters.tsx`): a case-insensitive file system
+  resolves an extensionless import to one of them.
 - Settle an architecture fork (two designs with different build work) with the user before
   building on either; offer the simpler one first.
 - While a question waits for the user, start the read-only work that follows; ask independent
@@ -46,7 +52,7 @@ findings fixed once at the phase's end.
   Heavy jobs (WSL, Docker, wp-env, e2e) run at most 2 at once.
   Without a lock, count the heavy jobs you dispatched that are still running, and wait while the
   limit is reached. The plan names the suites that assert on timing: their final tally runs alone,
-  or the brief states the N-of-10 pass threshold.
+  or the brief states the N-of-10 pass threshold. A brief for sessions that run in parallel names its unit-test gate with a worker cap (e.g. `npx vitest run --maxWorkers=2`). A full run that is red only under load is rerun once alone with the cap: a pass there is reported as load-sensitive with both outputs, never as a plain pass.
 - The site the user clicks through runs a pinned checkout of reviewed commits, never a tree agents
   edit.
 - **Before dispatching agents that test against one database or site, read what the shared test
