@@ -129,6 +129,8 @@ When two runs share one backend (two branches, two agents, a stream and a checkp
 
 ## 8. Flakes: look before theorising
 
+- Before merge, run each new or changed spec with `--repeat-each=<n>` (most flaky tests are flaky
+  from the start); `--fail-on-flaky-tests` makes a pass on retry fail the run.
 - Log what the test saw at the moment it read it (element rect, computed `display`, URL, count)
   before forming a theory.
 - Never compute a point in one round trip and click it in another without asserting that the rect

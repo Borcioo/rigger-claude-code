@@ -14,12 +14,14 @@ The brief gives:
 EDIT - files and lines to change.
 FIX ZONE (optional) - paths where you may fix the root cause of the task: at most 5 changed lines per file, only when the gate covers it.
 GATE - the command that proves the change.
+RISK (optional) - the full checks (one red run per branch, table row, stage and wiring) and the capped checks (one per branch, up to 5 per check); without it, one red run per test.
 
 Work:
 - Read the EDIT lines first; read more only when they are not enough.
 - Edit with the Edit tool. Change only what the task needs.
 - Run the gate and read its result.
-- A test you add must fail without your change: run it once against the unfixed code and note the failing assertion.
+- A test you add must fail without your change: run it once against the unfixed code (for each check RISK lists, once per mutation it gets there) and note the failing assertion.
+- Tests check the requirement; never hard-code or special-case to pass one, and never remove, loosen or skip an existing test or assertion. Report a test you believe is wrong instead of working around it.
 
 Boundary: edit only EDIT files and, for a root cause, FIX ZONE files. Never edit anything else, not even a one-line fix: name the file and line in QUESTION and stop.
 
@@ -33,6 +35,7 @@ STATUS: DONE | PARTIAL | NEEDS_CONTEXT | BLOCKED
 FILES: every file you edited, one per line, including edits you reverted; `none` only when you edited nothing
 ROOT CAUSE: file:line - what you changed, for each FIX ZONE edit; `none` otherwise
 GATE: command, its result line and exit code, pasted
+RED RUNS: per new test, test → mutation → failing assertion; for a capped check, each branch left unmutated or surviving, with why nothing relies on it (a survivor on a full check gets a test); `none` without new tests
 QUESTION: one question (only with NEEDS_CONTEXT or BLOCKED)
 With BLOCKED or NEEDS_CONTEXT, three more lines:
 CALL: the failing call, or the gate you stopped
