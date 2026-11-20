@@ -51,8 +51,9 @@ only within the limit above and report a run you had to wait for.
 and `rigger-core:reviewer` load them themselves, `rigger-core:implementer` gets none.
 **Browser:** which one, or none. **Risk:** low / full, as the tests rule defines it (rigor follows risk, check by
 check). With full, list the
-checks that get mutations (`<capability and ownership rules, validation, visibility, ...>`);
-the rest of the change is low.
+checks that get a mutation per branch, table row, stage and wiring (`<capability and ownership rules, validation, visibility, ...>`)
+and those capped at 5 (`<shared infrastructure, migrations>`); the rest of the change is low. For
+`rigger-core:implementer`, pass both groups as RISK.
 
 **Pitfalls**
 - Project: `<project CLAUDE.md, Pitfalls section>` — read it first.
@@ -93,7 +94,8 @@ An approval you need from the user goes in the Result line, as the question to a
    the exit code; plus the duration.
 4. **Red runs:** for every new guard or test the brief lists as full — the command, the guarded
    code removed (on a copy or worktree), the assertion that failed, and proof the mutation
-   executed (a log or counter); for the rest, the red run of the test as written.
+   executed (a log or counter), plus, for capped checks, each unmutated or surviving branch with why nothing relies on
+   it; for the rest, one line per test: test id → mutation → failing assertion line.
 5. **ROOT CAUSE:** `file:line - what changed` for each FIX ZONE edit, or "none".
 6. **Raw evidence** for every bug or cause claimed: the console line, raw response, log entry or
    measured value, read where it happened — not a paraphrase.
@@ -112,7 +114,8 @@ An approval you need from the user goes in the Result line, as the question to a
 
 - [ ] Each **Done when** item is listed with pass or fail and the evidence that shows it (command
       output, screenshot, `file:line`); an item without evidence fails.
-- [ ] Each new guard has a red run that failed on its assertion, with the mutation proven executed.
+- [ ] Each new guard has a red run that failed on its assertion, with the mutation proven executed;
+      each unmutated or surviving branch of a capped check is listed with why nothing relies on it.
 - [ ] Each new guard lists the paths around it (another client, a followed redirect, an
       overridable function, the browser), each with a test.
 - [ ] Each check, eval or aggregate that can report nothing shows its positive control caught
