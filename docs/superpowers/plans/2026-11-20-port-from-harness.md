@@ -6,6 +6,27 @@ client or person names, hosts or paths. Sizes: S = at most ~30 changed lines and
 tool, M = a skill, rule or script change with tests, L = a new hook or tool or more than ~300
 lines. Hours are agent working hours (code and tests together).
 
+## Status (2026-11-20, stopped by the owner)
+
+| Batch | Branch | PR | State |
+|---|---|---|---|
+| 1 | `feature/sad-saha-b28075` | #12 (base `main`) | done, gate passed, `--verify` ok |
+| 2 | `feature/port-batch-2-testing` | #13 (base batch 1) | done, gate passed, `--verify` ok; a later commit removed stray `.rej` files |
+| 3 | `feature/port-batch-3-lessons` | #14 (base batch 2) | done, gate passed, `--verify` ok |
+| 4 | `feature/port-batch-4-weak-test-guard` | none yet | WIP, see below |
+| 5 to 7 | none | none | not started |
+
+Batch 4 so far (one `wip:` commit, no gate run, not verified): #30 weak-test-guard applied cleanly
+(tool, its tests, two `Bash`/`PowerShell` `*commit*` handlers in `rigger-core/hooks/hooks.json` with
+timeout 20, `DuplicateHookTests` count +2). The repo test for the 20 s timeout now expects 4
+PreToolUse handlers. Not yet run: `tests/test_repo.py`, the weak-test-guard tests, the side-session
+guard test and the sweep. Not started: red runs of the changed assertions, #32, the changelog line.
+
+Next step: on the batch 4 branch run those tests, fix what fails, add the changelog entry, port #32
+(testing-skill pitfalls, `INSTALL.md` line, the weak-test-guard hunk), run the full gate and
+`--verify`, push and open the PR with base `feature/port-batch-3-lessons`. Then batches 5, 6, 7 as
+listed below. Merge order: #12, #13, #14, then the batch 4 PR. Nothing is merged, tagged or released.
+
 ## Items
 
 | # | Source | What it changes | Applies to Rigger | Target files | Size | Needs | Est. h |
