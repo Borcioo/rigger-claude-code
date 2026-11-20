@@ -992,6 +992,9 @@ def worktree_cases(root, links):
         ("PowerShell", "$w = " + q(wt) + "; git worktree remove --force $w", None, J),
         ("PowerShell", "git -C " + q(root) + " worktree remove -f wt", None, J),
         ("PowerShell", "git worktree remove wt", root, J),
+        # a junction deleted earlier in the same command still counts: the fix says to delete it in its own call
+        ("PowerShell", "[IO.Directory]::Delete(" + q(os.path.join(wt, "src", "node_modules")) + "); git worktree remove "
+         + q(wt), None, "in a call of its own"),
         ("PowerShell", "git worktree remove --force .\\wt\\", root, J),
         ("Bash", "cd " + q(msys) + " && git worktree remove --force wt", None, J),
         ("Bash", "d=$(pwd); git worktree remove \"$d\"", root, U),   # no folder the hook can name, never the cwd
