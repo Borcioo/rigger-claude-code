@@ -45,6 +45,16 @@ class CoordinateWiring(unittest.TestCase):
         self.assertRegex(COORDINATE, r"quoting the user's plan approval \(for the default branch, their\s+"
                                      r"instruction\) in quotes")
 
+    def test_split_step_runs_heavy_parts_two_at_once_and_groups_light_ones(self):
+        step_two = " ".join(COORDINATE[COORDINATE.index("\n2. "):COORDINATE.index("\n3. ")].split())
+        self.assertIn("at most 2 heavy parts run at once", step_two)
+        self.assertIn("several light parts go to one session", step_two)
+
+    def test_over_the_app_cap_the_user_starts_a_card_and_no_agent_takes_it(self):
+        flat = " ".join(COORDINATE.split())
+        self.assertIn("past the app's cap of sessions working at once", flat)
+        self.assertIn("never to a background agent without the user's OK", flat)
+
     def test_the_wrap_up_start_button_follows_app_refused(self):
         self.assertRegex(COORDINATE, r"set `stop: app-refused`[^.]{0,60}`wrap_up` question with a start button")
 

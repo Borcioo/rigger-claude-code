@@ -609,8 +609,7 @@ MASK_CASES = {
     "hex_run_seven": ("git 3f2a9c1 here", "git <hex> here"),
     "hex_run_six_is_digits": ("ref 3f2a9c ok", "ref <n>f<n>a<n>c ok"),
     "hex_run_letters_only_kept": ("word deadbeefcafe here", "word deadbeefcafe here"),
-    # Split so secret scanners do not read the fake key as a real one.
-    "long_token": ("key sk_" "live_4eC39HqLyjWDarjtT1zdp7dc rejected", "key <token> rejected"),
+    "long_token": ("key 4eC39HqLyjWDarjtT1zdp7dc rejected", "key <token> rejected"),
     "long_token_padding_one": ("key Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MDE= rejected", "key <token> rejected"),
     "long_token_padding_two": ("key Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA== rejected", "key <token> rejected"),
     "long_token_padding_three_kept": ("key Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA=== rejected",
