@@ -814,8 +814,7 @@ SECRET_LINES = [
     ("Error: invalid recipient jane.doe@example.com", "doe", "<email>"),
     # Short enough that the 100-character group key keeps the whole masked line.
     ("curl: (22) error: 401 https://example.com/p?api_key=pk_live_AbCdEf123", "pk_live_AbCdEf", "/p?<query>"),
-    # Split so secret scanners do not read the fake key as a real one.
-    ("Stripe: invalid API key sk_" "live_51HxYzAbCdEfGhIjKlMnOpQr provided", "HxYzAbCdEfGhIjKlMnOpQr", "key <token>"),
+    ("Payment API: invalid key 51HxYzAbCdEfGhIjKlMnOpQr provided", "HxYzAbCdEfGhIjKlMnOpQr", "key <token>"),
     ("Error: bad signature 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b in header", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b",
      "signature <hex> in"),
     # 40 characters of base64 with `+` and padding; its head has no digit, so the digit mask cannot hide a leak
