@@ -78,6 +78,10 @@ Each entry: what happens, then what to do.
     watch the real embed for 5 s after load (inserted, removed, resized). Never hide one you still
     need by clipping or zero size (use opacity 0 + absolute), never lock scroll by shifting `body`
     under one (use `overflow: hidden` on `html`), and open a modal from its real, scrolled trigger.
+18. **A click on a link inside a clickable row proves nothing about the link.** Click and Enter on
+    the anchor bubble to the row, whose own navigate runs last and wins, so mutating the link's
+    address stays green. Assert the link's `href` (what open-in-new-tab and copy-link use), and test
+    the row's path through a click on the row itself.
 
 ## Tools on demand
 
