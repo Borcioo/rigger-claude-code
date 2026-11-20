@@ -40,7 +40,8 @@ change: `CONTRIBUTING.md`.
 - **JSON read from outside gets one test per wrong shape** (a list where a dict is expected, a number where a list is expected — a string iterates harmlessly and kills no `isinstance(…, list)` mutant); run the mutant to prove each.
 - **A plan that adds or removes a hook handler lists `tests/test_repo.py`** (`DuplicateHookTests` pins the handler count per plugin).
 - **`claude -p` disables `AskUserQuestion`:** a hook proof on it runs in SDK mode (`--input-format stream-json --output-format stream-json --permission-prompt-tool stdio`) and first checks the tool reached the stub's request.
-- **Hook wiring is proven against `plugins/rigger-rules/tests/stub_api.py` behind `ANTHROPIC_BASE_URL`** in an isolated config (no cost, no real model); the report says "stub".
+- **Hook wiring is proven against `plugins/rigger-rules/tests/stub_api.py` behind `ANTHROPIC_BASE_URL`** in an isolated config (no cost, no real model); the report says "stub". An eval suite's wiring too: the stub's requests show what reached each case, and a stub that answers with a `Skill` tool_use runs the `tool_used` graders both ways.
+- **A `tool_used` grader with `max: 0` also needs `min: 0`** (the default `min: 1` makes it "expected 1..0", never passing).
 - **Test stubs:** a stub recognises a call by its content, not its argv position; a stub for an `.exe` is a real `.exe` (a `.cmd` changes the quoting the code sees, and `exit /b N` inside a nested block returns 0); check a stub's exit code directly.
 - **Read the CLI version right before the first real run:** auto-update can move the `claude` on PATH mid-task, and a desktop app may run its own copy.
 - **Before a stub URL or an isolation runs next to a real config,** list every inherited env override against each enabled hook with third-party plugins on, prove the isolation with a canary on a scratch config first, and abort on any FAIL.

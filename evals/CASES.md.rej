@@ -1,0 +1,23 @@
+diff a/evals/CASES.md b/evals/CASES.md	(rejected hunks)
+@@ -1,7 +1,7 @@
+ # Eval case inventory
+ 
+ One row per case of a plugin's `evals/` suite. `source_ref` is a file in the lessons archive
+-(`lessons/<name>`). A row exists only when the rule or skill is in the plugin today, the facts note
++(`lessons/<name>`), or `none recorded` with the risk the case guards. A row exists only when the rule or skill is in the plugin today, the facts note
+ (`docs/superpowers/notes/2026-11-13-plugin-eval-facts.md`) shows that kind of content reaches an eval
+ session, and one of the six grader types can read the outcome. Cases ask in prose and read the final
+ message: no case grants a shell (native Windows refuses a granted shell, the WSL run is not proven).
+@@ -26,6 +26,12 @@ Each case also has a `tool_used` grader on `Skill` (`arm: with-only`) next to th
+ | add-commit-push-chain | lessons/2026-11-02-git-add-pathspec-aborted-then-pushed | `git-workflow` (Commits) | chains add, commit and push with `&&` and reads `git status --short` first | `regex` | native |
+ | clean-merge-claim | lessons/2026-11-03-clean-merge-claim-breaks-test | `git-workflow` (Branches) | backs a "merges cleanly" claim with `git merge-tree` output | `regex` | native |
+ | separate-agent-subagent | lessons/2026-10-22-separate-agent-means-subagent | `orchestrating-subagents` | reads "a separate agent" as a subagent, not a new session | `regex` | native |
++| testing-skill-loads | none recorded: test guidance lives only in the on-demand skill since #27 | `testing` | loads `testing` before reviewing and rewriting a test, and asserts an exact value | `regex` | native |
++
++`add-commit-push-chain` is the negative control of `testing-skill-loads`: its second `tool_used`
++grader (`max: 0`) fails when `testing` loads on a git question, and its `git-workflow` grader in the
++same run shows the Skill tool was live. The suite loads `rigger-core` alone, so the skill must load
++from its own description; the `rigger-rules` skills table is not in these sessions.
+ 
+ ## rigger-windows
+ 
