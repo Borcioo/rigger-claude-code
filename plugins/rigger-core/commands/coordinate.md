@@ -38,7 +38,8 @@ one full gate runs on the machine at a time.
    once, and several light parts go to one session (it may hand them to its own subagents), so the
    app's few concurrent sessions cover more of the plan.
 3. Every brief states: goal, files, what done looks like, which checks fit what the change can
-   reach, the model it runs on (passed as `model` to `start_session`: the skill's model rule covers
+   reach (the session loads `rigger-core:testing` and runs only those; the full suite and the gate
+   are yours, at checkpoints), the model it runs on (passed as `model` to `start_session`: the skill's model rule covers
    sessions too, and a session without it inherits the strongest model), the parts it hands to a
    cheaper worker when its tasks mix risk, and that the session ends each turn with no ask and none
    while its own background run is going: it waits inside the turn and ends with a result or a

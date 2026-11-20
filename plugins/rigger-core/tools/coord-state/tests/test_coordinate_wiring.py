@@ -45,6 +45,11 @@ class CoordinateWiring(unittest.TestCase):
         self.assertRegex(COORDINATE, r"quoting the user's plan approval \(for the default branch, their\s+"
                                      r"instruction\) in quotes")
 
+    def test_brief_step_loads_testing_and_keeps_the_full_suite(self):
+        step_three = " ".join(COORDINATE[COORDINATE.index("\n3. "):COORDINATE.index("\n4. ")].split())
+        self.assertIn("loads `rigger-core:testing` and runs only those", step_three)
+        self.assertIn("the full suite and the gate are yours, at checkpoints", step_three)
+
     def test_split_step_runs_heavy_parts_two_at_once_and_groups_light_ones(self):
         step_two = " ".join(COORDINATE[COORDINATE.index("\n2. "):COORDINATE.index("\n3. ")].split())
         self.assertIn("at most 2 heavy parts run at once", step_two)
