@@ -1,5 +1,6 @@
 ---
 tags: [native]
+plugins: ['../..', '../../deps/rigger-core']
 runs: 1
 max_turns: 4
 allowed_tools: [Read]

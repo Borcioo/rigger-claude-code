@@ -18,7 +18,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "plugins" / "rigger-core" / "tools" / "assemble"))
 
+import eval_suite_check  # noqa: E402
+import manifest  # noqa: E402
 import run_tests  # noqa: E402
 import test_py_sh  # noqa: E402
 
@@ -92,11 +95,77 @@ class ManifestTests(unittest.TestCase):
                 )
 
     def test_no_version_anywhere(self):
-        manifests = [MARKETPLACE] + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
-        self.assertEqual(len(manifests), 8)
+        manifests = (
+            [MARKETPLACE]
+            + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
+            + sorted(ROOT.glob("plugins/*/rigger-module.json"))
+        )
+        self.assertEqual(len(manifests), 15)
         for path in manifests:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertFalse(find_key(load_json(path), "version"))
+
+    def test_every_plugin_has_a_valid_module_manifest(self):
+        roots = sorted(path.parent.parent for path in ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
+        self.assertEqual(len(roots), 7)
+        for root in roots:
+            with self.subTest(plugin=root.name):
+                module = manifest.load_manifest(root, "rigger", "installed")
+                self.assertEqual(module.name, root.name)
+                self.assertEqual(module.layer, "general")
+                self.assertIsNone(module.fills)
+
+    def test_rules_lists_every_rules_file_once(self):
+        checked = 0
+        for root in sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json")):
+            plugin = root.parent.parent
+            with self.subTest(plugin=plugin.name):
+                listed = [entry.file for entry in manifest.load_manifest(plugin, "rigger", "installed").rules]
+                on_disk = sorted("rules/" + path.name for path in plugin.glob("rules/*.md"))
+                self.assertEqual(sorted(listed), on_disk)
+                self.assertEqual(len(listed), len(set(listed)))
+                checked += len(listed)
+        self.assertEqual(checked, 19)
+
+    def test_modules_with_rules_depend_on_core(self):
+        with_rules = 0
+        for root in sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json")):
+            plugin = root.parent.parent
+            if plugin.name == manifest.CORE:
+                continue
+            with self.subTest(plugin=plugin.name):
+                if manifest.load_manifest(plugin, "rigger", "installed").rules:
+                    with_rules += 1
+                    self.assertIn(manifest.CORE, load_json(root).get("dependencies", []))
+        self.assertEqual(with_rules, 5)
+
+    def test_eval_cases_load_their_dependencies(self):
+        cases_md = (ROOT / "evals" / "CASES.md").read_text(encoding="utf-8")
+        cases = 0
+        for evals in sorted(ROOT.glob("plugins/*/evals")):
+            plugin = evals.parent
+            with self.subTest(plugin=plugin.name):
+                self.assertEqual(eval_suite_check.check_suite(plugin, cases_md), [])
+                cases += len(eval_suite_check.case_dirs(plugin))
+        self.assertGreaterEqual(cases, 15)
+
+    def test_tests_paths_cover_every_discovered_test_file(self):
+        matched = 0
+        for path in run_tests.discover(ROOT):
+            parts = path.relative_to(ROOT).parts
+            if parts[0] != "plugins":
+                continue
+            plugin = ROOT / "plugins" / parts[1]
+            module = manifest.load_manifest(plugin, "rigger", "installed")
+            folders = [folder for pattern in module.tests["paths"] for folder in plugin.glob(pattern.rstrip("/"))]
+            with self.subTest(file=path.relative_to(ROOT).as_posix()):
+                self.assertTrue(any(folder in path.parents for folder in folders))
+            matched += 1
+        self.assertGreaterEqual(matched, 40)
+        for plugin in sorted(ROOT.glob("plugins/*/rigger-module.json")):
+            for pattern in manifest.load_manifest(plugin.parent, "rigger", "installed").tests["paths"]:
+                with self.subTest(plugin=plugin.parent.name, path=pattern):
+                    self.assertTrue(list(plugin.parent.glob(pattern.rstrip("/"))))
 
     def test_py_sh_copies_identical(self):
         copies = sorted(ROOT.glob("plugins/*/bin/py.sh"))

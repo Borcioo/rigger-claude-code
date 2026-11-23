@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "name": "rigger-rules",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/00-scope.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/english.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/scope.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/git.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/tests.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/verify.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/verify-main.md",
+      "audience": "main"
+    },
+    {
+      "file": "rules/plans.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/plans-main.md",
+      "audience": "main"
+    },
+    {
+      "file": "rules/defects.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/environment.md",
+      "audience": "main"
+    },
+    {
+      "file": "rules/skills.md",
+      "audience": "both"
+    }
+  ],
+  "triggers": [],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": []
+  }
+}

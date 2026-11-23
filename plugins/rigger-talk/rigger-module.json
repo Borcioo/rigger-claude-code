@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "rigger-talk",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/talk.md",
+      "audience": "main"
+    }
+  ],
+  "triggers": [],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": []
+  }
+}

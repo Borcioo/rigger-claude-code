@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "rigger-panel",
+  "layer": "general",
+  "fills": null,
+  "rules": [],
+  "triggers": [],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": []
+  }
+}
