@@ -6,6 +6,7 @@ written for a later phase still loads.
 """
 
 import json
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -19,6 +20,10 @@ AUDIENCES = ("main", "subagent", "both")
 OS_NAMES = ("windows", "macos", "linux")
 SUBAGENT_RULES = ("none", "all")
 MAX_DEPTH = 32
+BEFORE_MAX = 300
+LOAD_MAX = 4
+# Control, format, line and paragraph separators, lone surrogates, private use and unassigned code points.
+UNSAFE = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn")
 
 
 class ManifestError(Exception):
@@ -126,6 +131,49 @@ def check_requires(value, what: str) -> Tuple[str, ...]:
     return _requires(value, what)
 
 
+def line_problem(text: str) -> Optional[str]:
+    if "|" in text:
+        return "holds |"
+    if any(unicodedata.category(ch) in UNSAFE for ch in text):
+        return "holds a line break or control character"
+    return None
+
+
+def row_problem(row) -> Optional[str]:
+    if row is None:
+        return None
+    if not isinstance(row, dict):
+        return "must be an object or null"
+    before, load = row.get("before"), row.get("load")
+    if not isinstance(before, str):
+        return "before must be a string"
+    problem = line_problem(before)
+    if problem:
+        return "before " + problem
+    if len(before) > BEFORE_MAX:
+        return "before over %d characters" % BEFORE_MAX
+    if not isinstance(load, list):
+        return "load must be a list"
+    if not 1 <= len(load) <= LOAD_MAX:
+        return "load must hold 1 to %d entries" % LOAD_MAX
+    for entry in load:
+        if not isinstance(entry, str):
+            return "load entries must be strings"
+        problem = line_problem(entry)
+        if problem:
+            return "load entry " + problem
+    try:
+        _requires(row.get("requires"), "requires")
+    except ManifestError as error:
+        return str(error)
+    if any(line_problem(item) for item in row.get("requires") or []):
+        return "requires entry holds a line break, control character or |"
+    section = row.get("section")
+    if section is not None and (not isinstance(section, str) or line_problem(section)):
+        return "section must be a one-line string"
+    return None
+
+
 def _inside(file: str) -> bool:
     """A rules path relative to the plugin root, written with `/`, that cannot leave it."""
     if not file or file.startswith("/") or "\\" in file or ":" in file:
@@ -183,6 +231,11 @@ def _triggers(value) -> List[TriggerRow]:
             raise ManifestError("trigger %s: load must hold strings" % row_id)
         if section is not None and not isinstance(section, str):
             raise ManifestError("trigger %s: section must be a string" % row_id)
+        if line_problem(row_id):
+            raise ManifestError("trigger id %s" % line_problem(row_id))
+        problem = row_problem(row)
+        if problem:
+            raise ManifestError("trigger %s: %s" % (row_id, problem))
         rows.append(TriggerRow(row_id, before, tuple(load), section, _requires(row.get("requires"), "trigger " + row_id)))
     return rows
 

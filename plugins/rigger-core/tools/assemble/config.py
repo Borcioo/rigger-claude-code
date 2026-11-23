@@ -32,10 +32,9 @@ KEYS = {
 # Keys with an effect in phase 1 when set above level 1; the others are recorded only (D11).
 ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects"))
 DEFAULTS_FILE = "rigger-defaults.json"
-BEFORE_MAX = 300
-LOAD_MAX = 4
-# Control, format, line and paragraph separators, lone surrogates, private use and unassigned code points.
-_UNSAFE = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn")
+BEFORE_MAX = manifest.BEFORE_MAX
+LOAD_MAX = manifest.LOAD_MAX
+_UNSAFE = manifest.UNSAFE
 
 Path_ = Tuple[str, ...]
 
@@ -113,47 +112,8 @@ def _leaves(value, path: Path_ = (), rows: bool = True) -> List[Tuple[Path_, obj
     return found
 
 
-def _line_problem(text: str) -> Optional[str]:
-    if "|" in text:
-        return "holds |"
-    if any(unicodedata.category(ch) in _UNSAFE for ch in text):
-        return "holds a line break or control character"
-    return None
-
-
-def _row_problem(row) -> Optional[str]:
-    if row is None:
-        return None
-    if not isinstance(row, dict):
-        return "must be an object or null"
-    before, load = row.get("before"), row.get("load")
-    if not isinstance(before, str):
-        return "before must be a string"
-    problem = _line_problem(before)
-    if problem:
-        return "before " + problem
-    if len(before) > BEFORE_MAX:
-        return "before over %d characters" % BEFORE_MAX
-    if not isinstance(load, list):
-        return "load must be a list"
-    if not 1 <= len(load) <= LOAD_MAX:
-        return "load must hold 1 to %d entries" % LOAD_MAX
-    for entry in load:
-        if not isinstance(entry, str):
-            return "load entries must be strings"
-        problem = _line_problem(entry)
-        if problem:
-            return "load entry " + problem
-    try:
-        manifest.check_requires(row.get("requires"), "requires")
-    except manifest.ManifestError as error:
-        return str(error)
-    if any(_line_problem(item) for item in row.get("requires") or []):
-        return "requires entry holds a line break, control character or |"
-    section = row.get("section")
-    if section is not None and (not isinstance(section, str) or _line_problem(section)):
-        return "section must be a one-line string"
-    return None
+_line_problem = manifest.line_problem
+_row_problem = manifest.row_problem
 
 
 def _validate(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
