@@ -472,8 +472,12 @@ def part_bodies(found: Assembly, subagent: bool, count: Optional[int] = None) ->
     blocks = list(found.blocks)
     if found.notices:
         blocks.insert(0, ("", "".join(line + "\n" for line in found.notices).encode("utf-8", "replace"), "_notices"))
-    bodies, _ = pack(blocks, PART_CAP, count, _json_body if subagent else _identity)
-    return bodies
+    if subagent:
+        return pack(blocks, PART_CAP, count, _json_body)[0]
+    # Room in part 1 for the longest line only part 1 may add after packing (M1).
+    reserve = max(len(SNAPSHOT_MISSING), len(SNAPSHOT_NOT_WRITTEN)) + 1
+    bodies, _ = pack([("", b"\0" * reserve, "_reserve")] + blocks, PART_CAP, count, _identity)
+    return [bodies[0][reserve:]] + bodies[1:]
 
 
 def whole_text(found: Assembly) -> bytes:

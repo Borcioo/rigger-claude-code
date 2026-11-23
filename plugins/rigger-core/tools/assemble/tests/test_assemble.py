@@ -383,6 +383,43 @@ class OutputTests(Base):
         for index in range(1, 7):
             self.assertNotIn(b"\r", self.layout.part(index))
 
+    def test_part_cap_counts_escaped_bytes_near_the_limit(self):
+        # I6: a module section sized to fill part 1 to just under 9,000 bytes, half of it `"`.
+        small = "## Small\n\nsmall words\n"
+        mid = "## Mid\n\n" + "z" * 9100 + "\n"  # subagents only: over 9,000 bytes, under 9,400 with its root line
+        self.layout.module("mod-big", {"rules/big.md": ("## Big\n\nx\n", "both"), "rules/small.md": (small, "both"),
+                                       "rules/mid.md": (mid, "subagent")})
+        startup = self.layout.hook_input(source="startup")
+        reserve = len(b"rigger: snapshot not written; compaction will read the rules again\n")  # M1
+        room = 9000 - reserve - len(self.layout.part(1, stdin=startup)) + len(small) + len("x\n")
+        size = room - 10  # part 1 then ends 10 bytes under the cap: too little for the small section
+        filler = ('"' * (size // 2) + "y" * (size - size // 2 - 1) + "\n")
+        write(self.layout.plugins / "mod-big" / "rules" / "big.md", "## Big\n\n" + filler)
+        parts = [self.layout.part(i, stdin=startup) for i in range(1, 7)]
+        self.assertIn(filler.encode(), parts[0])
+        self.assertGreater(len(parts[0]), 8900)
+        self.assertLessEqual(len(parts[0]), 9000)
+        self.assertIn(b"small words", parts[1])  # the next section moves on to part 2
+        sub_in = self.layout.hook_input(hook_event_name="SubagentStart", agent_type="rigger-core:worker")
+        subs = [self.layout.part(i, subagent=True, stdin=sub_in) for i in range(1, 5)]
+        contexts = [json.loads(s.decode("utf-8"))["hookSpecificOutput"]["additionalContext"] if s else "" for s in subs]
+        for context in contexts:
+            self.assertLessEqual(len(json.dumps(context, ensure_ascii=False)[1:-1].encode("utf-8")), 9000)
+        joined = "".join(contexts)
+        self.assertNotIn(filler[:200], joined)  # escaped it is over a part: left out and named
+        self.assertIn("rigger: rules left out over the hook cap: big.big, mid.mid", joined)
+        self.assertIn("small words", joined)
+        # M1: the late line of part 1 still leaves the body at or under 9,000 bytes.
+        compact = self.layout.hook_input(session_id="m1", source="compact")
+        late = self.layout.part(1, stdin=compact)
+        self.assertTrue(late.startswith(b"rigger: snapshot missing; rules read again\n"))
+        self.assertLessEqual(len(late), 9000)
+        shutil.rmtree(str(self.layout.config / "rigger" / "state"))
+        write(self.layout.config / "rigger" / "state", "not a folder")
+        failing = self.layout.part(1, stdin=self.layout.hook_input(session_id="m1", source="startup"))
+        self.assertTrue(failing.startswith(b"rigger: snapshot not written"))
+        self.assertLessEqual(len(failing), 9000)
+
     def test_crash_prints_one_visible_line(self):
         original = assemble.assemble
 
