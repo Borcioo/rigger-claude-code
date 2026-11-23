@@ -34,6 +34,14 @@ This design makes Rigger a small fixed core plus modules:
   have an output contract. A different agent, skill or external CLI can fill a slot, and code checks
   its output.
 
+**Fixed core** (never a slot, never replaced by a module), all in rigger-core:
+
+- the orchestrator: `/rigger-core:coordinate` and `orchestrating-subagents`;
+- the state file rule and the compaction guard that reads it;
+- rules and trigger assembly, with its config resolver and snapshot (§7–§9);
+- the leak guard (§11.4);
+- the slot contracts and their checkers (§10).
+
 ## 2. Goals, non-goals, anti-goals
 
 ### Goals
@@ -96,7 +104,7 @@ This design makes Rigger a small fixed core plus modules:
 
 | Concern | Today | Where the design hooks in |
 |---|---|---|
-| Rules injection | One `SessionStart` handler per rules file, prints `Plugin root: <root>` then the file. `SubagentStart` prints the same as JSON `additionalContext`. | `rigger-rules/rules/rules_start.sh:145-160`, `rigger-rules/hooks/hooks.json:7-18,37-39`. The same byte-identical script is in 5 plugins. |
+| Rules injection | One `SessionStart` handler per rules file, prints `Plugin root: <root>` then the file. `SubagentStart` prints the same as JSON `additionalContext`. | `rigger-rules/rules/rules_start.sh:145-160`, `rigger-rules/hooks/hooks.json:7-18,37-39`. The script exists as 6 byte-identical copies, one per plugin with rules. Today there are 19 `SessionStart` rules handlers across those plugins. |
 | Per-plugin rules | Each plugin's `hooks.json` lists its files. | `rigger-core/hooks/hooks.json:27`, `rigger-lessons/hooks/hooks.json:18,29`, `rigger-windows/hooks/hooks.json:7-8,15-16`, `rigger-wp/hooks/hooks.json`, `rigger-talk/hooks/talk_start.sh:22` |
 | Personal rules | `<config dir>/rigger/rules.d/*.md`, byte order, `*-main.md` main-only, 9,000-byte cap. | `rigger-rules/rules/rules_extra.sh:15,31,78,101`, `rigger-rules/hooks/hooks.json:30,40` |
 | Rule removal for experiments | `HARNESS_RULES_DROP` by basename or `## ` heading. | `rules_start.sh:60-83`, `rigger-rules/README.md:47-65` |
@@ -166,9 +174,10 @@ This design makes Rigger a small fixed core plus modules:
     "<slot>[.<role>]": { "kind": "agent"|"skill"|"command"|"hook", "target": ..., "model": ... }
   },
   "rules": [                            rules files in print order
-    { "file": "rules/<name>.md", "audience": "main"|"subagent"|"both",
-      "requires": ["slot:<slot>" | "plugin:<name>"] }        optional; dropped when unmet
-  ],
+    { "file": "rules/<name>.md", "layer": "general"|"company",   optional; default: the module's layer
+      "audience": "main"|"subagent"|"both",
+      "requires": ["slot:<slot>" | "plugin:<name>" | "os:windows"|"os:macos"|"os:linux"] }
+  ],                                    requires is optional; a file whose requires is unmet is not printed
   "triggers": [                         rows of the skill-trigger table
     { "id": "<module>.<row>", "before": "<when, in words>",
       "load": ["<plugin>:<skill>" | "slot:<slot>[.<role>]", ...],
@@ -185,6 +194,14 @@ This design makes Rigger a small fixed core plus modules:
   }
 }
 ```
+
+`os:` is read from Python's `sys.platform`: `win32` is `windows`, `darwin` is `macos`, and anything
+else is `linux`. WSL is `linux`, which matches "native Windows only" in rigger-windows today.
+
+**Layer per rule: my reading of decision 1.** The decision says a manifest declares "the rules it
+adds with their layer". So `layer` is accepted per rules entry, and the module's own `layer` is that
+entry's default. An entry may not claim a layer above its module's: a `general` module cannot ship a
+`company` rule. The module-level `layer` also decides whether its `config` block counts as level 2.
 
 Validation is code, run by the session-start assembler and by the contract test:
 
@@ -345,8 +362,10 @@ Command targets are argv lists, run without a shell (§10.3).
 
 ### 7.5 Examples per level
 
-Level 1, `rigger-core/rigger-defaults.json` (phase 2 shape; phase 1 holds only `schema` and
-`triggers`):
+Level 1, `rigger-core/rigger-defaults.json`. Phase 1 already holds `schema`, `triggers` and `slots`
+with today's targets, so `{{slot:…}}` placeholders and core's slot-named trigger rows render today's
+names. Phase 1 does not validate slots, render a `## Slots` section, or let levels 2–4 change a slot.
+That is phase 2.
 
 ```json
 {
@@ -357,7 +376,7 @@ Level 1, `rigger-core/rigger-defaults.json` (phase 2 shape; phase 1 holds only `
     "implementer": { "kind": "agent", "target": "rigger-core:implementer", "model": "pinned" },
     "mapper":      { "kind": "agent", "target": "rigger-core:mapper",      "model": "pinned" },
     "testing":     { "kind": "skill", "target": "rigger-core:testing" },
-    "shell-guard": { "kind": "hook",  "target": "rigger-windows" },
+    "shell-guard": { "kind": "hook",  "target": "rigger-windows", "requires": ["os:windows"] },
     "lessons":     { "kind": "hook",  "target": "rigger-lessons" },
     "process": {
       "brainstorm": { "kind": "skill", "target": "superpowers:brainstorming" },
@@ -370,7 +389,8 @@ Level 1, `rigger-core/rigger-defaults.json` (phase 2 shape; phase 1 holds only `
 ```
 
 In phase 3 the defaults change to `rigger-review:reviewer`, `rigger-testing:testing` and
-`shellwise`.
+`shellwise`. The `os:windows` condition on `shell-guard` goes at the same time: until then, a macOS
+or Linux session does not get a "slot not filled" notice for a guard that never existed there.
 
 Level 2, inside a company module's manifest:
 
@@ -587,6 +607,8 @@ On `startup` and `clear`, part 1 writes
 `<config dir>/rigger/state/<session id>.resolved.json` atomically (write to a temp name, then
 rename). It holds:
 
+- the rendered text of every part, for the main session and for subagents, so `compact` prints it
+  as is;
 - the module list with versions;
 - the effective config with the source of every leaf;
 - every section id with its layer, module and file;
@@ -636,7 +658,7 @@ A slot entry is `{kind, target, model}`:
 
 | Field | Values |
 |---|---|
-| `kind` | `agent` (a subagent type), `skill` (a skill to load), `command` (an argv run by core), `hook` (an enabled plugin whose static hooks do the work) |
+| `kind` | `agent` (a subagent type), `skill` (a skill to load), `command` (an argv run by core), `hook` (an enabled plugin whose static hooks do the work). **My reading of decision 2:** the decision names three kinds, and `hook` is added because the shell-guard and lessons slots are filled by hooks that no config can move (§10.2). It is the "command" kind as Claude Code runs it, not a fourth mechanism. |
 | `target` | `<plugin>:<agent>`, `<plugin>:<skill>`, an argv list with `{base}`, `{head}`, `{out}`, `{scope}` placeholders, or a plugin name |
 | `model` | a model alias passed to the dispatch, `pinned` (the agent's frontmatter decides, as for implementer and mapper), or `by-rule` (the model rule of `orchestrating-subagents/SKILL.md:101-103` decides). Ignored for `skill` and `hook`. |
 
@@ -694,7 +716,7 @@ It moves with it in phase 3.
 | `implementer` | `rigger-core:implementer`, `pinned` | agent | `STATUS`, `FILES`, `ROOT CAUSE`, `GATE`, `RED RUNS`, optional `QUESTION`; with BLOCKED or NEEDS_CONTEXT also `CALL`, `OUTPUT`, `ALTERNATIVE` (`implementer.md:33-43`). |
 | `mapper` | `rigger-core:mapper`, `pinned` | agent | Only lines `path:START[-END] - text` (at most 12 words) or one `NOT FOUND: <terms>` (`mapper.md:14,18`). Each path exists at the reviewed commit. |
 | `testing` | `rigger-core:testing` → `rigger-testing:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware). The filling module ships the commit-time test guards. |
-| `shell-guard` | `rigger-windows` → `shellwise` | hook (plus a command for rule checks) | (a) A PreToolUse hook on `Bash` and `PowerShell` that prints nothing to allow, or one JSON deny whose reason names a rule id and a fix; it always exits 0 (`tests/test_repo.py:336`). (b) An internal error allows and prints nothing: a guard that exits 2 blocks the tools needed to fix it (`CLAUDE.md:32`). (c) Median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) A rule-check command `<argv> rule-check --rule <id> --shell bash\|powershell --probe <text>` exits 0 only when that rule denies the probe; it replaces `lessons_guard.py` for `lessons_lint.py --rule-checker`. |
+| `shell-guard` | `rigger-windows` → `shellwise` | hook (plus a command for rule checks) | (a) A PreToolUse hook on `Bash` and `PowerShell` that prints nothing to allow, or one JSON deny whose reason names a rule id and a fix; it always exits 0 (`tests/test_repo.py:336`). (b) An internal error allows and prints nothing: a guard that exits 2 blocks the tools needed to fix it (`CLAUDE.md:32`). (c) Median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) A command `<argv> rules` prints every rule id, one per line, and `<argv> rule-check --rule <id> --shell bash\|powershell --probe <text>` exits 0 only when that rule denies the probe. `lessons_lint.py --rule-checker` loads a Python file with `RULES` and `rule_guard_problem` (`lessons_lint.py:217-241`). So rigger-lessons ships `tools/cli_rule_checker.py`, which reads the filler's argv from the snapshot, fills `RULES` from `rules`, and answers `rule_guard_problem` through `rule-check`. `lessons_lint.py` itself does not change. |
 | `process.brainstorm`, `.plans`, `.tdd`, `.debug` | superpowers skills | skill | The skill exists in an enabled plugin. An empty role drops its rows and its `{{slot:…}}` sentences. |
 | `lessons` | `rigger-lessons` | hook | (a) A `SessionStart` line naming the inbox path and its open count (the panel reads the inbox, `rigger-panel/README.md:23`). (b) Inbox entries pass `inbox_lint.py`. (c) Its curation skill reads lesson targets from the snapshot (§11). |
 
@@ -739,7 +761,12 @@ It carries what the fix-round rules rely on today:
 - A `quote`, whitespace-normalised, does not occur in `file` at `head` within `line..end_line`
   (±3 lines). This is the quote anchor, so a finding cannot point at code that is not there.
 - `in_scope` is not exactly `reviewed` ∪ `skipped`.
-- `in_scope` differs from what `review_scope.py` lists for `base..head` (§13, P3).
+- `in_scope` differs from what `review_scope.py` lists for `base..head`.
+
+`review_scope.py` is part of the contract, so it lives in core
+(`rigger-core/tools/review-scope/review_scope.py`) from phase 2. An external CLI filling the slot
+without rigger-review installed is checked against the same list. rigger-review (phase 3) calls it;
+it does not own it. Its behaviour is in §13, phase 3.
 - A skipped file has no reason.
 - `shortcuts` is empty and `shortcuts_check` is empty.
 
@@ -843,9 +870,9 @@ sh, TypeScript, JSON manifests), then lines of tests. Moved files count as moved
 
 - **Schema and manifests:** the `rigger-module.json` schema, plus a manifest for each of the 7
   plugins (the panel is `layer: general`, `rules: []`).
-- **Assembler:** `rigger-core/tools/assemble/assemble.py` (parts, layers, ids, placeholders for
-  `slot:` resolving to level-1 names only, trigger sections, snapshot, `--check`) and its handlers
-  in `rigger-core/hooks/hooks.json`.
+- **Assembler:** `rigger-core/tools/assemble/assemble.py` and its handlers in
+  `rigger-core/hooks/hooks.json`. It covers parts, layers, ids, trigger sections, the snapshot and
+  `--check`. Placeholders for `slot:` resolve from level-1 `slots` only.
 - **Retired handlers:** the rules handlers in `rigger-rules`, `rigger-lessons`, `rigger-talk`,
   `rigger-wp` and `rigger-windows` are removed, and `rules_extra.sh` is folded in. `rules_start.sh`
   stays in each plugin for one release, unused, then goes.
@@ -874,8 +901,15 @@ byte with LF, plus the set of root lines.
 
 - Python 3 becomes required for rules. It was already required for rigger-core's hooks.
 - rigger-talk and rigger-wp now pull rigger-core through `dependencies`.
-- The rules part handlers replace about 17 sh handlers. Startup time is measured on Windows and
-  macOS and reported. It may not grow by more than 300 ms at the median.
+- The rules part handlers replace the 19 `SessionStart` rules handlers of today (13 in
+  rigger-rules, 2 in rigger-windows, 1 each in rigger-core, rigger-lessons, rigger-talk and
+  rigger-wp). Startup time is measured on Windows and macOS and reported. It may not grow by more
+  than 300 ms at the median.
+- **Accidental override:** a `rules.d` section whose id equals a general one (same file stem and
+  heading slug) now replaces that section instead of being printed after it. Whenever a personal or
+  company section replaces another, the session gets one line
+  `rigger: <file> replaces rule <id>`. The golden test has a case for it, and doctor lists every
+  override.
 
 **Exit criterion:**
 
@@ -902,7 +936,7 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
 - **What it keeps:** one handler per module, each module printing its own sections and checking the
   snapshot only to skip sections a higher layer replaced.
 - **What it drops:** a single owner of order and duplicates, which means the model may see two
-  texts during the race window. It also drops the clean removal of 5 copies of `rules_start.sh`.
+  texts during the race window. It also drops the clean removal of 6 copies of `rules_start.sh`.
   That is not acceptable under "never a model-resolved conflict", so it is listed, not proposed.
 
 ### Phase 2: slots and contracts
@@ -910,8 +944,8 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
 **Scope:**
 
 - **Slot resolution:** validation and the `## Slots` section.
-- **Contracts:** `slot_check.py` with the contracts of §10.4 and their fixtures, and `slot_run.py`
-  for command kinds.
+- **Contracts:** `slot_check.py` with the contracts of §10.4 and their fixtures, `slot_run.py` for
+  command kinds, and `review_scope.py` in core (§10.5) as the reviewer contract's source of scope.
 - **Trust:** the trust filter of §7.4.
 - **Trigger table:** merged into one table, and rows of absent plugins dropped.
 - **Rewording to point at the tables:**
@@ -962,7 +996,8 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
 - **`rigger-review`** (`fills: reviewer`). It takes ideas, not code, from an Apache-2.0 review CLI:
   - **Agent and skill:** `agents/reviewer.md`, moved from rigger-core with the contract ending, and
     skill `review`, the procedure.
-  - **`tools/review_scope.py`:** lists the files changed between `base` and `head`, one per line
+  - **`review_scope.py`** (in core since phase 2; rigger-review calls it, and phase 3 fills in the
+    skip reasons): lists the files changed between `base` and `head`, one per line
     with `review` or `skip: <reason>`. Reasons are binary, generated (by header marker), vendored
     (by path list), lockfile, or deleted. It reads git with
     `git -c core.quotepath=off diff --no-ext-diff --no-textconv --no-color --name-status -z`, so a
@@ -985,13 +1020,15 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
 | Item today | Lands in | Note |
 |---|---|---|
 | `tools/shell-guard/shell_guard.py` (deny rules, PowerShell and git handlers, `hooks.json:20-77`) | **shellwise** | Its rule table and test cases (`tests/rules_common.py`, `test_rules.py`, `corpus_check.py`, `test_walk_portable.py`) are handed to shellwise as its corpus. The Python guard is deleted once shellwise passes that corpus. |
-| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **shellwise** `rule-check` (§10.4) | `curate-lessons/SKILL.md:92-99` resolves the checker from the shell-guard slot instead of `rigger-windows@`. |
+| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **shellwise** `rules` and `rule-check`, reached through `rigger-lessons/tools/cli_rule_checker.py` (§10.4) | `curate-lessons/SKILL.md:92-99` passes `--rule-checker <rigger-lessons root>/tools/cli_rule_checker.py` instead of looking up `rigger-windows@`. |
+| `rigger-core/tools/token-audit/tests/test_archive.py` (checks `lessons_guard.py`'s rule ids against `shell_guard.py`, `test_archive.py:19,241-242,316`) | rewritten against `cli_rule_checker.py` with a stub filler command | The check that the two id lists agree moves to shellwise's own tests. |
 | commit shadow rule inside `shell_guard.py`, `stop_shadow.py`, `turn_evidence.py`, `.claude/gates.json` format (`INSTALL.md` "Shadow gates") | **rigger-testing** `tools/test-evidence/` | These ask whether a check ran after the last edit, a testing question, not a command-shape one. The commit rule is extracted from `shell_guard.py` into its own handler on `Bash(*commit*)` and `PowerShell(*commit*)`. `tests/test_repo.py` handler counts change. |
 | `tools/gate-lab/` (replay and report of the shadow gates) | **rigger-testing** `tools/gate-lab/` | It measures the gates above. The `CLAUDE.md:21` pitfall path follows. |
 | `tools/safe-edit/safe-edit.ps1` (red run in place) | **rigger-testing** `tools/safe-edit/` | pwsh runs on all 3 OSes. Its references `tests.md:13`, `defects.md:37` and `testing/SKILL.md:85` become `{{tool:…}}` with `requires: plugin:rigger-testing`. Porting it to Python is the builder's call. |
 | `tools/drift-lint/` (dangling skill, agent, path references) | **rigger-core** `tools/drift-lint/` | It becomes a reader of manifests too, so a trigger `load` naming a missing skill is a drift finding. `CONTRIBUTING.md:36` path follows. |
 | `tools/mem-check/` (Windows commit-charge headroom) | **rigger-platform** | `run_tests.py:89` path follows. |
-| skills `windows-dev-env`, `node-versions`, `php-herd-tooling` | **rigger-platform** | Trigger rows carry `requires` on the OS (`os:windows` for `windows-dev-env`). `php-herd-tooling` and `node-versions` serve macOS too. |
+| skills `windows-dev-env`, `node-versions`, `php-herd-tooling` | **rigger-platform** | Trigger rows carry `requires` on the OS (`os:windows` for `windows-dev-env`). `php-herd-tooling` and `node-versions` serve macOS too. The local docs folder `<config dir>/rigger-windows/herd-docs/` (`php-herd-tooling/SKILL.md:113`) becomes `<config dir>/rigger-platform/herd-docs/`, and the skill reads the old path for one release. |
+| `CONTRIBUTING.md:86-90` (this repo's `.claude/gates.json` opt-in, pointing at rigger-windows' INSTALL) | points at rigger-testing's `tools/test-evidence/` docs | The `gates.json` content does not change. |
 | `rules/windows.md` (PowerShell is the default shell, scripts over 10 lines via a file) | **rigger-platform**, `requires: os:windows` | The `Plugin root:` preamble goes, because `{{tool:}}` replaces root-relative names. |
 | `rules/windows-skills.md` | **rigger-platform** manifest `triggers` | The table merged into the one table in phase 2. |
 | 5 evals (`bash-in-powershell`, `commit-message-file-path`, `rmtree-readonly-objects`, `utf8-env-hides-bug`, `worktree-with-junctions`) | **rigger-platform** `evals/` | They test the platform skill and rules, not the guard. |
