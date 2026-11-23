@@ -78,6 +78,9 @@ gets an exact entry in `ALLOWED_DOMAINS`; an accepted exception is an exact `pat
 - `scripts/eval_suite_check.py --cases evals/CASES.md plugins/<plugin>` checks a plugin's `evals/`
   cases against `evals/CASES.md`; `scripts/eval_summary.py --plugin <name> --model <model>
   <aggregate-result.json>...` turns `claude plugin eval` results into a per-plugin table.
+- `scripts/eval_stage.py plugins/<plugin> <scratch folder>` copies a plugin and the plugins it depends on
+  into a scratch folder so an eval case's `plugins:` can load them; `eval_summary.py` refuses a result whose
+  traces show a plugin that failed to load.
 - `scripts/mutate_parse.py` is a library for mutation scripts: it reads a test run and says whether a
   mutant's run is red, green or invalid.
 - `.claude/gates.json` opts this repo in to the shadow checks of `rigger-windows`' shell guard: with

@@ -1,5 +1,6 @@
 """Tests for scripts/eval_suite_check.py: each check catches a planted defect on a temp suite."""
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -169,6 +170,60 @@ class CheckSuiteTests(Suite):
     def test_not_measurable_table_is_not_an_inventory(self):
         prose_case(self.root, "x")
         self.has(self.check([], md=cases_md("demo-plugin", [])), "case 'x' is not in the table")
+
+
+class DependencyTests(Suite):
+    def manifest(self, deps):
+        write(self.root / ".claude-plugin" / "plugin.json", json.dumps({"name": "demo-plugin", "dependencies": deps}))
+
+    def test_case_without_the_dependency_is_a_problem(self):
+        self.manifest(["rigger-core"])
+        prose_case(self.root, "one")
+        self.has(self.check(["one"]), "one: does not load dependency 'rigger-core'")
+
+    def test_case_loading_only_the_dependency_misses_the_plugin(self):
+        self.manifest(["rigger-core"])
+        prose_case(self.root, "one", front="tags: [native]\nruns: 1\nplugins: ['../../deps/rigger-core']\n")
+        self.has(self.check(["one"]), "one: plugins: does not load the plugin itself ('../..')")
+
+    def test_case_loading_plugin_and_dependency_is_clean(self):
+        self.manifest(["rigger-core"])
+        prose_case(self.root, "one", front="tags: [native]\nruns: 1\nplugins: ['../..', '../../deps/rigger-core']\n")
+        self.assertEqual(self.check(["one"]), [])
+
+    def test_plain_string_plugins_value_misses_the_plugin(self):
+        self.manifest(["rigger-core"])
+        prose_case(self.root, "one", front="tags: [native]\nruns: 1\nplugins: ../../deps/rigger-core\n")
+        self.has(self.check(["one"]), "one: plugins: does not load the plugin itself ('../..')")
+
+    def test_dependency_name_with_a_path_is_a_problem(self):
+        self.manifest(["../x"])
+        prose_case(self.root, "one", front="tags: [native]\nruns: 1\nplugins: ['../..', '../../deps/../x']\n")
+        self.has(self.check(["one"]), "plugin.json dependencies is not a list of names")
+
+    def test_dependencies_not_a_list_is_a_problem(self):
+        self.manifest("rigger-core")
+        prose_case(self.root, "one")
+        self.has(self.check(["one"]), "plugin.json dependencies is not a list of names")
+
+    def test_unreadable_manifest_is_a_problem(self):
+        write(self.root / ".claude-plugin" / "plugin.json", "{not json")
+        prose_case(self.root, "one")
+        self.has(self.check(["one"]), "cannot read .claude-plugin/plugin.json")
+
+
+class RepoSuitesTests(unittest.TestCase):
+    def test_every_suite_in_the_repo_is_clean(self):
+        roots = sorted(str(p.parent) for p in (ROOT / "plugins").glob("*/evals"))
+        self.assertGreaterEqual(len(roots), 3, roots)
+        p = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--cases", str(ROOT / "evals" / "CASES.md"), *roots],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertRegex(p.stdout, r"# cases [1-9]\d*, problems 0")
 
 
 class CliTests(Suite):
