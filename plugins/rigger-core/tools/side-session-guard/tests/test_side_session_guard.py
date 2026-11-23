@@ -631,8 +631,8 @@ def hook_checks(root):
     check("PreToolUse runs the script under exactly these matchers", sorted(shipped_hooks()), sorted([ASK, WRAP_UP]))
     group, handler = shipped_hook()
     ask_group, ask_handler = shipped_hook(matcher=ASK)
-    check("the AskUserQuestion handler is the same command, synchronous, timeout 10",
-          (ask_handler["command"], ask_handler.get("async"), ask_handler.get("timeout")), (handler["command"], None, 10))
+    check("the AskUserQuestion handler is the same command, synchronous, timeout 20",
+          (ask_handler["command"], ask_handler.get("async"), ask_handler.get("timeout")), (handler["command"], None, 20))
     check("the PreToolUse handler runs the script, through sh and the launcher",
           (handler["command"].startswith('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S '), handler["command"].endswith("|| true")),
           (True, True))

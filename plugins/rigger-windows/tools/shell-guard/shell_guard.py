@@ -1387,7 +1387,8 @@ def _missing(path):
 
 
 WORKTREE_FIX = ("Delete each junction itself first, `[IO.Directory]::Delete('<junction>')` (it removes the link, "
-                "not the target), then remove the worktree.")
+                "not the target), in a call of its own: the hook checks the tree before the command runs, so a "
+                "delete earlier in the same command still counts. Then remove the worktree.")
 
 
 def rule_worktree_remove(args, literal, loc):

@@ -33,7 +33,10 @@ one full gate runs on the machine at a time.
    waits names the exact input it waits for. List every stage up
    front as a step in its own session, review and fix rounds included: running this command is the
    user's ask for each. A review goes through a session, not a background agent, so the next turn
-   may start the fix round. Each listed stage names the model it runs on.
+   may start the fix round. Each listed stage names the model it runs on and whether it is heavy (runs
+   tests, a build, WSL, Docker or e2e) or light (only writes files): at most 2 heavy parts run at
+   once, and several light parts go to one session (it may hand them to its own subagents), so the
+   app's few concurrent sessions cover more of the plan.
 3. Every brief states: goal, files, what done looks like, which checks fit what the change can
    reach, the model it runs on (passed as `model` to `start_session`: the skill's model rule covers
    sessions too, and a session without it inherits the strongest model), the parts it hands to a
@@ -113,7 +116,10 @@ session's message, apart from a `<side-sessions-event>` turn right after the use
 step they asked to have apart. Then propose the session as a card (`initiation: "own_initiative"`)
 and keep other work moving. Schedule a wake in 10 minutes (`ScheduleWakeup`, else `CronCreate`):
 on it, withdraw the card with `dismiss_task`; if the result says it started, leave it, otherwise run
-the step with a background agent and say so. Where `start_session` is missing, `spawn_task` proposes
+the step with a background agent and say so. A start refused past the app's cap of sessions working
+at once is the user's card to click: tell them in one line what waits on it; once a session
+ends, withdraw the card (`dismiss_task`) and, unless it started, start it yourself; give it
+never to a background agent without the user's OK. Where `start_session` is missing, `spawn_task` proposes
 the session as a chip, coordination goes on with `SendMessage`, and `dismiss_task` withdraws it on
 the 10 minute wake.
 

@@ -5,6 +5,16 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Changed
+
+- The two `rigger-core` PreToolUse hooks (side-session guard) get 20 s before Claude Code skips them
+  (10 s timed out on a busy Windows machine); a repo test pins it.
+- `/rigger-core:coordinate` runs at most 2 heavy parts (tests, build, WSL, Docker, e2e) at once,
+  groups light parts into one session, and leaves a start refused past the app's session cap to the
+  user's card instead of a background agent.
+- The `rigger-windows` shell guard's junction message says to delete junctions in a call of their
+  own, and the `windows-dev-env` skill names the one tool-guard refusal that is left.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
