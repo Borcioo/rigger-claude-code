@@ -30,6 +30,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -I scripts/gate.py --out "${{ runner.temp }}/gate"
+      - if: failure()
+        run: tail -n 300 "${{ runner.temp }}/gate/tests.log"
 
   tests:
     name: tests (${{ matrix.os }})
