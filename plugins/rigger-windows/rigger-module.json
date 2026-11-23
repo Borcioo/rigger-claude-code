@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "name": "rigger-windows",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/windows.md",
+      "audience": "both"
+    },
+    {
+      "file": "rules/windows-skills.md",
+      "audience": "both"
+    }
+  ],
+  "triggers": [
+    {
+      "id": "rigger-windows.windows-dev-env",
+      "before": "a shell script, loop or pipeline, an `[IO.File]` call, a PowerShell commit message, parallel test runs; a command failing oddly, a script writing non-ASCII text, a missing tool or an unknown tool version, a crash",
+      "load": [
+        "rigger-windows:windows-dev-env"
+      ],
+      "section": "windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind"
+    },
+    {
+      "id": "rigger-windows.php-herd-tooling",
+      "before": "PHP, Composer, WP-CLI, Herd or a specific PHP version",
+      "load": [
+        "rigger-windows:php-herd-tooling"
+      ],
+      "section": "windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind"
+    },
+    {
+      "id": "rigger-windows.node-versions",
+      "before": "Node/npm version questions or switching",
+      "load": [
+        "rigger-windows:node-versions"
+      ],
+      "section": "windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind"
+    }
+  ],
+  "tests": {
+    "paths": [
+      "tools/*/tests/",
+      "tools/mem-check/"
+    ],
+    "contract": []
+  }
+}

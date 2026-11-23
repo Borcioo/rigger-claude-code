@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "name": "rigger-wp",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/wp-skills.md",
+      "audience": "both"
+    }
+  ],
+  "triggers": [
+    {
+      "id": "rigger-wp.rigger-wp-traps",
+      "before": "WP plugin/theme code, WP integration tests, migrations, roles, enqueues",
+      "load": [
+        "rigger-wp:rigger-wp-traps"
+      ],
+      "section": "wp-skills.wordpress-skill-loaded-before-the-first-step-of-its-kind"
+    },
+    {
+      "id": "rigger-wp.wordpress-router",
+      "before": "any other WordPress task (blocks, theme.json, REST API, WP-CLI, performance, Playground, wp-env, PHPStan): the router indexes the upstream skills (`wp-*`, `blueprint`, `wpds`) and you Read the ones the task needs",
+      "load": [
+        "rigger-wp:wordpress-router"
+      ],
+      "section": "wp-skills.wordpress-skill-loaded-before-the-first-step-of-its-kind"
+    }
+  ],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": []
+  }
+}
