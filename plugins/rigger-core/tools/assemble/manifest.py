@@ -22,8 +22,9 @@ SUBAGENT_RULES = ("none", "all")
 MAX_DEPTH = 32
 BEFORE_MAX = 300
 LOAD_MAX = 4
-# Control, format, line and paragraph separators, lone surrogates, private use and unassigned code points.
-UNSAFE = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn")
+# Control, format, line and paragraph separators, lone surrogates and private use. Not "Cn": what is
+# unassigned depends on the running Python's Unicode data, so a newer emoji would be refused.
+UNSAFE = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co")
 
 
 class ManifestError(Exception):
