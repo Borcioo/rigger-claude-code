@@ -112,12 +112,32 @@ def copy_path(workdir):
     return os.path.join(workdir, "CLAUDE.md")
 
 
-def within(parent, path):
-    """Both paths from realpath, which gives existing parts their on-disk case; commonpath ignores case."""
+def same(a, b):
+    """True when both name one file: by spelling, or by identity where both exist, since macOS realpath keeps the
+    case it was given while the file system ignores it."""
+    if a == b:
+        return True
     try:
-        return os.path.commonpath([parent, path]) == parent
-    except ValueError:
+        return os.path.samefile(a, b)
+    except OSError:
         return False
+
+
+def within(parent, path):
+    """Both paths from realpath, which gives existing parts their on-disk case on Windows only; commonpath ignores
+    case on Windows only, so every existing ancestor of `path` is also compared with `parent` by identity."""
+    try:
+        if os.path.commonpath([parent, path]) == parent:
+            return True
+    except ValueError:
+        pass
+    while True:
+        if same(parent, path):
+            return True
+        up = os.path.dirname(path)
+        if up == path:
+            return False
+        path = up
 
 
 def config_dirs():
@@ -150,7 +170,7 @@ def check_targets(workdir, source, targets):
         for config in guarded:
             if within(config, real):
                 raise Refusal(f"refusing to write under {config}: {target}")
-        if real == real_source:
+        if same(real, real_source):
             raise Refusal(f"refusing to overwrite the source: {target}")
 
 
