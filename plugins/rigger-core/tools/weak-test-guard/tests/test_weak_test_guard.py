@@ -554,6 +554,28 @@ class DiffSourceTests(unittest.TestCase):
                 self.assertIsNotNone(reason_of(run_hook(command, repo.root)))
                 self.assertEqual(git(repo.root, "diff", "--cached", "--name-only"), "")
 
+    def test_a_repo_reached_through_a_link_is_replayed(self):
+        # git prints the resolved top level; the hook's folder is the link (macOS /var is one to /private/var)
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        holder = Path(tempfile.mkdtemp(prefix="weak test guard link "))
+        self.addCleanup(shutil.rmtree, holder, True)
+        link = holder / "repo"
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(repo.root), str(link))   # a junction needs no symlink privilege
+        else:
+            os.symlink(repo.root, link, target_is_directory=True)
+        self.assertIsNotNone(reason_of(run_hook('git add -A && git commit -m "x"', link)))
+
+    @unittest.skipUnless(os.name == "nt", "drive letters exist only on Windows")
+    def test_a_folder_with_the_drive_letter_in_other_case_is_replayed(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        folder = str(repo.root)
+        folder = (folder[0].lower() if folder[0].isupper() else folder[0].upper()) + folder[1:]
+        self.assertIsNotNone(reason_of(run_hook('git add -A && git commit -m "x"', folder)))
+
     def test_git_rm_is_replayed_without_touching_the_tree(self):
         repo = Repo(self, BASE)
         self.assertIsNotNone(reason_of(run_hook('git rm -q tests/test_parser.py; git commit -m "x"', repo.root)))
