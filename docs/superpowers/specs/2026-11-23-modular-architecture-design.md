@@ -2,6 +2,8 @@
 
 Status: design, approved decisions applied. Base: `main` at `34e7713` (release 0.4.0).
 Every `path:line` below is a line of that commit.
+Names of modules that do not exist yet are written in capitals (`rigger-REVIEW:reviewer`,
+`rigger-TESTING:testing`): phase 3 creates them.
 
 ## 1. Intent and why
 
@@ -234,13 +236,13 @@ The public reviewer module (phase 3):
   "layer": "general",
   "fills": "reviewer",
   "provides": {
-    "reviewer": { "kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule" }
+    "reviewer": { "kind": "agent", "target": "rigger-REVIEW:reviewer", "model": "by-rule" }
   },
   "rules": [],
   "triggers": [
     { "id": "rigger-review.review",
       "before": "reviewing a change, a branch or a PR, or verifying an agent's claim",
-      "load": ["rigger-review:review"] }
+      "load": ["rigger-REVIEW:review"] }
   ],
   "tests": { "paths": ["tests/", "tools/*/tests/"], "contract": ["reviewer"] }
 }
@@ -412,7 +414,7 @@ Core's rows carry `section` like module rows (§9.3). In phase 1 it places each 
 rigger-rules `## Skill triggers` table (`skills.md:6-15`) in today's order. From phase 2 all tables
 are merged and `section` is ignored; the key stays valid so phase-1 files keep loading.
 
-In phase 3 the defaults change to `rigger-review:reviewer`, `rigger-testing:testing` and
+In phase 3 the defaults change to `rigger-REVIEW:reviewer`, `rigger-TESTING:testing` and
 `rigger-shellwise`. The `os:windows` condition on `shell-guard` goes at the same time: until then, a macOS
 or Linux session does not get a "slot not filled" notice for a guard that never existed there.
 
@@ -736,11 +738,11 @@ It moves with it in phase 3.
 
 | Slot | Default (phase 2 → phase 3) | Kinds allowed | Output contract (checked by `slot_check.py <slot> <file>`) |
 |---|---|---|---|
-| `reviewer` | `rigger-core:reviewer` → `rigger-review:reviewer`, `by-rule` | agent, command | §10.5 |
+| `reviewer` | `rigger-core:reviewer` → `rigger-REVIEW:reviewer`, `by-rule` | agent, command | §10.5 |
 | `worker` | `rigger-core:worker`, `by-rule` | agent | First line `STATUS: DONE\|PARTIAL\|BLOCKED\|NEEDS_CONTEXT`, then `## Summary` with 3–5 bullets, then the brief's format (`worker.md:11-12`). |
 | `implementer` | `rigger-core:implementer`, `pinned` | agent | `STATUS`, `FILES`, `ROOT CAUSE`, `GATE`, `RED RUNS`, optional `QUESTION`; with BLOCKED or NEEDS_CONTEXT also `CALL`, `OUTPUT`, `ALTERNATIVE` (`implementer.md:33-43`). |
 | `mapper` | `rigger-core:mapper`, `pinned` | agent | Only lines `path:START[-END] - text` (at most 12 words) or one `NOT FOUND: <terms>` (`mapper.md:14,18`). Each path exists at the reviewed commit. |
-| `testing` | `rigger-core:testing` → `rigger-testing:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware). The filling module ships the commit-time test guards. |
+| `testing` | `rigger-core:testing` → `rigger-TESTING:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware). The filling module ships the commit-time test guards. |
 | `shell-guard` | `rigger-windows` → `rigger-shellwise` | hook | (a) A PreToolUse hook on `Bash` and `PowerShell`. It prints nothing to allow, may add a non-blocking note or warning the agent reads while the command runs (shellwise `warn`), or prints one JSON deny whose reason names a rule id and a fix. It always exits 0 (`tests/test_repo.py:336`), because an exit 2 from a crash blocks the tools needed to fix it (`CLAUDE.md:32`). (b) The filler declares `"failure_mode": "open"` or `"closed"` in its manifest: whether a command is allowed or denied when the guard cannot finish its analysis. Core prints the declared mode in the `## Slots` row and doctor reports it. A filler without the key is reported as `failure mode: undeclared`. rigger-windows declares `open`, and `rigger-shellwise` declares `closed` (shellwise answers `danger` when analysis cannot finish). (c) Median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) **Optional:** a rule checker, a Python module with `RULES` and `rule_guard_problem` as `lessons_lint.py --rule-checker` loads it (`lessons_lint.py:217-241`), named by `provides.shell-guard.rule_checker` in the filler's manifest. rigger-windows' default passes it with today's `lessons_guard.py`. A filler without one passes the contract. Each `live:<rule>` lesson is then reported `no checker` by doctor and curation, and is never dropped. |
 | `process.brainstorm`, `.plans`, `.tdd`, `.debug` | superpowers skills | skill | The skill exists in an enabled plugin. An empty role drops its rows and its `{{slot:…}}` sentences. |
 | `lessons` | `rigger-lessons` | hook | (a) A `SessionStart` line naming the inbox path and its open count (the panel reads the inbox, `rigger-panel/README.md:23`). (b) Inbox entries pass `inbox_lint.py`. (c) Its curation skill reads lesson targets from the snapshot (§11). |
