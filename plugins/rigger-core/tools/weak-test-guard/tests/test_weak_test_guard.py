@@ -97,12 +97,18 @@ def git(cwd, *args):
     return proc.stdout.decode("utf-8", "replace")
 
 
-def run_hook(command, cwd, tool="Bash", event=None):
+def run_hook(command, cwd, tool="Bash", event=None, env=None):
     if event is None:
         event = {"tool_name": tool, "tool_input": {"command": command}, "cwd": str(cwd)}
     proc = subprocess.run([sys.executable, "-I", "-S", str(SCRIPT)], input=json.dumps(event).encode("utf-8"),
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, env=env)
     return proc
+
+
+def without_editors():
+    """The environment with every editor variable removed, so `core.editor` of the repository decides (Claude Code
+    sets GIT_EDITOR=true, which would hide an editor run)."""
+    return {k: v for k, v in os.environ.items() if k not in ("GIT_EDITOR", "VISUAL", "EDITOR", "GIT_SEQUENCE_EDITOR")}
 
 
 def reason_of(proc):
@@ -756,6 +762,55 @@ class BeforeApprovalTests(unittest.TestCase):
         marker.unlink()
         self.assertIsNotNone(reason_of(run_hook('git add -A && git commit -m "x"', repo.root)))
         self.assertFalse(marker.exists())
+
+
+class InteractiveAndLazyFetchTests(unittest.TestCase):
+    """Two more programs git can start before the command is approved: an editor and a promisor remote."""
+
+    def test_an_editor_option_in_any_spelling_is_not_replayed(self):
+        repo = Repo(self, BASE)
+        folder = Path(tempfile.mkdtemp(prefix="wtgedit"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        marker = folder / "marker"
+        git(repo.root, "config", "core.editor", "echo ran >> '%s' #" % marker.as_posix())
+        repo.change(WEAK, stage=False)
+        env = without_editors()
+        control = subprocess.run(["git", "add", "-e", "tests/test_parser.py"], cwd=repo.root, env=env,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.assertTrue(marker.exists(), "control: git add -e runs core.editor (exit %s)" % control.returncode)
+        for flags in ("-ve", "-ev", "--ed", "--edi", "-vp", "--pat", "--inter"):
+            with self.subTest(flags=flags):
+                marker.unlink(missing_ok=True)
+                proc = run_hook("git add %s tests/test_parser.py && git commit -m x" % flags, repo.root, env=env)
+                self.assertIsNone(reason_of(proc))
+                self.assertFalse(marker.exists())
+
+    def test_a_missing_blob_of_a_partial_clone_is_not_fetched(self):
+        version = subprocess.run(["git", "--version"], stdout=subprocess.PIPE).stdout.decode()
+        numbers = [int(part) for part in version.split()[2].split(".")[:2]]
+        if numbers < [2, 45]:
+            self.skipTest("GIT_NO_LAZY_FETCH needs git 2.45; this is " + version.strip())
+        source = Repo(self, BASE)
+        git(source.root, "config", "uploadpack.allowFilter", "true")
+        git(source.root, "config", "uploadpack.allowAnySHA1InWant", "true")
+        source.change(WEAK)
+        git(source.root, "commit", "-q", "-m", "weaker")
+        clone = Path(tempfile.mkdtemp(prefix="wtgclone"))
+        self.addCleanup(shutil.rmtree, clone, True)
+        git(clone.parent, "clone", "-q", "--filter=blob:none", "--no-checkout", "file://" + source.root.as_posix(),
+            str(clone / "c"))
+        work = clone / "c"
+        git(work, "reset", "-q")
+
+        def missing():
+            out = git(work, "rev-list", "--objects", "--missing=print", "HEAD~1..HEAD", "--")
+            return len([line for line in out.splitlines() if line.startswith("?")])
+        before = missing()
+        self.assertGreater(before, 0)
+        self.assertIsNone(reason_of(run_hook("git commit --amend -m x", work)))   # fails open: the diff cannot run
+        self.assertEqual(missing(), before)
+        git(work, "diff", "--cached", "HEAD~1", "--", "*.py")
+        self.assertLess(missing(), before, "control: a plain git diff fetches the blob")
 
 
 class FailOpenTests(unittest.TestCase):

@@ -573,12 +573,36 @@ def _read(path):
         return ""
 
 
+def _git_env(extra=None):
+    """The environment of every git call, which runs before the command is approved: no editor, no prompt, and no
+    lazy fetch of a missing blob from a promisor remote (git 2.45+; an older git ignores the variable)."""
+    env = dict(os.environ, GIT_EDITOR="false", GIT_SEQUENCE_EDITOR="false", GIT_TERMINAL_PROMPT="0",
+               GIT_NO_LAZY_FETCH="1")
+    env.update(extra or {})
+    return env
+
+
+def _interactive(args):
+    """True when a `git add` argument list asks for patch, interactive or edit mode in any spelling git accepts:
+    a short cluster holding p, i or e, or a long option abbreviated to a unique prefix (`--ed`)."""
+    for arg in args:
+        if arg == "--":
+            return False
+        if arg.startswith("--"):
+            name = arg.split("=", 1)[0]
+            if len(name) > 2 and any(option.startswith(name) for option in ("--patch", "--interactive", "--edit")):
+                return True
+        elif arg.startswith("-") and any(ch in "pie" for ch in arg[1:]):
+            return True
+    return False
+
+
 def _git(args, cwd, env=None):
     left = _deadline[0] - time.monotonic()
     if left <= 0:
         raise RuntimeError("out of time")
     proc = subprocess.run(GIT + args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, timeout=min(GIT_TIMEOUT, left), env=env)
+                          stderr=subprocess.DEVNULL, timeout=min(GIT_TIMEOUT, left), env=_git_env(env))
     if proc.returncode != 0:
         raise RuntimeError("git %s failed" % args[0])
     return proc.stdout
@@ -592,7 +616,7 @@ def _no_filters(folder):
         raise RuntimeError("out of time")
     proc = subprocess.run(GIT + ["config", "--name-only", "--get-regexp", r"^filter\."], cwd=folder,
                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          timeout=min(GIT_TIMEOUT, left))
+                          timeout=min(GIT_TIMEOUT, left), env=_git_env())
     if proc.returncode not in (0, 1):
         raise RuntimeError("git config failed")
     drivers = {line.rsplit(".", 1)[0] for line in proc.stdout.decode("utf-8", "replace").splitlines() if "." in line}
@@ -628,7 +652,7 @@ def _inside(folder, top):
 
 def _replay(commit, index, top):
     """Apply the command's staging to the index copy at `index`; False when it cannot be replayed."""
-    env = dict(os.environ, GIT_INDEX_FILE=index)
+    env = {"GIT_INDEX_FILE": index}
     off = {}
 
     def git_off(args, folder):
@@ -645,7 +669,7 @@ def _replay(commit, index, top):
     else:
         for sub, folder, args in commit.stages:
             if (folder is None or not _inside(folder, top) or sub == "mv"
-                    or any(a in ("-p", "--patch", "-i", "--interactive", "-e", "--edit") for a in args)):
+                    or _interactive(args)):
                 return False
             if sub == "add":
                 if any(a in ("-n", "--dry-run") for a in args):
@@ -686,7 +710,7 @@ def check(command, cwd, powershell):
             shutil.copyfile(os.path.join(commit.folder, paths[1]), index)
             if not _replay(commit, index, top):
                 return None
-            diff = _git(args, top, dict(os.environ, GIT_INDEX_FILE=index))
+            diff = _git(args, top, {"GIT_INDEX_FILE": index})
         finally:
             shutil.rmtree(scratch, True)
     else:
@@ -708,7 +732,10 @@ def main():
     tool = event.get("tool_name")
     if tool not in ("Bash", "PowerShell"):
         return 0
-    reason = check(event["tool_input"]["command"], event.get("cwd"), tool == "PowerShell")
+    try:
+        reason = check(event["tool_input"]["command"], event.get("cwd"), tool == "PowerShell")
+    except RuntimeError:   # a git call failed or ran out of time (a blob a partial clone lacks): fail open
+        return 0
     if reason:
         sys.stdout.buffer.write((json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
