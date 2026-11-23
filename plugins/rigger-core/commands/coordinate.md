@@ -20,8 +20,11 @@ the default branch; a **merge point** is each merge into it; a **gate** is the p
 command (tests, lint and any other check it requires); a **gate lock** is a lock file or script a project may use so only
 one full gate runs on the machine at a time.
 
-1. Add `coordinator: true` and `plan: <plan path>` to this session's state file frontmatter
-   (`state-file.md` rule), and
+1. First run `sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" "${CLAUDE_PLUGIN_ROOT}/tools/coord-state/coord_state.py" host`.
+   `desktop` (the app): this command as written. `cli` (the terminal): also read
+   `${CLAUDE_PLUGIN_ROOT}/tools/coord-state/cli-host.md` and follow it wherever a step names an app tool.
+   `none`: run the parts with background subagents, as the last paragraph says. Add `coordinator: true` and
+   `plan: <plan path>` to this session's state file frontmatter (`state-file.md` rule), and
    refresh that file each time a part starts or finishes: running sessions (the output of the
    `show` call), heads, Next step. Part states live in a script, not in your notes. Create its file with
    `sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" "${CLAUDE_PLUGIN_ROOT}/tools/coord-state/coord_state.py" init`,
@@ -71,7 +74,7 @@ one full gate runs on the machine at a time.
    `stop: main`, also when it is the integration branch), and call
    `move <part> merged --head <merge sha> --evidence '<text>'` with the evidence
    quoting the user's plan approval (for the default branch, their
-   instruction) in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Its session removes its worktree once it merges; branches stay. Close a
+   instruction) in quotes (`"…"`, `“…”` or `„…”`; `--evidence` goes in single quotes, so a straight `"…"` survives the shell). Its session removes its worktree once it merges (under `cli` you do); branches stay. Close a
    session once its result is checked and relayed, except: a
    builder session stays until the review of its part has no finding for it or its fix is verified
    and merged, and the review session until its re-review; list each under `## Side sessions kept`

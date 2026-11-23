@@ -38,7 +38,10 @@ change: `CONTRIBUTING.md`.
 - **A regex grader copied from the plugin's own sentence measures copying, not the rule:** before committing one, grade two paraphrased correct answers and one wrong answer that uses its key word in another sense.
 - **A plan that adds or removes a hook handler lists `tests/test_repo.py`** (`DuplicateHookTests` pins the handler count per plugin).
 - **`claude -p` disables `AskUserQuestion`:** a hook proof on it runs in SDK mode (`--input-format stream-json --output-format stream-json --permission-prompt-tool stdio`) and first checks the tool reached the stub's request.
-- **Hook wiring is proven against `plugins/rigger-rules/tests/stub_api.py` behind `ANTHROPIC_BASE_URL`** in an isolated config (no cost, no real model); the report says "stub". An eval suite's wiring too: the stub's requests show what reached each case, and a stub that answers with a `Skill` tool_use runs the `tool_used` graders both ways.
+- **Hook wiring is proven against `plugins/rigger-rules/tests/stub_api.py` behind `ANTHROPIC_BASE_URL`** in an isolated config (no cost, no real model); the report says "stub". An eval suite's wiring too: the stub's requests show what reached each case, and a stub that answers with a `Skill` tool_use runs the `tool_used` graders both ways. A `--bg` session cannot run through the stub (it blocks).
+- **A stub handler finds its trigger by the expanded `--plugin-dir` path,** never by a word near it: a slash command's body is its own text block, and a word that only the worktree path carried passed the gate.
+- **`claude -p` rewrites an inherited `CLAUDE_CODE_ENTRYPOINT=cli` to `sdk-cli`** (`claude-desktop` stays): `cli` cannot be proved through `-p`.
+- **`claude rm` deletes a `--bg` session's job dir (`CLAUDE_JOB_DIR`):** copy its report out first.
 - **A `tool_used` grader with `max: 0` also needs `min: 0`** (the default `min: 1` makes it "expected 1..0", never passing).
 - **Read the CLI version right before the first real run:** auto-update can move the `claude` on PATH mid-task, and a desktop app may run its own copy.
 - **Before a stub URL or an isolation runs next to a real config,** list every inherited env override against each enabled hook with third-party plugins on, prove the isolation with a canary on a scratch config first, and abort on any FAIL.
