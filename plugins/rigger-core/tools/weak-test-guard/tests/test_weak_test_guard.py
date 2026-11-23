@@ -568,6 +568,11 @@ class DiffSourceTests(unittest.TestCase):
             os.symlink(repo.root, link, target_is_directory=True)
         self.assertIsNotNone(reason_of(run_hook('git add -A && git commit -m "x"', link)))
 
+    def test_staging_from_a_subfolder_is_replayed(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        self.assertIsNotNone(reason_of(run_hook('cd tests && git add -A && git commit -m "x"', repo.root)))
+
     @unittest.skipUnless(os.name == "nt", "drive letters exist only on Windows")
     def test_a_folder_with_the_drive_letter_in_other_case_is_replayed(self):
         repo = Repo(self, BASE)
