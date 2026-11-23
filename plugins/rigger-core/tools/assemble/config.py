@@ -10,6 +10,8 @@ table, and every notice is printed with such characters escaped.
 import copy
 import json
 import unicodedata
+
+import manifest
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Tuple
@@ -136,9 +138,12 @@ def _row_problem(row) -> Optional[str]:
         problem = _line_problem(entry)
         if problem:
             return "load entry " + problem
-    requires = row.get("requires", [])
-    if not isinstance(requires, list) or not all(isinstance(item, str) for item in requires):
-        return "requires must be a list of strings"
+    try:
+        manifest.check_requires(row.get("requires"), "requires")
+    except manifest.ManifestError as error:
+        return str(error)
+    if any(_line_problem(item) for item in row.get("requires") or []):
+        return "requires entry holds a line break, control character or |"
     section = row.get("section")
     if section is not None and (not isinstance(section, str) or _line_problem(section)):
         return "section must be a one-line string"
@@ -169,7 +174,8 @@ def _validate(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
         if key == "triggers":
             rows = {}
             for row_id, row in value.items():
-                problem = _row_problem(row)
+                problem = _line_problem(row_id)
+                problem = "id " + problem if problem else _row_problem(row)
                 if problem:
                     notices.append("rigger: config %s trigger %s ignored: %s" % (where, _shown(row_id), problem))
                 else:

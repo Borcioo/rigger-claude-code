@@ -131,6 +131,11 @@ class ResolveTests(unittest.TestCase):
             "before-missing": {"load": ["x:y"]},
             "before-number": {"before": 5, "load": ["x:y"]},
             "not-object": "x:y",
+            "requires-unknown": {"before": "a", "load": ["x:y"], "requires": ["os:beos"]},
+            "requires-object": {"before": "a", "load": ["x:y"], "requires": {"os:linux": 1}},
+            "requires-newline": {"before": "a", "load": ["x:y"], "requires": ["plugin:a\nb"]},
+            "id\nline":{"before": "a", "load": ["x:y"]},
+            "id|pipe": {"before": "a", "load": ["x:y"]},
         }
         for row_id, row in rows.items():
             with self.subTest(row_id):
@@ -138,7 +143,7 @@ class ResolveTests(unittest.TestCase):
                 self.assertNotIn(row_id, got.effective["triggers"])
                 self.assertEqual(len(got.notices), 1, got.notices)
                 self.assertIn(PATHS[4], got.notices[0])
-                self.assertIn(row_id, got.notices[0])
+                self.assertIn(row_id.split("\n")[0], got.notices[0])
                 self.assertNotIn("\n", got.notices[0])
         longest = resolve(l4={"schema": 1, "triggers": {"ok": {"before": "a" * 300, "load": ["a:1", "a:2", "a:3", "a:4"]}}})
         self.assertEqual(longest.notices, [])

@@ -88,6 +88,11 @@ def _requires(value, what: str) -> Tuple[str, ...]:
     return tuple(value)
 
 
+def check_requires(value, what: str) -> Tuple[str, ...]:
+    """Validate a `requires` list (slot:<x>, plugin:<name>, os:windows|macos|linux); raise ManifestError."""
+    return _requires(value, what)
+
+
 def _inside(file: str) -> bool:
     """A rules path relative to the plugin root, written with `/`, that cannot leave it."""
     if not file or file.startswith("/") or "\\" in file or ":" in file:
