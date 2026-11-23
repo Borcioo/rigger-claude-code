@@ -24,6 +24,7 @@ format. Releases are tagged `v<version>`.
   user's card instead of a background agent.
 - The `rigger-windows` shell guard's junction message says to delete junctions in a call of their
   own, and the `windows-dev-env` skill names the one tool-guard refusal that is left.
+- The `rigger-windows` shell guard reads variables, words and locations only in the shapes it can prove (literal assignments, plain `$name` reads, the folder after `cd`/`Set-Location` stacks) and denies `git worktree remove` on a path it cannot read; the `INSTALL.md` rule table follows.
 
 ## [0.3.0] - 2026-11-17
 
