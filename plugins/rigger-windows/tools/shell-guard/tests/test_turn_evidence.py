@@ -999,6 +999,12 @@ class CheckRoot(TempDir):
                             "cd ../other && pytest", "cd sub; cd ../../other && pytest", "pytest && cd '%(o)s' && pytest")
         self.assert_credits(["root"], "cd '%(o)s' && cd '%(r)s' && pytest", "cd sub; pytest", "cd 'sub)x' && pytest")
 
+    def test_a_tilde_inside_a_name_is_literal(self):
+        # a Windows 8.3 short name (C:\Users\RUNNER~1) holds a tilde that no shell expands
+        self.other = self.repo("Worktrees", "OTHER~1")
+        self.assert_credits(["other"], "cd '%(o)s' && pytest", "Set-Location '%(o)s'; pytest")
+        self.assert_credits([], "cd ~ && cd '%(r)s' && pytest", "cd '~/x' && pytest", "cd ~/x && pytest")
+
     def test_a_cd_after_the_check_plays_no_part(self):
         self.assert_credits(["root"], "pytest && cd '%(o)s'", "pytest && cd $NOWHERE", "pytest && popd")
 
