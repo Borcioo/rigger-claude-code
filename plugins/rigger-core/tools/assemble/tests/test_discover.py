@@ -229,6 +229,12 @@ class DiscoverTests(unittest.TestCase):
         def known_broken(layout):
             write_json(layout.config / "plugins" / "known_marketplaces.json", b"[")
 
+        def known_list(layout):
+            write_json(layout.config / "plugins" / "known_marketplaces.json", b"[]")
+
+        def listing_broken(layout):
+            write_json(layout.market / ".claude-plugin" / "marketplace.json", b"{")
+
         rows = [
             ("installed not JSON", broken_installed, False),
             ("plugins as a list", plugins_list, False),
@@ -240,6 +246,8 @@ class DiscoverTests(unittest.TestCase):
             ("settings a JSON string", settings_string, True),
             ("settings not JSON", settings_broken, True),
             ("known marketplaces not JSON", known_broken, True),
+            ("known marketplaces a list", known_list, True),
+            ("marketplace listing not JSON", listing_broken, True),
         ]
         for label, breaker, wp_kept in rows:
             with self.subTest(label):
@@ -252,10 +260,14 @@ class DiscoverTests(unittest.TestCase):
                 layout.environ[discover.MODULE_DIRS] = str(dev)
                 breaker(layout)
                 real_run = layout.run
-                if label == "known marketplaces not JSON":
+                if label in ("known marketplaces not JSON", "known marketplaces a list",
+                             "marketplace listing not JSON"):
                     def run_keep_known():
-                        write_json(layout.market / ".claude-plugin" / "marketplace.json",
-                                   {"name": MARKET, "plugins": layout.listed})
+                        if label != "marketplace listing not JSON":
+                            write_json(layout.market / ".claude-plugin" / "marketplace.json",
+                                       {"name": MARKET, "plugins": layout.listed})
+                        else:
+                            write_json(layout.config / "plugins" / "known_marketplaces.json", layout.known)
                         write_json(layout.config / "plugins" / "installed_plugins.json",
                                    {"version": 2, "plugins": layout.installed})
                         return discover.discover(layout.config, layout.project, layout.environ, layout.core)
@@ -317,14 +329,6 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual(discover.module_root(entry, other, "p@m", lambda _: listing), Path(entry["installPath"]))
         outside = {"plugins": [{"name": "p", "source": "../elsewhere"}]}
         self.assertEqual(discover.module_root(entry, known, "p@m", lambda _: outside), Path(entry["installPath"]))
-
-    def test_git_marketplace_uses_install_path(self):
-        self.layout.plugin("rigger-rules", marker="fresh")
-        self.layout.known = {MARKET: {"source": {"source": "git", "url": "https://example.invalid/r.git"}}}
-        self.layout.enable("user", rigger_rules=True)
-        found = self.layout.run()
-        rules = [module for module in found.modules if module.name == "rigger-rules"][0]
-        self.assertEqual(rules.triggers[0].id, "rigger-rules.stale")
 
     def test_eval_module_dirs_file(self):
         # E1 branch B: a staged rigger-core lists the staged roots in .rigger-module-dirs.

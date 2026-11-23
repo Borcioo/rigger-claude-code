@@ -94,17 +94,24 @@ def _relative_source(listing: Optional[dict], name: str) -> Optional[str]:
     return None
 
 
+def _directory_source(marketplaces: dict, market: str) -> Optional[str]:
+    known = marketplaces.get(market) if isinstance(marketplaces, dict) else None
+    source = known.get("source") if isinstance(known, dict) else None
+    if isinstance(source, dict) and source.get("source") == "directory" and isinstance(source.get("path"), str):
+        return source["path"]
+    return None
+
+
 def module_root(
     entry: dict, marketplaces: dict, key: str = "", read_listing: Callable[[str], Optional[dict]] = _listing
 ) -> Path:
     """Where a plugin's hooks run: a directory marketplace's source folder, else installPath (S3)."""
     name, _, market = key.rpartition("@")
-    known = marketplaces.get(market) if isinstance(marketplaces, dict) else None
-    source = known.get("source") if isinstance(known, dict) else None
-    if isinstance(source, dict) and source.get("source") == "directory" and isinstance(source.get("path"), str):
-        relative = _relative_source(read_listing(source["path"]), name)
+    folder = _directory_source(marketplaces, market)
+    if folder is not None:
+        relative = _relative_source(read_listing(folder), name)
         if relative:
-            return Path(source["path"].rstrip("/\\") + "/" + relative)
+            return Path(folder.rstrip("/\\") + "/" + relative)
     return Path(entry["installPath"])
 
 
@@ -187,7 +194,10 @@ def _known_marketplaces(config_dir: Path, notices: List[str]) -> dict:
         notices.append("rigger: %s unreadable (%s); plugin roots taken from installPath"
                        % (_shown(path, 300), _shown(error)))
         return {}
-    return data if isinstance(data, dict) else {}
+    if data is not None and not isinstance(data, dict):
+        notices.append("rigger: %s is not a JSON object; plugin roots taken from installPath" % _shown(path, 300))
+        return {}
+    return data or {}
 
 
 def _market_order(known: dict, market: str, name: str) -> Optional[int]:
@@ -232,12 +242,18 @@ def discover(config_dir: Path, project_dir: Path, environ: Mapping[str, str], se
     enabled = set()
     chosen = {}  # type: Dict[str, Module]
     order = {}  # type: Dict[str, Tuple[int, str, int]]
+    unlisted = set()
 
     for key, entry in _installed(config_dir, [k for k, v in flags.items() if v is True], notices):
         name, _, market = key.rpartition("@")
         enabled.add(name)
         if name == CORE or name in chosen:
             continue
+        folder = _directory_source(known, market)
+        if folder is not None and market not in unlisted and _listing(folder) is None:
+            unlisted.add(market)
+            notices.append("rigger: marketplace %s has no readable %s; plugin roots taken from installPath"
+                           % (_shown(market), LISTING.as_posix()))
         root = module_root(entry, known, key)
         if not root.is_dir():
             notices.append("rigger: plugin %s root %s is not a directory; skipped" % (_shown(key), _shown(root, 300)))
