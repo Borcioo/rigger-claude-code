@@ -53,6 +53,8 @@ class SplitTests(unittest.TestCase):
         self.assertEqual([s.text for s in got], [b"## A\nx\ny\n"])
         mid = sections.split("a", b"## A\r\nx\ry\r\n")
         self.assertEqual(mid[0].text, b"## A\nx\ry\n")
+        double = sections.split("a", b"## A\r\r\nx\n")
+        self.assertEqual(double[0].text, b"## A\r\nx\n")
         bom = sections.split("a", b"\xef\xbb\xbf## A\nx\n")
         self.assertEqual([(s.id, s.text) for s in bom], [("a._preamble", b"\xef\xbb\xbf## A\nx\n")])
 
