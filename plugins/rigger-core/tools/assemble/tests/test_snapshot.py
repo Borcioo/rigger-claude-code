@@ -66,11 +66,18 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(self.files_under(self.state), ["s1.resolved.json"])
         raw = path.read_bytes()
         self.assertNotIn(b"\r", raw)
-        self.assertIn("zażółć".encode("utf-8"), raw)
+        self.assertIn(b"za\\u017c\\u00f3\\u0142\\u0107", raw)  # ASCII escapes (I1)
+        raw.decode("ascii")
         self.assertEqual(json.loads(raw.decode("utf-8")), data)
 
-    def test_unencodable_data_writes_nothing(self):
-        self.assertIsNone(snapshot.write_snapshot(self.config, "s1", full_data(notices=["a\ud800"])))
+    def test_lone_surrogate_round_trips(self):
+        # Raw non-UTF-8 bytes reach the snapshot as surrogateescape text and must come back unchanged.
+        data = full_data(notices=["a\udcbf\ud800"])
+        self.assertIsNotNone(snapshot.write_snapshot(self.config, "s1", data))
+        self.assertEqual(snapshot.read_snapshot(self.config, "s1")["notices"], ["a\udcbf\ud800"])
+
+    def test_unserialisable_data_writes_nothing(self):
+        self.assertIsNone(snapshot.write_snapshot(self.config, "s1", full_data(notices=[object()])))
         self.assertEqual([path for path in self.tmp.rglob("*") if path.is_file()], [])
 
     def test_old_format_reads_as_missing(self):

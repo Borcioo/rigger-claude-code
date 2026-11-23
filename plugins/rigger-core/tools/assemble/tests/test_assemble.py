@@ -429,6 +429,28 @@ class SnapshotTests(Base):
             self.assertEqual(self.layout.part(1, subagent=True, stdin=stdin), b"", agent)
         self.assertNotIn("snapshot missing", self.layout.part(1, stdin=compact).decode("utf-8"))
 
+    def test_compact_reads_snapshot_with_non_utf8_bytes(self):
+        # I1: rules_extra.sh printed raw bytes; a cp1250 rules.d file or a Latin-1 module byte must
+        # still give a snapshot, and compaction prints the session's bytes.
+        rows = [
+            ("cp1250 rules.d", lambda: self.layout.personal("mine.md", b"## Mine\n\n\xbf\xf3\xb3w\n"), b"\xbf\xf3\xb3w\n"),
+            ("latin-1 module file", lambda: write(self.layout.plugins / "rigger-rules" / "rules" / "plans.md",
+                                                  b"## Plans\n\ncaf\xe9 rule\n"), b"caf\xe9 rule\n"),
+        ]
+        for name, seed, marker in rows:
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.layout.rules_module()
+                seed()
+                startup = self.layout.hook_input(session_id="s9", source="startup")
+                first = [self.layout.part(i, stdin=startup) for i in range(1, 7)]
+                self.assertNotIn(b"snapshot not written", first[0])
+                self.assertIn(marker, b"".join(first))
+                self.assertTrue((self.layout.config / "rigger" / "state" / "s9.resolved.json").is_file())
+                compact = self.layout.hook_input(session_id="s9", source="compact")
+                self.assertEqual([self.layout.part(i, stdin=compact) for i in range(1, 7)], first)
+
     def test_subagent_without_parent_snapshot_recomputes(self):
         self.layout.rules_module()
         sub = self.layout.part(1, subagent=True, stdin=self.layout.hook_input(
