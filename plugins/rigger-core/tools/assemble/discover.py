@@ -52,6 +52,8 @@ def _read_json(path: Path):
         return None
     except OSError as error:
         raise _Unreadable(error.strerror or str(error))
+    except ValueError as error:  # a NUL inside the path
+        raise _Unreadable(str(error))
     try:
         parsed = json.loads(raw.decode("utf-8-sig"))
     except RecursionError:

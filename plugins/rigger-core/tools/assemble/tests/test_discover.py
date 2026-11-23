@@ -235,6 +235,9 @@ class DiscoverTests(unittest.TestCase):
         def known_list(layout):
             write_json(layout.config / "plugins" / "known_marketplaces.json", b"[]")
 
+        def listing_path_nul(layout):
+            layout.known = {MARKET: {"source": {"source": "directory", "path": str(layout.market) + "\x00x"}}}
+
         def listing_broken(layout):
             write_json(layout.market / ".claude-plugin" / "marketplace.json", b"{")
 
@@ -252,6 +255,7 @@ class DiscoverTests(unittest.TestCase):
             ("known marketplaces not JSON", known_broken, True),
             ("known marketplaces a list", known_list, True),
             ("marketplace listing not JSON", listing_broken, True),
+            ("marketplace path with NUL", listing_path_nul, True),
         ]
         for label, breaker, wp_kept in rows:
             with self.subTest(label):
