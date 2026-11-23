@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -361,7 +362,7 @@ class OutputTests(Base):
 
     def test_resume_and_unknown_source_print_nothing(self):
         self.layout.rules_module()
-        for source in ("resume", "weird"):
+        for source in ("resume", "weird", None):  # D23: only a missing key prints
             for index in (1, 2):
                 self.assertEqual(self.layout.part(index, stdin=self.layout.hook_input(source=source)), b"", source)
         self.assertIn(b"run the tests", self.layout.part(1, stdin=self.layout.hook_input(source="clear")))
@@ -371,6 +372,7 @@ class OutputTests(Base):
         self.layout.rules_module()
         probes = [
             b"[" * 100000,
+            b"[1,2]",  # a list, not an object
             self.layout.hook_input(session_id="a\udfff", source="startup"),
             self.layout.hook_input(cwd=str(self.layout.project) + "\x00x"),
         ]
@@ -475,6 +477,8 @@ class SnapshotTests(Base):
         write(rules / "rules" / "plans.md", "## Plans\n\nnew plan rule\n")
         self.assertEqual([self.layout.part(i, stdin=compact) for i in range(1, 7)], first)
         snapshot.unlink()
+        self.assertNotIn(b"snapshot missing", self.layout.part(2, stdin=compact))  # late lines open part 1 only
+        self.assertFalse(snapshot.exists())
         again = self.layout.part(1, stdin=compact)
         self.assertTrue(again.startswith(b"rigger: snapshot missing; rules read again\n"))
         self.assertIn(b"new plan rule", again)
@@ -531,6 +535,22 @@ class SnapshotTests(Base):
         self.assertNotIn(b"snapshot not written", self.layout.part(2, stdin=startup))
         unsafe = self.layout.hook_input(session_id="../x", source="startup")
         self.assertNotIn(b"snapshot not written", self.layout.part(1, stdin=unsafe))
+        # A compaction that cannot rewrite the snapshot says only that it was missing (one line).
+        compact = self.layout.part(1, stdin=self.layout.hook_input(session_id="s2", source="compact"))
+        self.assertTrue(compact.startswith(b"rigger: snapshot missing; rules read again\n"))
+        self.assertNotIn(b"snapshot not written", compact)
+
+    def test_startup_deletes_snapshots_older_than_14_days(self):
+        self.layout.rules_module()
+        state = self.layout.config / "rigger" / "state"
+        old, recent = state / "old.resolved.json", state / "recent.resolved.json"
+        for path, days in ((old, 15), (recent, 13)):
+            write(path, "{}")
+            stamp = time.time() - days * 86400
+            os.utime(str(path), (stamp, stamp))
+        self.layout.part(1, stdin=self.layout.hook_input(session_id="s3", source="startup"))
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
 
     def test_unsafe_session_id_writes_nothing(self):
         self.layout.rules_module()
