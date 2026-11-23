@@ -97,7 +97,7 @@ This design makes Rigger a small fixed core plus modules:
 | A plugin never reaches a sibling by relative path | Core finds modules through `plugins/installed_plugins.json` `installPath`. | `CLAUDE.md:35` |
 | `installPath` of a directory marketplace is a stale cache snapshot | The assembler must not read a dev checkout's rules from a stale snapshot. Spike S3. | `CLAUDE.md:28` |
 | Plugin hooks are static `hooks.json` | Config cannot move a hook from one plugin to another. Hook-backed slots are filled by enabling the plugin that fills them (§10.2). | `rigger-core/hooks/hooks.json` |
-| Rules text ceiling 27,681 bytes across `*/rules/*.md` | The ceiling test moves from "files under `rules/`" to "assembled general layer" (§13, P1). | `test_plugin_rules.py:31,309-314` |
+| Rules text ceiling 27,681 bytes across `*/rules/*.md` | The ceiling test moves from "files under `rules/`" to "assembled general layer" (§13, P1), rendered with default options: 27,708 bytes for the same text. | `test_plugin_rules.py:31,309-314` |
 | Everything under `plugins/` is public | Example modules in this document are generic: hosting-provider deploy, ticket intake, accessibility audit. | `CLAUDE.md:3-5` |
 
 ## 4. How Rigger works today: the hook points
@@ -500,7 +500,8 @@ Other behaviour:
 - **Audience:** `*-main.md` in `rules.d` stays main-only. Module rules declare `audience`. A
   replacement inherits the audience of the section it replaces unless its own file says otherwise.
 - **Experiments:** `HARNESS_RULES_DROP` keeps working on basenames and `## ` heading lines, and also
-  accepts ids. It applies last, to every layer.
+  accepts ids. It applies last, to every module layer; personal text in `rules.d` is never
+  dropped by it, as today.
 
 ### 8.3 Resolution
 
@@ -949,8 +950,8 @@ byte with LF, plus the set of root lines.
 - a stub run shows every section reaching the first request. That run loads the repository's
   plugins with `--plugin-dir` and names the same roots in `RIGGER_MODULE_DIRS`;
 - the same stub run with one root left out of `RIGGER_MODULE_DIRS` shows that module's sections
-  missing and one notice, which proves the variable, not a scan of `--plugin-dir`, is what
-  discovery reads.
+  missing and its root line absent (no notice: a `--plugin-dir` plugin is in neither Claude Code
+  state file), which proves the variable, not a scan of `--plugin-dir`, is what discovery reads.
 
 **Migration:**
 

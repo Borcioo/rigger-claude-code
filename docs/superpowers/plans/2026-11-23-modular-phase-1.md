@@ -5,6 +5,10 @@
 **Goal:** One assembler in rigger-core prints every Rigger rules section from module manifests and a
 four-level config, and with no config file its output equals today's, section for section.
 
+**Status:** approved 2026-11-23 after an independent plan review. Review additions accepted as part of
+the design: `core_check.sh` in rigger-rules, the trigger-row shape caps, the `config-inactive` doctor
+row and the snapshot `format` key (D21). Estimate 29 h (1.8× the spec's 16 h, which priced no spikes).
+
 **Architecture:** A small Python package `plugins/rigger-core/tools/assemble/`. It splits rules into
 sections with ids, discovers modules (enabled plugins with `rigger-module.json`, plus
 `RIGGER_MODULE_DIRS`), resolves config levels 1–4 and renders placeholders and trigger tables. It
@@ -1043,8 +1047,8 @@ Against the spec's 16 h, 1,250 and 1,600, the differences are:
 1. **Decided in review, keep.** D4 keeps `HARNESS_RULES_DROP` off `rules.d`, which departs from
    spec §8.2 ("every layer"). The variable is an experiment switch for the rules Rigger ships,
    `plugins/rigger-rules/README.md:50-51` documents that it skips `rules.d`, and spec §13
-   "Migration" promises both keep working unchanged. The spec sentence is corrected to "every
-   module layer" in the PR body. If the owner wants personal text droppable, that is a behaviour
+   "Migration" promises both keep working unchanged. The spec sentence now says "every module
+   layer" (§8.2), and the §3 ceiling and §13 exit criterion match D20 and D19. If the owner wants personal text droppable, that is a behaviour
    change with its own release note, in phase 4 next to the company layer.
 2. **Decided in review, keep.** D11 reads `company` and `leak_guard` as record-only in phase 1.
    The spec's sentence can also be read as "these four have effect", but their only readers are
