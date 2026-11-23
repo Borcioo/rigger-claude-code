@@ -142,7 +142,7 @@ plans.
 6. **Plugins updated one at a time** (`claude plugin update rigger-rules@rigger` alone: the new
    rigger-rules has no rules handlers, the old rigger-core has no assembler). A person expects one
    visible line, never a session with no rules at all. Whether plugins of one marketplace can sit
-   at different commits is recorded by S3 (Task 3, Step 6); if they can, Task 18 keeps one check
+   at different commits is recorded by S3 (Task 3, Step 6); unless S3 rules it out, Task 18 keeps one check
    handler in rigger-rules. Test: Task 18, `test_old_core_prints_one_visible_line`. The reverse
    (new core, old rigger-rules without a manifest) must not print `rules.d` twice. Test: Task 14,
    `test_personal_layer_needs_rigger_rules`.
@@ -183,7 +183,7 @@ below follows them.
 | D18 | `--check` resolves `<plugin>:<skill>` only when `<plugin>` is a module in the checked set: `skills/<skill>/SKILL.md` must exist. Any other plugin (superpowers) counts as external: one info line `# external: superpowers`, not a finding. | The check cannot see a plugin outside the repository. §8.4's "resolves to nothing" is read as "a module skill that does not exist". |
 | D16 | S6 (panel writes, phase 5) and S7 (shellwise version, phase 3) are not run. Phase 1 adds spike E1, "how an eval child gets its module roots", because rigger-rules' five evals lose their rules without it. | E1 is a phase-1 dependency the spec did not list. |
 | D19 | The exit-criterion run with one root left out of `RIGGER_MODULE_DIRS` (Task 20) asserts that module's sections and root line are absent. It asserts no notice. | Spec §13 asks for "one notice", but a plugin loaded with `--plugin-dir` is in neither Claude Code state file, so the assembler cannot know it exists. The PR body names this as a spec correction. |
-| D20 | `RulesSizeTests` measures the rendered general layer with module options at their defaults, and its ceiling becomes 27,708 bytes. | Today's 27,681 is the sum of the raw files, with `talk.md` unrendered (2,539 bytes). Rendered with the defaults `talk.md` is 2,566 bytes, so the same text measures 27,681 − 2,539 + 2,566 = 27,708. Keeping 27,681 would fail on unchanged content. |
+| D20 | `RulesSizeTests` measures the rendered general layer with module options at their defaults, and its ceiling becomes 27,708 bytes. | Today's 27,681 is the sum of the raw files, with `talk.md` unrendered (2,539 bytes). Rendered with the defaults `talk.md` is 2,566 bytes, so the same text measures 27,681 − 2,539 + 2,566 = 27,708. Keeping 27,681 would fail on unchanged content. The sum is over section bytes (`Assembly.blocks`), without root lines and notices. |
 | D21 | A snapshot carries `"format": 1`. One with another value or a missing top-level key counts as unreadable: a fresh read with the notice, then a rewrite. | A plugin update between two compactions of one session must not feed an old snapshot shape to new code. |
 
 ## File map
@@ -203,7 +203,7 @@ below follows them.
 | `tests/fixtures/golden-34e7713/**`, `tests/golden_baseline.py`, `tests/test_assembly_golden.py` | 15 | frozen handlers and the golden test |
 | `tests/test_module_contracts.py`, `scripts/run_tests.py`, `scripts/run_tests.min`, `scripts/eval_stage.py`, `tests/test_run_tests.py`, `tests/test_eval_stage.py` | 16 | contract test, env strip, eval module roots |
 | `plugins/rigger-core/tools/harness_start/harness_start.py` (+ its test) | 17 | heading-overlap check reads rendered headings |
-| six `hooks/hooks.json`, rules text, `talk_start.sh`, wiring tests; `plugins/rigger-rules/hooks/core_check.sh` and its test if S3 Step 6 asks for it | 18 | the cutover |
+| six `hooks/hooks.json`, rules text, `talk_start.sh`, wiring tests; `plugins/rigger-rules/hooks/core_check.sh` and its test unless S3 Step 6 rules it out | 18 | the cutover |
 | `plugins/rigger-core/tools/doctor/doctor.sh` (+ tests) | 19 | doctor rows |
 | `plugins/rigger-core/tools/assemble/tests/test_stub_session.py` | 20 | stub exit criteria |
 | `scripts/startup_bench.py`, `.github/workflows/test.yml` | 21 | startup-cost measurement |
@@ -312,9 +312,9 @@ repository file changes.
   - **If `installPath` lags:** discovery reads a directory marketplace's module root from the marketplace `source` path joined with the plugin's `source`, and prints that path in the root line.
   - **If it does not lag:** `installPath`.
   - **In both cases:** the printed root line uses the exact string form `CLAUDE_PLUGIN_ROOT` showed. Record any transformation needed (for example `\` to `/`).
-- [ ] **Step 6: Version skew (Review Focus 6).** In the same config also install `rigger-core@rigger`. Append `S3-SKEW-<uuid>` to one file of each of the two plugins in the repository copy, then run `claude plugin update rigger-rules@rigger` alone. Control: rigger-rules' `installPath` now holds the marker (the update ran). Record whether rigger-core's `installPath` holds it too. Record from `claude plugin update --help` and the plugin documentation whether a marketplace update or auto-update moves every plugin of the marketplace at once, and whether `dependencies` accepts a minimum version.
+- [ ] **Step 6: Version skew (Review Focus 6).** The case that matters is a git-backed marketplace, where each plugin runs from its own cache folder; in a directory marketplace hooks may run in place, so its answer does not carry over. In a second fresh config, make a second copy of the repository a local git repository with one commit and add it as a marketplace by its `file://` URL. Record whether Claude Code treats it as a git source (`known_marketplaces.json`). If it does: install `rigger-rules@rigger` and `rigger-core@rigger`, append `S3-SKEW-<uuid>` to one file of each plugin, commit, and run `claude plugin marketplace update rigger` and then `claude plugin update rigger-rules@rigger` alone. Control: rigger-rules' `installPath` now holds the marker (the update ran). Record whether rigger-core's `installPath` holds it too. Record from `claude plugin update --help` and the plugin documentation whether auto-update moves every plugin of a marketplace at once, and whether `dependencies` accepts a minimum version.
   - **If rigger-core moved with it,** or a dependency version floor exists and this repository can use it: no check handler; Task 18 skips its conditional step, and Task 22 records the mechanism.
-  - **If rigger-core stayed behind:** Task 18 keeps the check handler in rigger-rules.
+  - **If rigger-core stayed behind, or no git-backed marketplace could be set up offline** (the question then stays open): Task 18 keeps the check handler in rigger-rules. It is silent unless it has proof, so shipping it on an open question costs one `sh` start.
 - [ ] **Step 7: Sweep and commit**, message `docs(spikes): record S3 directory marketplace roots`.
 
 ### Task 4: Spike S4 — which settings scopes enable a plugin
@@ -545,8 +545,10 @@ exists. Expected green: `Ran N tests` … `OK`.
     trigger ids hold dots. `inactive` holds the keys set above L1 that have no effect in phase 1
     (D11), with the same source strings; `effective["slots"]` always equals L1's `slots`.
   - `resolve(l1: dict, l2: List[Tuple[str, dict]], l3: dict, l4: dict, paths: Dict[int, str]) -> Resolved`
-  - A trigger row object may hold `before` (str), `load` (list of str), `requires` (list of str)
-    and `section` (str). `before` and each `load` entry are one line without `|` or control
+  - A trigger row object holds `before` (str) and `load` (list of str), both required, and may hold
+    `requires` (list of str) and `section` (str). A row from a higher level replaces the lower
+    row whole (spec §7.2 and §9.3), so `merge` treats each `triggers.<id>` value as a leaf, and
+    two company modules that set one id are an L2 conflict. `before` and each `load` entry are one line without `|` or control
     characters, `before` at most 300 characters, `load` 1 to 4 entries. A row that breaks this is
     ignored at that level with one notice naming file and id, and the lower level's row stands.
   - `merge(base: dict, over: dict) -> dict` (spec §7.3, no mutation of its inputs)
@@ -558,7 +560,8 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `test_trigger_row_shape` (Review Focus 8): L4 rows with `before: "a\nb"`, `before: "a | b"`, `load: "x:y"`, `load: []`, `load: ["x:y\n## Injected"]` and a 301-character `before` are each ignored with one notice naming the file and the id. An L4 row that replaces `rigger-core.testing` with a broken shape leaves the L1 row in place.
   - `test_slots_above_level_one_are_recorded_not_applied` (D11): L3 `slots.testing.target = "x:y"` leaves `effective["slots"]["testing"]["target"] == "rigger-core:testing"` and gives `inactive[("slots", "testing", "target")] == "L3:<path>"`, with no notice. `trust`, `review`, `shell_guard`, `company` and `leak_guard` land in `inactive` the same way.
   - `test_merge_rules`: null removes, objects merge, lists replace whole.
-  - `test_l2_conflict_neither_applies`: two company modules set `slots.reviewer.model` to `opus` and `haiku`. The L1 value stands, and one notice names both modules and the key.
+  - `test_l2_conflict_neither_applies`: two company modules set `triggers.rigger-core.testing` to different rows. The L1 row stands, and one notice names both modules and the key. (Not a `slots` key: slots above L1 are inactive in phase 1.)
+  - `test_trigger_row_replaces_whole`: an L3 row for `rigger-core.testing` with its own `before` and `load` and no `section` leaves no field of the L1 row behind, `section` included; an L3 row holding only `before` is ignored with one notice.
   - `test_unknown_key_and_wrong_type_notices`: an unknown key is ignored with a notice. `triggers: []` at L3 is ignored with a notice, and the L1 triggers stand.
   - `test_level_restricted_keys`: `expects` at L3 and `leak_guard` at L4 are ignored, each with a notice naming file and key.
   - `test_sources_name_the_level_file`: `sources[("triggers", "personal.notes", "before")] == "L3:<path>"`.
@@ -673,7 +676,7 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `test_rules_lists_every_rules_file_once`: the set of manifest `file` values equals the `rules/*.md` set per plugin.
   - `test_modules_with_rules_depend_on_core`.
   - `test_no_version_anywhere` updated to also scan `rigger-module.json` (8 + 7 files).
-  - `test_eval_cases_load_their_dependencies`: calls `scripts/eval_suite_check.py` `check_suite(plugin_root, cases_md)` (it already reports `does not load dependency`) for every plugin with `evals/` and asserts no such problem and at least 15 cases read. No second parser of the front matter.
+  - `test_eval_cases_load_their_dependencies`: calls `scripts/eval_suite_check.py` `check_suite(plugin_root, cases_md)` (it already reports `does not load dependency`) with `evals/CASES.md` for every plugin with `evals/` and asserts no such problem and at least 15 cases read. No second parser of the front matter.
   - `test_tests_paths_cover_every_discovered_test_file` (D15): every file `run_tests.py` discovers under `plugins/<p>/` lies under one of that module's `tests.paths`, and every listed path exists. It asserts at least 40 files were matched.
 - [ ] **Step 2: Run** `python -I -X utf8 tests/test_repo.py -v ManifestTests`. Expected: `FAILED`.
 - [ ] **Step 3: Write the 7 manifests and the 4 `plugin.json` edits.** Add the `plugins:` line to the 5 windows eval `prompt.md` files.
@@ -728,6 +731,7 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `test_full_repo_layout_fits_with_full_rules_d`: all 7 repository modules plus a 9,000-byte `rules.d` produce no overflow in 6 session parts or 4 subagent parts.
   - `test_check_findings`: one fixture per §8.4 finding, plus `empty heading slug` (D14), plus `0 rules files read`. Each gives exit 1 and its line.
   - `test_check_repo_is_clean`: `--check` over the repository gives exit 0 and `findings 0`.
+  - `test_config_row_for_an_absent_section_gives_a_notice` (D7): an L3 row with `section: "nope.table"` is not rendered and gives `rigger: trigger <id> from <file> not shown: no table <section>`. With rigger-rules absent, core's own rows for `skills.skill-triggers` give no notice. `assemble()` owns this notice: it knows which sections hold a `{{triggers:…}}` placeholder; `collect_rows` only returns rows.
   - `test_expects_notice` (D11): an L4 `expects: ["rigger-wp", "nope"]` with rigger-wp enabled gives one notice naming `nope` and `claude plugin install nope`.
   - `test_output_is_lf_bytes`: no `\r` in any part's stdout.
   - `test_crash_prints_one_visible_line` (spec anti-goal "never a silent fallback"). It calls `assemble.main(["--part", "1"])` with `assemble.assemble` patched to raise `RuntimeError("boom")`. Expected: return 0 and stdout exactly `rigger: rules not assembled: RuntimeError: boom (run /rigger-core:doctor)\n`. In `--subagent` mode the same line arrives as `additionalContext`. `--part 2` under the same patch prints nothing. The patch is restored in `finally`.
@@ -871,7 +875,7 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `plugins/rigger-core/hooks/hooks.json`: remove the `state-file.md` rules group. Add one `SessionStart` group, matcher `startup|clear|compact`, with 6 handlers `sh "${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh" <i>` (timeout 10), and one `SubagentStart` group with 4 handlers `… part.sh <i> --subagent` (timeout 10).
   - The `hooks.json` of rigger-rules, rigger-lessons, rigger-wp and rigger-windows: remove every `rules_start.sh` and `rules_extra.sh` handler. Keep `worktree_root.sh`, `lessons_start.py` and all non-rules handlers.
   - `plugins/rigger-talk/hooks/hooks.json` and `talk_start.sh`: branch A removes the group (the file stays one release, unused); branch B rewrites `talk_start.sh` to write the options file.
-  - **Only if S3 Step 6 found that rigger-core can stay behind (Review Focus 6):** create `plugins/rigger-rules/hooks/core_check.sh` and add it as one more `SessionStart` group of rigger-rules (matcher `startup|clear`, timeout 10). POSIX `sh` only, because rigger-rules ships no `py.sh`. It reads `<config dir>/plugins/installed_plugins.json`, collects every `installPath` value whose last or second-to-last path element is `rigger-core` (the folder itself in a directory marketplace, `rigger-core/<version>` in the cache; JSON `\\` read as `\`), and prints `Rigger rules not loaded: rigger-core is older than rigger-rules (run claude plugin update for rigger-core)` when it found at least one such path and none of them holds `tools/assemble/part.sh`. In every other case (no file, no rigger-core entry, a shape it cannot read, rigger-core loaded with `--plugin-dir`) it prints nothing. It always exits 0.
+  - **Unless S3 Step 6 showed that rigger-core always moves with rigger-rules (Review Focus 6):** create `plugins/rigger-rules/hooks/core_check.sh` and add it as one more `SessionStart` group of rigger-rules (matcher `startup|clear`, timeout 10). POSIX `sh` only, because rigger-rules ships no `py.sh`. It reads `<config dir>/plugins/installed_plugins.json`, collects every `installPath` value whose last or second-to-last path element is `rigger-core` (the folder itself in a directory marketplace, `rigger-core/<version>` in the cache; JSON `\\` read as `\`), and prints `Rigger rules not loaded: rigger-core is older than rigger-rules (run claude plugin update for rigger-core)` when it found at least one such path and none of them holds `tools/assemble/part.sh`. It checks only when rigger-rules itself runs from its cache folder: its own root and one of rigger-rules' `installPath` values must be the same folder, compared after `cd <path> && pwd -P` on both, never as strings. A directory marketplace runs hooks in place while `installPath` is a stale snapshot (`CLAUDE.md`, and S3), so there the roots differ and a current core would otherwise be reported as old. In every other case (no file, no rigger-core entry, a shape it cannot read, either plugin loaded with `--plugin-dir` or from a directory source) it prints nothing. It always exits 0.
   - Rules text per D6: `git.md:1,4` gets `{{skill:rigger-core:git-workflow}}`; `plans-main.md:4` gets `{{slot:process.brainstorm}}, then {{slot:process.plans}}`; `skills.md`, `windows-skills.md` and `wp-skills.md` replace the header and rows with `{{triggers:<own section id>}}`; `talk.md` gets `{{var:reply_language}}`, `{{var:reply_lines}}` and `{{var:report_lines}}`.
 - Modify tests:
   - `plugins/rigger-rules/tests/test_plugin_rules.py`:
@@ -885,7 +889,7 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `plugins/rigger-talk/tests/test_talk.py`: through the assembler (the S2 branch).
   - `plugins/rigger-core/tests/test_core_wiring.py:139`: `part.sh` instead of `rules_start.sh`.
   - `tests/test_repo.py`: `RULES_SCRIPTS` gains `part.sh`. `test_plugins_hold_no_handler_besides_the_table_and_the_known_ones` keeps `moved + 11`, because `part.sh` is excluded like the other rules scripts. A new assertion counts 10 `part.sh` handlers in rigger-core and no `rules_start.sh` or `rules_extra.sh` handler in any plugin; `talk_start.sh` has 0 handlers in branch A and 1 in branch B. With `core_check.sh` the count becomes `moved + 12`, and `names.count("core_check.sh") == 1` joins the list.
-  - `plugins/rigger-rules/tests/test_core_check.py` (only with `core_check.sh`): `test_old_core_prints_one_visible_line` builds a temp config whose `installed_plugins.json` names a rigger-core folder without `tools/assemble/part.sh` and expects the exact line; rows for a core that has `part.sh`, no rigger-core entry, a missing file, a file that is not JSON, a minified one-line file and a Windows path written with `\\` (run on Windows only) expect the line or silence as the rule above says. Each row runs the script through real `sh` with `HOME` and `CLAUDE_CONFIG_DIR` set to the temp dir.
+  - `plugins/rigger-rules/tests/test_core_check.py` (only with `core_check.sh`): `test_old_core_prints_one_visible_line` copies rigger-rules into a temp cache layout, names that copy as rigger-rules' `installPath` and a rigger-core folder without `tools/assemble/part.sh` in a temp `installed_plugins.json`, runs the copy's script and expects the exact line; rows for a core that has `part.sh`, a rigger-rules that runs from a folder other than its `installPath` while the core snapshot lacks `part.sh` (the directory-marketplace case: silence), no rigger-core entry, a missing file, a file that is not JSON, a minified one-line file and a Windows path written with `\\` (run on Windows only) expect the line or silence as the rule above says. Each row runs the script through real `sh` with `HOME` and `CLAUDE_CONFIG_DIR` set to the temp dir.
   - `plugins/rigger-rules/tests/test_reinject.py`: sets `RIGGER_MODULE_DIRS` to the `INJECTED` roots; markers are the first lines of rendered sections.
   - `tests/test_shellcheck.py`: add `part.sh`.
 
@@ -900,7 +904,7 @@ exists. Expected green: `Ran N tests` … `OK`.
 - [ ] **Step 5: Red runs.**
   - Leave `skills.md`'s old literal table in place next to the placeholder: the golden test fails on a doubled table.
   - Remove one part handler (6 → 5) with a full `rules.d`: `WiringTests` and the overflow check fail.
-  - With `core_check.sh`: make it print nothing when no path holds `part.sh`: `test_old_core_prints_one_visible_line` fails. Make it print when the file is missing: the silence row fails.
+  - With `core_check.sh`: make it print nothing when no path holds `part.sh`: `test_old_core_prints_one_visible_line` fails. Make it print when the file is missing: the silence row fails. Remove the own-root comparison: the directory-marketplace row fails.
 - [ ] **Step 6: Commit.** `feat!: rigger-core assembles every rules section` with the body listing the §13 exceptions, and the trailer `BREAKING-CHANGE: rules need Python 3.9+ and rigger-core; the 19 rules handlers become rigger-core part handlers.`
 
 ### Task 19: Doctor rows
@@ -1003,7 +1007,7 @@ exists. Expected green: `Ran N tests` … `OK`.
 | Config resolver, defaults, manifests, plugin.json (Tasks 10, 13) | 2 | 480 (config 220, defaults 60, 7 manifests 200) | 200 |
 | Golden (Task 15) | 3 | — | 450 (plus about 700 lines of frozen fixture, copied) |
 | Contracts, env, eval_stage (Task 16) | 1 | 40 | 120 |
-| Cutover and test rewrites (Task 18) | 4.5 | 110 (hooks and rules edits 80, `core_check.sh` 30 if S3 asks for it) | 500 |
+| Cutover and test rewrites (Task 18) | 4.5 | 110 (hooks and rules edits 80, `core_check.sh` 30 unless S3 rules it out) | 500 |
 | harness_start, doctor, bench, docs (Tasks 17, 19, 21, 22) | 2.5 | 150 | 160 |
 | Stub run, gate, PR (Tasks 20, 23) | 1.5 | — | 120 |
 | **Total** | **29** | **1,750** | **2,650** |
@@ -1056,8 +1060,9 @@ Against the spec's 16 h, 1,250 and 1,600, the differences are:
 5. Managed settings scopes are not probed (S4).
 6. If the validator rejects `dependencies` on talk or wp, the §13 exception cannot ship as written.
    The three raw readers of D17 see placeholders until phase 2.
-7. Version skew (Review Focus 6). `core_check.sh` covers only rigger-rules next to an old
-   rigger-core that sits in `installed_plugins.json`. A new rigger-talk, rigger-wp, rigger-lessons
+7. Version skew (Review Focus 6). `core_check.sh` covers only a rigger-rules that runs from its
+   cache folder next to an old rigger-core that sits in `installed_plugins.json`; it stays silent
+   for a directory marketplace, and S3 Step 6 may leave the git-backed case unproved. A new rigger-talk, rigger-wp, rigger-lessons
    or rigger-windows next to an old rigger-core, without rigger-rules, loses its sections with no
    line. The release notes say to update every plugin together.
 8. A part handler killed at its 10 s timeout leaves that part's rules out with no line; nothing
