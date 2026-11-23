@@ -338,6 +338,16 @@ class DoctorShTests(DoctorShCase):
         )
         self.assertRow(result, "rules-assembly", "OK")
 
+    def test_override_of_a_subagent_only_section_gives_a_rule_override_row(self):
+        self.write_file(self.config / "rigger" / "rules.d" / "lessons-subagent.md", "## Lessons (mine)\n- mine\n")
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons")
+        self.assertEqual(
+            self.rows(result, "rule-override"),
+            {"rule-override lessons-subagent.lessons": (
+                "INFO", "rules.d/lessons-subagent.md replaces rule lessons-subagent.lessons", "assemble.py --doctor")},
+        )
+        self.assertRow(result, "rules-assembly", "OK")
+
     def test_planted_duplicate_warns(self):
         mod = self.tmp / "mods" / "mod-dup"
         self.write_file(mod / ".claude-plugin" / "plugin.json", json.dumps({"name": "mod-dup"}))

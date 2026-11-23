@@ -752,10 +752,11 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
     how = "assemble.py --doctor"
     rows = []  # type: List[Tuple[str, str, str]]
     own = set()
-    for section in found.sections:
+    # An override inherits the replaced section's audience, so one of a subagent-only section is listed there only.
+    for section in found.sections + assemble(_inputs(environ, {}), "subagent").sections:
         if section["layer"] == PERSONAL:
             line = OVERRIDE.format(file=section["file"], id=section["id"])
-            if line in found.notices:
+            if line in found.notices and line not in own:
                 own.add(line)
                 rows.append(("rule-override " + _shown(section["id"]), "INFO", line[len("rigger: "):]))
     fixes = {}  # type: Dict[str, str]
