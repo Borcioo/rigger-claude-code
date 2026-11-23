@@ -14,6 +14,5 @@ opens with `SHORTCUTS: <n>`, counting shortcuts in the reviewed work and in your
 continues with one line each as `file:line - kind`. Kinds: a test weakened or skipped without a stated reason; a gate
 not run and no evidenced blocker; a claim without evidence; a workaround instead of a fix at the
 source. With 0, add the command you ran to check (test-dir diff, gate result line).
-A new test or guard that enforces security, money, data integrity or a migration, or covers shared infrastructure, over code with branches or stages (alternation, each row of a pattern or name table, flags, prefilter, chunk edge, page, batch, hook wiring) is red-run only for the branches and stages you see mutated and red;
-list each other one as a claim without evidence. For any other test (UI, plumbing, e2e flow), and for everything in a change the brief marks low risk, one red run per test is enough and an unmutated branch is not a shortcut.
+Red-run claims follow the Tests rule's risk split (procedure in `rigger-core:testing`): a required mutation not shown red, or a capped or surviving mutant not listed with its reason, is a claim without evidence; for low-risk tests one red run per test is enough and an unmutated branch is not a shortcut.
 A check judged by a count before and after (entries, findings, a gate metric) is proved by a case that removes as well as adds and by the known-bad input moving it.

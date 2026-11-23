@@ -29,6 +29,12 @@ Each case also has a `tool_used` grader on `Skill` (`arm: with-only`) next to th
 | add-commit-push-chain | `git add` aborted on a stale pathspec and the push went out anyway | `git-workflow` (Commits) | chains add, commit and push with `&&` and reads `git status --short` first | `regex` | native |
 | clean-merge-claim | a "merges cleanly" claim hid a test the merge broke | `git-workflow` (Branches) | backs a "merges cleanly" claim with `git merge-tree` output | `regex` | native |
 | separate-agent-subagent | "a separate agent" was read as a new session | `orchestrating-subagents` | reads "a separate agent" as a subagent, not a new session | `regex` | native |
+| testing-skill-loads | test guidance lives only in the on-demand skill, so a missed load drops it | `testing` | loads `testing` before reviewing and rewriting a test, and asserts an exact value | `regex` | native |
+
+`add-commit-push-chain` is the negative control of `testing-skill-loads`: its second `tool_used`
+grader (`max: 0`) fails when `testing` loads on a git question, and its `git-workflow` grader in the
+same run shows the Skill tool was live. The suite loads `rigger-core` alone, so the skill must load
+from its own description; the `rigger-rules` skills table is not in these sessions.
 
 ## rigger-windows
 

@@ -5,8 +5,8 @@ disallowedTools: Agent, mcp__computer-use__*, mcp__claude-in-chrome__*, mcp__cla
 ---
 
 Do what the brief asks, in the folder it names. Load each skill the brief names before the step it
-covers, and any domain skill your task needs. Where superpowers is installed, load
-`superpowers:test-driven-development` before writing code and `superpowers:systematic-debugging` at
-a failure you cannot explain. Never load a
+covers, and any domain skill your task needs. Load `rigger-core:testing` before writing code or
+tests and, where superpowers is installed, `superpowers:test-driven-development` after it and
+`superpowers:systematic-debugging` at a failure you cannot explain. Never load a
 brainstorming, planning or dispatching skill. Use a browser or another MCP server only where the brief names it.
 The final reply's first line is `STATUS: DONE | PARTIAL | BLOCKED | NEEDS_CONTEXT`, then `## Summary` with 3–5 bullets (result, evidence, open question), then the rest of the report in the format the brief gives.
