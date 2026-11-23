@@ -407,15 +407,17 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     if personal is not None and any(m.name == RULES_MODULE for m in modules):  # D4
         kept, extra = _personal_entries(personal, subagent)
         for name, piece in kept:
-            if not piece:
-                continue
             file = "%s/%s" % (PERSONAL_DIR, name)
+            if not piece:  # its "cannot read" line goes where the file would have printed (M3)
+                line = next(e for e in extra if e.line and e.file == file)
+                extra.remove(line)
+                entries.append(line)
+                continue
             main_only = name.endswith("-main.md")
             for section in split(_stem(name), piece):
                 _place(entries, index, _Entry(section.id, PERSONAL, None, file, section.text,
                                               "main" if main_only else "both", section.heading), notices)
-        # A "cannot read" line keeps its place among the personal files; the left-out line ends them.
-    ordered = entries + extra
+    ordered = entries + extra  # the left-out line ends the personal text
 
     enabled = discovery.enabled
     rows = [row for row in collect_rows(modules, effective) if _requires_met(row.requires, slots, enabled)]

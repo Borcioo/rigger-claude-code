@@ -213,6 +213,15 @@ class PersonalTests(Base):
         self.assertLess(ids.index("tests.tests"), ids.index("notes.testing"))
         self.assertNotIn(b"run the tests", text)
 
+    def test_cannot_read_line_keeps_its_byte_order_place(self):
+        # M3: rules_extra.sh printed the line where the file would have been.
+        self.layout.rules_module()
+        self.layout.personal("a.md", "## A\n\naaa\n")
+        (self.layout.config / "rigger" / "rules.d" / "b.md").mkdir()
+        self.layout.personal("c.md", "## C\n\nccc\n")
+        out = self.layout.render()
+        self.assertIn(b"## A\n\naaa\nrules_extra: cannot read b.md\n## C\n\nccc\n", out)
+
     def test_personal_text_is_not_rendered(self):
         self.layout.rules_module()
         self.layout.personal("mine.md", "## Mine\n\n{{slot:testing}} and {{reply_language}}\n")
