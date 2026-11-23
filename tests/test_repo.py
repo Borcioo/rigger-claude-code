@@ -415,7 +415,8 @@ class HookFileTests(unittest.TestCase):
         self.assertGreaterEqual(checked, 11)
 
     def test_a_missing_core_check_neither_blocks_nor_prints(self):
-        # RV5 M1: a half-written cache without hooks/core_check.sh: sh exits 127, never 2, and stdout stays empty.
+        # RV5 M1: a half-written cache without hooks/core_check.sh. sh then exits 127 (Git Bash) or 2 (dash), so
+        # the handler must sit on an event where exit 2 blocks nothing, and print nothing to stdout.
         checked = []
         for path in hook_files():
             plugin = path.parent.parent
@@ -423,11 +424,12 @@ class HookFileTests(unittest.TestCase):
                 if "core_check.sh" not in handler["command"]:
                     continue
                 with self.subTest(plugin=plugin.name):
+                    self.assertNotIn(event, EXIT_2_BLOCKS)
                     base = Path(tempfile.mkdtemp(prefix="hook root "))
                     self.addCleanup(shutil.rmtree, base, True)
                     (base / "plugin root" / "hooks").mkdir(parents=True)
                     proc = self.run_hook(handler["command"], base / "plugin root", base / "data", b"{}")
-                    self.assertNotEqual(proc.returncode, 2, proc.stderr)
+                    self.assertNotEqual(proc.returncode, 0, "the script ran after all")
                     self.assertEqual(proc.stdout, b"")
                     self.assertTrue(proc.stderr, "the command never ran")
                     checked.append(plugin.name)
