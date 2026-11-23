@@ -632,21 +632,21 @@ class CheckTests(unittest.TestCase):
 
     def test_check_findings(self):
         lay = self.layout
-        good = lay.module("rigger-a", {"rules/tests.md": ("## Tests\n\nx\n", "both")})
+        good = lay.module("mod-a", {"rules/tests.md": ("## Tests\n\nx\n", "both")})
         rows = [
-            ("duplicate", [lay.module("rigger-b", {"rules/tests.md": ("## Tests\n\ny\n", "both")})],
-             "duplicate rule id tests.tests in rigger-a and rigger-b"),
+            ("duplicate", [lay.module("mod-b", {"rules/tests.md": ("## Tests\n\ny\n", "both")})],
+             "duplicate rule id tests.tests in mod-a and mod-b"),
             ("orphan", [lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")],
              "orphan override tests.testz in acme/rules/tests.md: no lower section has that id"),
-            ("oversize", [lay.module("rigger-c", {"rules/big.md": ("## Big\n\n" + "b" * 9000 + "\n", "both")})],
-             "section big.big in rigger-c/rules/big.md is over 9000 bytes"),
-            ("placeholder", [lay.module("rigger-d", {"rules/u.md": ("## U\n\n{{nope:x}}\n", "both")})],
-             "unknown placeholder {{nope:x}} in rigger-d/rules/u.md"),
-            ("load", [lay.module("rigger-e", {"rules/e.md": ("## E\n\ne\n", "both")}, triggers=[
-                {"id": "rigger-e.t", "before": "b", "load": ["rigger-a:missing"]}])],
-             "trigger rigger-e.t load rigger-a:missing resolves to nothing"),
-            ("slug", [lay.module("rigger-f", {"rules/f.md": ("## —\n\nf\n", "both")})],
-             "empty heading slug in rigger-f/rules/f.md:1"),
+            ("oversize", [lay.module("mod-c", {"rules/big.md": ("## Big\n\n" + "b" * 9000 + "\n", "both")})],
+             "section big.big in mod-c/rules/big.md is over 9000 bytes"),
+            ("placeholder", [lay.module("mod-d", {"rules/u.md": ("## U\n\n{{nope:x}}\n", "both")})],
+             "unknown placeholder {{nope:x}} in mod-d/rules/u.md"),
+            ("load", [lay.module("mod-e", {"rules/e.md": ("## E\n\ne\n", "both")}, triggers=[
+                {"id": "mod-e.t", "before": "b", "load": ["mod-a:missing"]}])],
+             "trigger mod-e.t load mod-a:missing resolves to nothing"),
+            ("slug", [lay.module("mod-f", {"rules/f.md": ("## —\n\nf\n", "both")})],
+             "empty heading slug in mod-f/rules/f.md:1"),
         ]
         code, out, err = self.check(lay.core, good)
         self.assertEqual(code, 0, out + err)  # control: the base set is clean

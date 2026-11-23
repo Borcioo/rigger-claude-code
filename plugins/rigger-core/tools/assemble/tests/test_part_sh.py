@@ -65,8 +65,8 @@ class PartShTests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
         env.update({"CLAUDE_CONFIG_DIR": str(self.config), "CLAUDE_PLUGIN_ROOT": posix(self.core),
                     "HOME": str(self.home), "CLAUDE_PLUGIN_DATA": posix(self.tmp / "data") if data is None else data})
-        if path is not None:
-            env["PATH"] = path
+        # part.sh calls `sh` by name, as hook commands do: the sh folder must be on PATH.
+        env["PATH"] = path if path is not None else os.pathsep.join([str(Path(SH).parent), env.get("PATH", "")])
         return env
 
     def run_part(self, *args, env=None):

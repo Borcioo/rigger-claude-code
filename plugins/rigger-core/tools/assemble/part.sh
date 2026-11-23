@@ -12,11 +12,16 @@ root=$here/../..
 index=${1-}
 mode=${2-}
 
-notice=
-[ "$index" != 1 ] || notice=--notice
+if [ "$index" = 1 ]; then
+  set -- --notice
+else
+  set --
+fi
+set -- "$@" -S "$root/tools/assemble/assemble.py" --part "$index"
+[ "$mode" != --subagent ] || set -- "$@" --subagent
 
 # The trailing "x" keeps every trailing newline of the output, which $(...) would strip.
-out=$(sh "$root/bin/py.sh" $notice -S "$root/tools/assemble/assemble.py" --part "$index" $mode; status=$?; printf x; exit $status)
+out=$(sh "$root/bin/py.sh" "$@"; status=$?; printf x; exit $status)
 status=$?
 out=${out%x}
 
