@@ -165,7 +165,7 @@ class ResolveTests(unittest.TestCase):
             "id\nline":{"before": "a", "load": ["x:y"]},
             "id|pipe": {"before": "a", "load": ["x:y"]},
             "surrogate-before": {"before": "a\ud800b", "load": ["x:y"]},
-            "surrogate-load": {"before": "a", "load": ["x:\udfff"]},
+            "surrogate-load": {"before": "a", "load": ["x:a\udfff"]},
             "private-use": {"before": "a\ue000b", "load": ["x:y"]},
             "unassigned": {"before": "a\U000e0080b", "load": ["x:y"]},
             "id\ud800surrogate": {"before": "a", "load": ["x:y"]},
@@ -209,7 +209,7 @@ class ResolveTests(unittest.TestCase):
             "schema": 1,
             "k\ud800": 1,
             "triggers": {"p.a": {"before": "a\ud800b", "load": ["x:y"]}, "p\ud800": {"before": "a", "load": ["x:y"]},
-                         "p.c": {"before": "c", "load": ["x:\ud800"]}, "p.ok": {"before": "ok", "load": ["x:y"]}},
+                         "p.c": {"before": "c", "load": ["x:a\ud800"]}, "p.ok": {"before": "ok", "load": ["x:y"]}},
         }
         got = resolve(l4=project)
         rows = render.collect_rows([], got.effective)
