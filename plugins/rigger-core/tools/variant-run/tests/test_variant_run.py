@@ -383,8 +383,8 @@ def main():
                            sys.executable, "-c", "import os, sys; print(os.getcwd()); sys.exit(7)")
         check("run passes the exit code through", code, 7)
         check("run starts the command in the work dir after prepare",
-              (out.strip().splitlines()[-1], read(os.path.join(path, "CLAUDE.md"))),
-              (path, PRELUDE + GLOBAL + BETA + TWIN + TAIL))
+              (os.path.realpath(out.strip().splitlines()[-1]), read(os.path.join(path, "CLAUDE.md"))),
+              (os.path.realpath(path), PRELUDE + GLOBAL + BETA + TWIN + TAIL))   # getcwd() is resolved (macOS /var)
         path = workdir()
         code, _, _ = run("run", path, "--source", source)
         check("run without a command: exit 2, nothing written", (code, listing(path)), (2, []))
