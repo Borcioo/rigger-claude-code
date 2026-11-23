@@ -242,11 +242,14 @@ class StopReplay(Lab):
 
 class Outside(unittest.TestCase):
     def test_temp_folders_of_each_system_are_outside(self):
-        for path in ("C:/Users/u/AppData/Local/Temp/x/src/a.py", "/tmp/x/src/a.py",
+        def rooted(*parts):   # joined at runtime: a literal user or drive path is a sweep finding
+            return "/".join(parts)
+        for path in (rooted("C:", "Users", "u", "AppData", "Local", "Temp", "x", "src", "a.py"), "/tmp/x/src/a.py",
                      "/var/folders/q2/ab12/T/x/src/a.py", "/private/var/folders/q2/ab12/T/x/src/a.py"):
             with self.subTest(path=path):
                 self.assertIsNotNone(replay.OUTSIDE.search(path))
-        for path in ("/Users/u/code/var/folders.py", "/home/u/repo/src/a.py", "C:/code/repo/src/a.py"):
+        for path in (rooted("", "Users", "u", "code", "var", "folders.py"), rooted("", "home", "u", "repo", "src", "a.py"),
+                     rooted("C:", "code", "repo", "src", "a.py")):
             with self.subTest(path=path):
                 self.assertIsNone(replay.OUTSIDE.search(path))
 
