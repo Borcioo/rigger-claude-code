@@ -75,11 +75,14 @@ plans.
   fixes, `python -I scripts/run_tests.py --fix-round`, never as the gate. Before the PR,
   `python -I scripts/gate.py --verify <status.txt>`. CI runs on the PR to `main`. The release gate
   `scripts/gate.py --release --denylist <file>` is the owner's.
+- A test of `run_tests.py` or `gate.py` `main` patches the part that runs things, even when it
+  expects an early exit. A mutant that passes the flag check would otherwise run the whole suite
+  recursively. A red run that times out kills the process tree and checks for orphans.
 - A change to a rules file or a skill also runs
   `plugins/rigger-rules/tests/test_plugin_rules.py` and
   `plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py`.
 
-**Real `claude` runs (spikes and Task 21)**
+**Real `claude` runs (spikes and Task 20)**
 - Every `claude` command runs under a fresh temp `CLAUDE_CONFIG_DIR`, one per experiment, never the
   real one. That includes `claude plugin validate`, `marketplace add` and `install`.
 - A `--plugin-dir` run also sets `CLAUDE_CODE_PLUGIN_CACHE_DIR` and `HARNESS_LESSONS_INBOX` to
@@ -140,8 +143,8 @@ below follows them.
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | The golden test compares, per module, the ordered list of `(section id, bytes)`, plus the **set** of `Plugin root:` lines, plus the decoded `additionalContext` in subagent mode. It does not compare whole-output bytes. | rigger-rules prints 12 identical root lines today (one per handler). The assembler prints one root line per module per part. JSON escaping differs (`rules_start.sh` escapes only `\`, `"` and tab). Spec §13 defines the measure this way. |
-| D2 | Today's behaviour is frozen as a committed fixture copy, `tests/fixtures/golden-34e7713/`, holding `plugins/<p>/{rules,hooks}/**` and `rigger-talk/hooks/talk_start.sh`. The golden test reads no git history. | It works the same under WSL, in CI and in a tarball. Rules text changes to placeholders in Task 17, so today's handlers cannot run on the new files. |
+| D1 | The golden test compares, per module, the ordered list of `(heading line, bytes)` pieces, plus the **set** of `Plugin root:` lines, with subagent output compared as decoded `additionalContext`. It does not compare whole-output bytes. Every rules and trigger-table byte is still compared. | rigger-rules prints 12 identical root lines today (one per handler). The assembler prints one root line per module per part. JSON escaping differs (`rules_start.sh` escapes only `\`, `"` and tab). Spec §13 defines the measure this way. |
+| D2 | Today's behaviour is frozen as a committed fixture copy, `tests/fixtures/golden-34e7713/`, holding `plugins/<p>/{rules,hooks}/**` and `rigger-talk/hooks/talk_start.sh`. The golden test reads no git history. | It works the same under WSL, in CI and in a tarball. Rules text changes to placeholders in Task 18, so today's handlers cannot run on the new files. |
 | D3 | Every part starts with the `Plugin root:` line of the first module whose section it carries, and repeats it whenever the module changes. | This is correct whether or not S1 finds a stable order, so no code waits on S1's order result. |
 | D4 | The personal layer (`rules.d`) is loaded only when `rigger-rules` is enabled. It keeps today's single 9,000-byte budget, its control-character filter, its trailing-newline rule and the line `rules_extra: left out over the hook cap: <names>`. It is never rendered. `HARNESS_RULES_DROP` does not apply to it. | Today `rules_extra.sh` ships in rigger-rules, ignores `HARNESS_RULES_DROP` and prints raw text. Spec §8.2 says the drop applies to every layer. That would change behaviour, so phase 1 keeps today's rule (open risk 1). |
 | D5 | The section ids of an override are matched on raw (unrendered) heading text. The slug is cut at ` (`, `:`, ` — ` or ` - ` before anything else. | `git.md:1` holds a placeholder after ` (`, so its id stays `git.git`. |
@@ -151,10 +154,12 @@ below follows them.
 | D9 | Module order: rigger-core first; then modules whose marketplace manifest is readable, in its listed order; then the rest by name. The personal layer is last. | Spec §8.2. Byte identity is per module (D1), so cross-module order only decides duplicates. |
 | D10 | The project directory is the hook input's `cwd`, else `CLAUDE_PROJECT_DIR`, else the process cwd. | SessionStart and SubagentStart inputs carry `cwd`. |
 | D11 | In phase 1 the config keys with an effect are `triggers` (L1–L4) and `expects` (L4: one notice line per missing or disabled module, plus doctor). `company` and `leak_guard` are type-checked and recorded with no effect; their consumers ship in phase 4. `slots` at L2–L4, `trust`, `review` and `shell_guard` are recorded only. | Spec §13 Phase 1, "Config", read with phase 4's scope (open risk 2). |
-| D12 | K = 6 `SessionStart` parts and K = 4 `SubagentStart` parts. Parts 2..K compute the whole assembly themselves; there is no cache between parts. Snapshots older than 14 days are deleted by part 1 on `startup`. | Open points 1 and 2. Task 22 measures the startup cost, and the cache option opens only if the +300 ms budget is missed. |
+| D12 | K = 6 `SessionStart` parts and K = 4 `SubagentStart` parts. Parts 2..K compute the whole assembly themselves; there is no cache between parts. Snapshots older than 14 days are deleted by part 1 on `startup`. | Open points 1 and 2. Task 21 measures the startup cost, and the cache option opens only if the +300 ms budget is missed. |
 | D13 | Notices go at the top of part 1 only. With no config file and a clean layout there are none. | Byte identity, and one place for a person to look. |
 | D14 | An empty slug (a heading such as `## —`) is a `--check` finding, `empty heading slug in <file>:<line>`. At session start that section gets the id `<stem>._line<N>`. Two equal slugs in one file are a duplicate. | Open point 9. |
 | D15 | `tests/test_module_contracts.py` (manifest schema, `assemble.py --check` over the repository) ships in phase 1. `run_tests.py --changed-modules` does not; no phase claims it, so it is open risk 3. | §6.2 and §8.4 require the contract test to run the check. |
+| D17 | `drift_lint.py`, `proposal_check.py` and `batch_model.py` keep reading raw rules files in phase 1, so 8 lines in 5 files show placeholders to them: `git.md:1,4`, `plans-main.md:4`, the three tables and `talk.md`. Only `harness_start.py` renders (Task 17), because its heading warning is user-visible and would go silent. | The other three are maintainer and curation tools. Rendering them is phase 2 work, when the tables merge (open risk 6). |
+| D18 | `--check` resolves `<plugin>:<skill>` only when `<plugin>` is a module in the checked set: `skills/<skill>/SKILL.md` must exist. Any other plugin (superpowers) counts as external: one info line `# external: superpowers`, not a finding. | The check cannot see a plugin outside the repository. §8.4's "resolves to nothing" is read as "a module skill that does not exist". |
 | D16 | S6 (panel writes, phase 5) and S7 (shellwise version, phase 3) are not run. Phase 1 adds spike E1, "how an eval child gets its module roots", because rigger-rules' five evals lose their rules without it. | E1 is a phase-1 dependency the spec did not list. |
 
 ## File map
@@ -173,12 +178,12 @@ below follows them.
 | `plugins/rigger-core/tools/assemble/assemble.py`, `part.sh` | 14 | layering, audience, drop, personal layer, subagent skip, CLI modes |
 | `tests/fixtures/golden-34e7713/**`, `tests/golden_baseline.py`, `tests/test_assembly_golden.py` | 15 | frozen handlers and the golden test |
 | `tests/test_module_contracts.py`, `scripts/run_tests.py`, `scripts/run_tests.min`, `scripts/eval_stage.py`, `tests/test_run_tests.py`, `tests/test_eval_stage.py` | 16 | contract test, env strip, eval module roots |
-| `plugins/rigger-core/tools/harness_start/harness_start.py` (+ its test) | 18 | heading-overlap check reads rendered headings |
-| six `hooks/hooks.json`, rules text, `talk_start.sh`, wiring tests | 17 | the cutover |
+| `plugins/rigger-core/tools/harness_start/harness_start.py` (+ its test) | 17 | heading-overlap check reads rendered headings |
+| six `hooks/hooks.json`, rules text, `talk_start.sh`, wiring tests | 18 | the cutover |
 | `plugins/rigger-core/tools/doctor/doctor.sh` (+ tests) | 19 | doctor rows |
-| `plugins/rigger-core/tools/assemble/tests/test_stub_session.py` | 21 | stub exit criteria |
-| `scripts/startup_bench.py`, `.github/workflows/test.yml` | 22 | startup-cost measurement |
-| `CHANGELOG.md`, `CONTRIBUTING.md`, `plugins/rigger-rules/README.md`, `plugins/rigger-core/README.md` | 20 | release notes, migration, docs |
+| `plugins/rigger-core/tools/assemble/tests/test_stub_session.py` | 20 | stub exit criteria |
+| `scripts/startup_bench.py`, `.github/workflows/test.yml` | 21 | startup-cost measurement |
+| `CHANGELOG.md`, `CONTRIBUTING.md`, `plugins/rigger-rules/README.md`, `plugins/rigger-core/README.md` | 22 | release notes, migration, docs |
 
 Unit tests for `tools/assemble/*.py` live in `plugins/rigger-core/tools/assemble/tests/test_<module>.py`.
 
@@ -187,16 +192,16 @@ Unit tests for `tools/assemble/*.py` live in `plugins/rigger-core/tools/assemble
 | Wave | Tasks | Runs after | Why they are file-disjoint |
 |---|---|---|---|
 | A | 1, 2, 3, 4, 5, 6 (spikes) | — | each writes its own `spikes/phase-1/<id>.md` and its own scratch folder; each starts its own stub on port 0 |
-| B | 7, 8, 9, 10, 13, 18 | wave A recorded, no spike BLOCKED | separate files; 13 writes only manifests, `plugin.json` and eval prompts; 18 only `harness_start` |
+| B | 7, 8, 9, 10, 13 | wave A recorded, no spike BLOCKED | separate files; 13 writes only manifests, `plugin.json` and eval prompts |
 | C | 11, 12 | 7, 8, 10 (11 also needs S3, S4 and E1) | separate files |
-| D | 14 | 7–13 | one file pair |
+| D | 14, 17 | 7–13 | 14 writes `assemble.py` and `part.sh`; 17 writes only `harness_start` |
 | E | 15, 16, 19 | 14 | golden under `tests/`; 16 under `scripts/` and its tests; 19 under `doctor/` |
-| F | 17 (cutover, serial) | 15 green on unchanged rules | touches many shared files |
-| G | 21, 22 | 17 | one new test file; bench and workflow |
-| H | 20 (docs, needs 22's numbers), then 23 (gate, PR) | all | — |
+| F | 18 (cutover, serial) | 15 green on unchanged rules, and 17 | touches many shared files |
+| G | 20, 21 | 18 | one new test file; bench and workflow |
+| H | 22 (docs, needs 21's numbers), then 23 (gate, PR) | all | — |
 
-Task 18 sits after Task 17 in the document but runs in wave B: it must be merged into the branch
-before the cutover, because the cutover puts a placeholder into the `git.md` heading.
+Parallel tasks: 1–6; 7, 8, 9, 10 and 13; 11 and 12; 14 and 17; 15, 16 and 19; 20 and 21. Serial:
+18, 22 and 23.
 
 ---
 
@@ -225,7 +230,7 @@ repository file changes.
 
 **Interfaces:**
 - Produces: the observed order of 6 handlers of one `SessionStart` group, and whether each arrives
-  as its own `SessionStart:startup hook success:` block. Task 14 and Task 21 use both.
+  as its own `SessionStart:startup hook success:` block. Task 14 and Task 20 use both.
 
 - [ ] **Step 1: Build the probe plugin.** `plugin.json` holds `{"name": "spike-parts"}`. `hooks.json` has one `SessionStart` group, matcher `startup|clear|compact`, with 6 handlers. Handler `i` is `printf 'S1-PART-%s-i\n' "$SPIKE_RUN"`, where `SPIKE_RUN` is a fresh uuid per run in the child env.
 - [ ] **Step 2: Known-answer control.** Run once with a seventh handler, `printf 'S1-CONTROL-%s\n' "$SPIKE_RUN"`, in a second group. Expected: the stub request whose messages hold the probe word `s1probe-<uuid>` contains `S1-CONTROL-<run>` exactly once. If it does not, the harness is broken; fix it before Step 3.
@@ -655,7 +660,7 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `test_personal_cap_and_left_out_line`: two 5,000-byte files give the first file and `rules_extra: left out over the hook cap: b.md`.
   - `test_personal_filter`: `\x01` and `\r` are removed, tab is kept, trailing newlines collapse to one, an empty file is skipped, and a `x.md` directory gives `rules_extra: cannot read x.md`.
   - `test_drop_by_basename_heading_and_id`: `HARNESS_RULES_DROP="tests.md;## Plans;git.git"` removes those three and nothing in `rules.d` (D4).
-  - `test_subagent_audience_and_skip`: `Explore`, `Plan`, `rigger-core:implementer` and `rigger-core:mapper` get empty output. The last two come from frontmatter: a fixture agent with `omitClaudeMd: true` is skipped and one without it is not. A manifest `subagents: {"x:y": "none"}` is skipped. Unparseable stdin prints the rules.
+  - `test_subagent_audience_and_skip`: `Explore`, `Plan`, `rigger-core:implementer` and `rigger-core:mapper` get empty output. The last two come from frontmatter: a fixture agent with `omitClaudeMd: true` is skipped and one without it is not. A manifest `subagents: {"x:y": {"rules": "none"}}` is skipped. Unparseable stdin prints the rules.
   - `test_subagent_json_is_valid_and_decodes_to_text`: `json.loads(part)["hookSpecificOutput"]["additionalContext"]` equals the main-format text of the subagent audience.
   - `test_resume_and_unknown_source_print_nothing`.
   - `test_compact_reads_snapshot`: after `--part 1` on `startup`, edit a rules file. `--part 1` on `compact` prints the old text. Delete the snapshot: `compact` prints the new text plus `rigger: snapshot missing; rules read again`.
@@ -665,13 +670,14 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `test_check_repo_is_clean`: `--check` over the repository gives exit 0 and `findings 0`.
   - `test_expects_notice` (D11): an L4 `expects: ["rigger-wp", "nope"]` with rigger-wp enabled gives one notice naming `nope` and `claude plugin install nope`.
   - `test_output_is_lf_bytes`: no `\r` in any part's stdout.
+  - `test_crash_prints_one_visible_line` (spec anti-goal "never a silent fallback"). It calls `assemble.main(["--part", "1"])` with `assemble.assemble` patched to raise `RuntimeError("boom")`. Expected: return 0 and stdout exactly `rigger: rules not assembled: RuntimeError: boom (run /rigger-core:doctor)\n`. In `--subagent` mode the same line arrives as `additionalContext`. `--part 2` under the same patch prints nothing. The patch is restored in `finally`.
 - [ ] **Step 2: Write** `test_part_sh.py` `test_no_python_prints_visible_line`. It runs `part.sh 1` and `part.sh 2` through real `sh` with a `PATH` holding only the sh folder and a fake `py`, `python` and `python3` that exit 1. Expected: part 1 prints the exact line and part 2 prints nothing. It uses `HOME` and `USERPROFILE` pointed at a temp dir and an empty `CLAUDE_PLUGIN_DATA`.
 - [ ] **Step 3: Run both.** Expected: `FAILED`.
 - [ ] **Step 4: Implement** `assemble.py`, following spec §8.3: general modules in order, then company, then personal; drop; requires; render module sections only. On `startup` and `clear`, part 1 writes the snapshot (sections, rendered parts for both audiences, modules, effective config with sources, rows, slots, notices) and runs `cleanup`. On `compact`, parts read the snapshot. Subagent parts read the parent snapshot or recompute (S5 decision).
 - [ ] **Step 5: Option values (S2 decision).**
   - **Branch A:** `vars["rigger-talk"]` is read from the store S2 recorded. A number that is not a positive integer, or an empty or multi-line language, falls back to the `talk_start.sh` defaults: `5`, `15` and the language sentence copied from `talk_start.sh:12`.
-  - **Branch B:** the assembler waits up to 1 s, polling every 50 ms, for `<state>/<session>.options.rigger-talk.json`, then uses the defaults with the notice `rigger: rigger-talk options not ready; defaults used`.
-  - Add one test for the chosen branch: `test_talk_options_from_store` (A) or `test_talk_options_file_and_timeout` (B). The never-arriving-file case stubs the clock and must return within its 1 s bound.
+  - **Branch B:** sections of a module whose text depends on an options file are packed alone into the last session part (part 6). Parts 1–5 then never depend on option values, so parallel parts cannot disagree on packing. Only part 6 waits up to 1 s, polling every 50 ms, for `<state>/<session>.options.rigger-talk.json`. Without it, part 6 uses the defaults and appends `rigger: rigger-talk options not ready; defaults used`.
+  - Add one test for the chosen branch: `test_talk_options_from_store` (A), or for B `test_talk_options_file_and_timeout` plus `test_option_sections_never_move_parts_1_to_5`. The never-arriving-file case stubs the clock and must return within its 1 s bound.
 - [ ] **Step 6: Run.** Expected: `OK`.
 - [ ] **Step 7: Red runs**, one per behaviour, named in the report:
   - replace in place → append;
@@ -679,7 +685,8 @@ exists. Expected green: `Ran N tests` … `OK`.
   - remove the snapshot read on compact;
   - remove the D4 rigger-rules gate;
   - remove each `--check` finding branch (shared infrastructure: up to 5, chosen as duplicate, orphan, oversize section, unknown placeholder, 0 files);
-  - remove `part.sh`'s substitution.
+  - remove `part.sh`'s substitution;
+  - remove the top-level `try`/`except` in `main`: `test_crash_prints_one_visible_line` fails with a traceback instead of the line.
 - [ ] **Step 8: Commit.** `feat(rigger-core): assemble rules from modules into part handlers`
 
 ---
@@ -699,12 +706,24 @@ exists. Expected green: `Ran N tests` … `OK`.
     `rules_extra.sh` or `talk_start.sh`, in `hooks.json` order, for groups whose matcher fires on
     `source`) through real `sh` with `CLAUDE_PLUGIN_ROOT=<layout>/<plugin>`. It returns each
     handler's stdout. `rules_extra.sh` output is filed under `personal`.
-  - `normalize(outputs) -> Tuple[Set[str], Dict[str, List[Tuple[str, bytes]]]]`: the root-line set,
-    plus per module the ordered `(id, bytes)` list from `sections.split` (D1). Subagent JSON is
-    decoded first.
+  - `normalize(outputs: Dict[str, List[bytes]]) -> Tuple[Set[str], Dict[str, List[Tuple[str, bytes]]]]`.
+    Neither handler output nor `--render` text carries file boundaries (one `--subagent` handler
+    prints five files as one string), so the key is the heading line, not a section id.
+    1. Decode subagent JSON first.
+    2. Collect every `Plugin root: …` line into the root set and remove it.
+    3. Concatenate the rest per module and cut it before each line starting `## `.
+    4. Key each piece by its heading line trimmed of space, tab and CR. Text before the first heading
+       of a module's stream is keyed `_preamble`. Empty pieces are dropped.
+
+    The result is per module an ordered list of `(heading key, bytes)` (D1).
+  - The new side uses `assemble.py --render` output, split per module by its root lines with
+    `normalize`. A personal block has no root line, so `--render` gains `--mark-personal`: it
+    prints `Plugin root: personal` before personal text, a test-only flag that hooks never pass.
   - `GOLDEN_BASE = "34e7713"`
 
-- [ ] **Step 1: Freeze.** Copy the files from git (`git show 34e7713:<path>` per path, bytes kept), then verify. Run: `git diff --quiet 34e7713 HEAD -- 'plugins/*/rules' 'plugins/*/hooks' && echo unchanged`. Expected: `unchanged`. Rules have not moved yet; if they have, stop and report.
+- [ ] **Step 1: Freeze, bytes kept.** Use a pipe that keeps bytes and has no `rev:path` argument, since Git Bash rewrites the colon form: `git archive 34e7713 -- plugins/rigger-core/rules plugins/rigger-core/hooks plugins/rigger-rules/rules plugins/rigger-rules/hooks plugins/rigger-lessons/rules plugins/rigger-lessons/hooks plugins/rigger-talk/rules plugins/rigger-talk/hooks plugins/rigger-wp/rules plugins/rigger-wp/hooks plugins/rigger-windows/rules plugins/rigger-windows/hooks | tar -x -C tests/fixtures/golden-34e7713`. Never redirect through PowerShell `>`.
+  Then check that the base still holds today's text: `git diff --quiet 34e7713 HEAD -- plugins/rigger-core/rules plugins/rigger-rules/rules plugins/rigger-lessons/rules plugins/rigger-talk plugins/rigger-wp/rules plugins/rigger-windows/rules && echo unchanged`. Expected: `unchanged`. Rules have not moved yet; if they have, stop and report.
+  The frozen `*.sh` files are tracked, so `tests/test_shellcheck.py` lints them too. They are today's files, which pass. `.gitattributes` (`* text=auto eol=lf`) keeps the fixture LF; the CRLF scenario converts at test time.
 - [ ] **Step 2: Write `test_assembly_golden.py`**, one parameterised test over a scenario matrix. The layout is built under `<tmp>/rigger p1 zażółć/cache/rigger/<plugin>/`, first from the fixture and then from the working tree at the same paths (D1).
 
   | Axis | Values |
@@ -717,7 +736,10 @@ exists. Expected green: `Ran N tests` … `OK`.
   | talk options | unset; set (env for the baseline; the S2 store or the options file for the new run) |
 
   Assertions per scenario: `normalize(new) == normalize(baseline)`, for both the root-line set and every module's list.
-- [ ] **Step 3: Add `test_accidental_override_is_the_only_difference`.** `rules.d/tests.md` holds `## Tests\n- mine\n`. The expected value is the baseline with section `tests.tests` replaced by `## Tests\n- mine\n`, the `personal` list without it, and the notice `rigger: tests.md replaces rule tests.tests` first in part 1.
+- [ ] **Step 3: Add `test_accidental_override_is_the_only_difference`.** `rules.d/tests.md` holds `## Tests\n- mine\n`. The expected value is the normalized baseline with these changes:
+  - rigger-rules' `## Tests` piece replaced by `## Tests\n- mine\n`;
+  - the `personal` list without that piece;
+  - the notice `rigger: tests.md replaces rule tests.tests` first in part 1.
 - [ ] **Step 4: Run** `python -I -X utf8 tests/test_assembly_golden.py -v`. Expected on unchanged rules text: `OK`, with `Ran N tests` and N equal to the scenario count printed by the test's own `# scenarios <N>` line.
 - [ ] **Step 5: Red runs.**
   - Mutate `pack`'s root line at module change (D3): a root-set mismatch must fail in a multi-module part scenario.
@@ -752,7 +774,24 @@ exists. Expected green: `Ran N tests` … `OK`.
 - [ ] **Step 5: Red runs.** Remove `"RIGGER_"`: the run_tests test fails. Remove the duplicate finding: the planted control fails.
 - [ ] **Step 6: Commit.** `test: module contract test and RIGGER_* isolation`
 
-### Task 17: Cutover (serial)
+### Task 17: harness_start reads rendered headings
+
+**Files:**
+- Modify: `plugins/rigger-core/tools/harness_start/harness_start.py:246-270`
+- Test: `plugins/rigger-core/tools/harness_start/tests/test_harness_start.py`
+
+**Interfaces:**
+- Consumes: `render.render` and `sections.split` through `sys.path.insert` of `../assemble` (same plugin).
+- Produces: unchanged warnings, with headings compared after rendering module placeholders.
+
+- [ ] **Step 1: Write the failing test** `test_overlap_found_through_a_placeholder_heading`. A fixture plugin's `rules/git.md` holds `## Git (procedure and naming: {{skill:rigger-core:git-workflow}})`, and the project `CLAUDE.md` holds the rendered heading. Expected: one overlap warning.
+- [ ] **Step 2: Run.** Expected: `FAILED` (raw comparison).
+- [ ] **Step 3: Implement.** Render each rules file with an L1-only `RenderContext` before reading headings. A render error falls back to raw text, matching today's silence on unreadable files.
+- [ ] **Step 4: Run** the whole `test_harness_start.py`. Expected: `OK`.
+- [ ] **Step 5: Red run.** Skip the render: the new test fails.
+- [ ] **Step 6: Commit.** `fix(rigger-core): compare CLAUDE.md headings with rendered rules`
+
+### Task 18: Cutover (serial)
 
 **Files:**
 - Modify:
@@ -776,7 +815,7 @@ exists. Expected green: `Ran N tests` … `OK`.
   - `tests/test_shellcheck.py`: add `part.sh`.
 
 **Interfaces:**
-- Consumes: Tasks 1–16 and Task 18 (already merged into the branch).
+- Consumes: Tasks 1–16 and Task 17 (already merged into the branch).
 - Produces: no rules handler outside rigger-core.
 
 - [ ] **Step 1: Baseline green.** Run `python -I -X utf8 tests/test_assembly_golden.py -v` and `python -I -X utf8 plugins/rigger-rules/tests/test_plugin_rules.py -v`. Expected: both `OK` before any edit.
@@ -787,23 +826,6 @@ exists. Expected green: `Ran N tests` … `OK`.
   - Leave `skills.md`'s old literal table in place next to the placeholder: the golden test fails on a doubled table.
   - Remove one part handler (6 → 5) with a full `rules.d`: `WiringTests` and the overflow check fail.
 - [ ] **Step 6: Commit.** `feat!: rigger-core assembles every rules section` with the body listing the §13 exceptions, and the trailer `BREAKING-CHANGE: rules need Python 3.9+ and rigger-core; the 19 rules handlers become rigger-core part handlers.`
-
-### Task 18: harness_start reads rendered headings
-
-**Files:**
-- Modify: `plugins/rigger-core/tools/harness_start/harness_start.py:246-270`
-- Test: `plugins/rigger-core/tools/harness_start/tests/test_harness_start.py`
-
-**Interfaces:**
-- Consumes: `render.render` and `sections.split` through `sys.path.insert` of `../assemble` (same plugin).
-- Produces: unchanged warnings, with headings compared after rendering module placeholders.
-
-- [ ] **Step 1: Write the failing test** `test_overlap_found_through_a_placeholder_heading`. A fixture plugin's `rules/git.md` holds `## Git (procedure and naming: {{skill:rigger-core:git-workflow}})`, and the project `CLAUDE.md` holds the rendered heading. Expected: one overlap warning.
-- [ ] **Step 2: Run.** Expected: `FAILED` (raw comparison).
-- [ ] **Step 3: Implement.** Render each rules file with an L1-only `RenderContext` before reading headings. A render error falls back to raw text, matching today's silence on unreadable files.
-- [ ] **Step 4: Run** the whole `test_harness_start.py`. Expected: `OK`.
-- [ ] **Step 5: Red run.** Skip the render: the new test fails.
-- [ ] **Step 6: Commit.** `fix(rigger-core): compare CLAUDE.md headings with rendered rules`
 
 ### Task 19: Doctor rows
 
@@ -826,19 +848,15 @@ exists. Expected green: `Ran N tests` … `OK`.
 
 ## After the cutover (waves G–H)
 
-### Task 20: Docs, release notes and migration
-
-**Files:**
-- Modify: `CHANGELOG.md` (`## [Unreleased]`), `CONTRIBUTING.md` (the "Each rules file is printed by one `SessionStart` handler" rule becomes "rigger-core's assembler prints every section; each section stays under 9,000 bytes"), `plugins/rigger-rules/README.md` (rules.d override by id, `HARNESS_RULES_DROP` ids, D4), `plugins/rigger-core/README.md` (assembler, `RIGGER_MODULE_DIRS`, config files, doctor rows)
-
-- [ ] **Step 1:** Write the Unreleased entries: the four §13 exceptions word for word in meaning, the Windows and macOS migration commands from spec §13 "Migration", and the measured startup delta from Task 22.
-- [ ] **Step 2:** `python -I scripts/sweep.py --no-denylist CHANGELOG.md CONTRIBUTING.md plugins/rigger-rules/README.md plugins/rigger-core/README.md`. Expected: `# files 4, findings 0`.
-- [ ] **Step 3: Commit.** `docs: phase 1 assembly, overrides and migration`
-
-### Task 21: Stub exit criteria
+### Task 20: Stub exit criteria
 
 **Files:**
 - Create: `plugins/rigger-core/tools/assemble/tests/test_stub_session.py` (skipped under `HARNESS_NO_CLAUDE=1`, like `test_reinject.py`)
+
+**Interfaces:**
+- Consumes: `StubApi` (below), `assemble.py --render` (Task 14) for the expected first lines, and
+  the S4 init-event shape.
+- Produces: the two exit-criterion proofs of spec §13, run locally and labelled "stub".
 
 **Interfaces:**
 - Consumes: `StubApi` from `plugins/rigger-rules/tests/stub_api.py` (test-only import by path, as `test_reinject.py` does).
@@ -850,10 +868,10 @@ exists. Expected green: `Ran N tests` … `OK`.
 - [ ] **Step 3: Red run.** Make discovery ignore `RIGGER_MODULE_DIRS`: the first test fails with sections missing.
 - [ ] **Step 4: Commit.** `test(rigger-core): stub session proves discovery by RIGGER_MODULE_DIRS`
 
-### Task 22: Startup cost
+### Task 21: Startup cost
 
 **Files:**
-- Create: `scripts/startup_bench.py`
+- Create: `scripts/startup_bench.py`, `tests/test_startup_bench.py`
 - Modify: `.github/workflows/test.yml` (one step in the `tests` job, `continue-on-error: true`: `python -I -X utf8 scripts/startup_bench.py --runs 20`)
 
 **Interfaces:**
@@ -864,10 +882,23 @@ exists. Expected green: `Ran N tests` … `OK`.
 - [ ] **Step 3: Read the macOS and Windows CI step lines** from the PR's checks. Expected: delta at most +300 ms at the median on both. If either exceeds it, stop and report. The builder's option (spec §14) is that parts 2..K read part 1's cache when it is newer than every input; that needs the owner's go-ahead as a plan change.
 - [ ] **Step 4: Commit.** `ci: measure rules startup cost on each OS`
 
+### Task 22: Docs, release notes and migration
+
+**Files:**
+- Modify: `CHANGELOG.md` (`## [Unreleased]`), `CONTRIBUTING.md` (the "Each rules file is printed by one `SessionStart` handler" rule becomes "rigger-core's assembler prints every section; each section stays under 9,000 bytes"), `plugins/rigger-rules/README.md` (rules.d override by id, `HARNESS_RULES_DROP` ids, D4), `plugins/rigger-core/README.md` (assembler, `RIGGER_MODULE_DIRS`, config files, doctor rows)
+
+- [ ] **Step 1:** Write the Unreleased entries: the four §13 exceptions word for word in meaning, the Windows and macOS migration commands from spec §13 "Migration", and the measured startup delta from Task 21.
+- [ ] **Step 2:** `python -I scripts/sweep.py --no-denylist CHANGELOG.md CONTRIBUTING.md plugins/rigger-rules/README.md plugins/rigger-core/README.md`. Expected: `# files 4, findings 0`.
+- [ ] **Step 3: Commit.** `docs: phase 1 assembly, overrides and migration`
+
 ### Task 23: Gate and pull request
 
 **Files:**
 - No new files.
+
+**Interfaces:**
+- Consumes: every task's report (mutation list, spike decisions) and Task 21's bench line.
+- Produces: the PR, plus the gate `status.txt` pass line with its `tree <id>`.
 
 - [ ] **Step 1:** Run `python -I scripts/gate.py` in the background, using the full path of the installed Python on Windows. Read `status.txt`. Expected: the last line is `# gate passed, <s> s[, skipped N], tree <id>`.
 - [ ] **Step 2:** Run `python -I scripts/gate.py --verify <status.txt>`. Expected: exit 0.
@@ -887,14 +918,14 @@ exists. Expected green: `Ran N tests` … `OK`.
 | Part | Agent hours | Code lines | Test lines |
 |---|---|---|---|
 | Spikes S1–S5, E1 (Tasks 1–6) | 4 | 0 in repo (about 250 in scratch) | — |
-| Assembler package (Tasks 7–12, 14) | 9 | 820 (sections 70, manifest 150, config 200, discover 170, render 90, parts and snapshot 90, assemble and part.sh 250, less overlap) | 1,050 |
-| Manifests, defaults, plugin.json (Tasks 10, 13) | 1 | 260 | 60 |
+| Assembler package (Tasks 7–9, 11, 12, 14) | 8 | 820 (sections 70, manifest 150, discover 170, render 90, parts and snapshot 90, assemble and part.sh 250) | 950 |
+| Config resolver, defaults, manifests, plugin.json (Tasks 10, 13) | 2 | 460 (config 200, defaults 60, 7 manifests 200) | 160 |
 | Golden (Task 15) | 3 | — | 450 (plus about 700 lines of frozen fixture, copied) |
 | Contracts, env, eval_stage (Task 16) | 1 | 40 | 120 |
-| Cutover and test rewrites (Task 17) | 3 | 80 (hooks and rules edits) | 450 |
-| harness_start, doctor, bench, docs (Tasks 18–20, 22) | 2.5 | 150 | 140 |
-| Stub run, gate, PR (Tasks 21, 23) | 1.5 | — | 120 |
-| **Total** | **25** | **1,350** | **2,390** |
+| Cutover and test rewrites (Task 18) | 3 | 80 (hooks and rules edits) | 450 |
+| harness_start, doctor, bench, docs (Tasks 17, 19, 21, 22) | 2.5 | 150 | 140 |
+| Stub run, gate, PR (Tasks 20, 23) | 1.5 | — | 120 |
+| **Total** | **25** | **1,550** | **2,390** |
 
 Against the spec's 16 h, 1,250 and 1,600, the differences are:
 - the spikes, which the spec's figure did not price;
@@ -918,6 +949,10 @@ Against the spec's 16 h, 1,250 and 1,600, the differences are:
 2. D11 reads `company` and `leak_guard` as record-only in phase 1. The spec's sentence can also be
    read as "these four have effect".
 3. No phase owns `run_tests.py --changed-modules` (§12).
-4. S2 branch B adds a 1 s race at startup.
+4. S2 branch B adds a wait of up to 1 s at startup. Parts that read the options file at different
+   moments could pack differently, so a section could appear twice or not at all. Branch B
+   therefore packs option-dependent sections alone into the last part (Task 14, Step 5). That costs
+   one part of headroom.
 5. Managed settings scopes are not probed (S4).
 6. If the validator rejects `dependencies` on talk or wp, the §13 exception cannot ship as written.
+   The three raw readers of D17 see placeholders until phase 2.
