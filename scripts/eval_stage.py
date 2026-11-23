@@ -7,6 +7,9 @@ loaded from its own folder. This copies <plugin_root> to <out_dir>/<plugin> and 
 manifest's `dependencies` from the sibling folder <plugin_root>/../<dep> to
 <out_dir>/<plugin>/deps/<dep> (without its evals/, which would run as cases), where the cases' `plugins: ['../..', '../../deps/<dep>']` find it.
 Run the eval on the staged copy; the copy is made per run, so it never drifts from the source.
+An eval child gets no RIGGER_MODULE_DIRS from the parent, so a staged rigger-core (the target or a
+dependency) gets a `.rigger-module-dirs` file, one absolute staged root per line, which discovery reads
+next to its own root.
 Refuses (exit 1, one reason line) a missing manifest or dependency, a dependency with dependencies
 of its own, a source deps/ folder and an existing <out_dir>.
 Prints the staged path and `# staged <plugin>, dependencies <n>`.
@@ -14,12 +17,15 @@ Prints the staged path and `# staged <plugin>, dependencies <n>`.
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
 from pathlib import Path
 
 IGNORE = shutil.ignore_patterns("__pycache__")
+CORE = "rigger-core"
+MODULE_DIRS_FILE = ".rigger-module-dirs"
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # one folder in plugins/, never a path
 
 
@@ -67,13 +73,19 @@ def stage(root, out):
         if name != dep:
             raise Refused(f"dependency '{dep}': its manifest names '{name}'")
         sources.append((dep, src))
-    out = Path(out)
+    out = Path(os.path.abspath(out))  # absolute for the listed roots, spelled as the caller gave it
     if out.exists():
         raise Refused(f"{out} already exists; pass a new folder")
     staged = out / root.name
     shutil.copytree(root, staged, ignore=IGNORE)
+    roots = [staged]
     for dep, src in sources:
         shutil.copytree(src, staged / "deps" / dep, ignore=_without_cases(src))
+        roots.append(staged / "deps" / dep)
+    target = json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("name")
+    core = staged if target == CORE else staged / "deps" / CORE if CORE in deps else None
+    if core is not None:
+        (core / MODULE_DIRS_FILE).write_bytes("".join("%s\n" % path for path in roots).encode("utf-8"))
     return staged, len(sources)
 
 
