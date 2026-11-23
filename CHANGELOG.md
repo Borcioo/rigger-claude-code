@@ -7,6 +7,7 @@ format. Releases are tagged `v<version>`.
 
 ### Added
 
+- `rigger-lessons` `tools/proposal_check.py`: checks the queued rule and skill proposals against the current files (stale, applied, covered) and archives those that are not live, before a model reads the queue; `curate-lessons` runs it first.
 - `rigger-core:testing` skill (how to test: level and boundary, doubles, red-run procedure, flakiness,
   agent pitfalls); the Tests rule keeps only what must hold, the rules text shrinks and its size
   ceiling follows. Eval `testing-skill-loads` with a negative control.

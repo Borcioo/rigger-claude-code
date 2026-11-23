@@ -119,10 +119,14 @@ class CoordinateWiring(unittest.TestCase):
         self.assertRegex(COORDINATE, r"(?s)final summary.{0,200}`stop: done`.{0,100}ask once whether to delete"
                                      r".{0,200}remove `plan:` and `stop:`")
 
-    def test_state_file_rule_points_at_show_without_a_plugin_root_path(self):
+    def test_the_coordinator_state_rule_lives_in_step_one_and_survives_compaction(self):
+        step_one = COORDINATE[COORDINATE.index("\n1. "):COORDINATE.index("\n2. ")]
+        text = " ".join(step_one.split())
+        self.assertIn("Only this orchestrator session sets `coordinator: true`, never a side session.", text)
+        self.assertIn("rewrites the file with `true` before every turn end in which it waits", text)
+        self.assertIn("its running sessions are the output of the `show` call, not memory.", text)
+        self.assertIn("Copy these two sentences into the state file's `## Keep verbatim`", text)
         # Rules reach the model as literal text, so `${CLAUDE_PLUGIN_ROOT}` there stays unexpanded.
-        self.assertIn("/rigger-core:coordinate", STATE_FILE)
-        self.assertIn("`show`", STATE_FILE)
         self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", STATE_FILE)
 
     def test_empty_output_is_not_an_ok(self):

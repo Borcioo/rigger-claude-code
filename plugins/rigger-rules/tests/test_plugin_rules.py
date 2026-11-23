@@ -28,7 +28,7 @@ ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these files: they may be rewritten, never grown. Lower the ceiling when they shrink.
-RULES_CEILING_BYTES = 28057
+RULES_CEILING_BYTES = 27681
 RULES_MIN_FILES = 19
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"
@@ -251,14 +251,11 @@ class StateFileTests(unittest.TestCase):
     def test_the_bullet_is_under_its_own_heading_and_is_for_the_main_session(self):
         lines = rules_text("rigger-core", "state-file.md").decode("utf-8").split("\n")
         self.assertEqual(heading_lines("\n".join(lines)), ["## State file for long sessions"])
-        self.assertEqual(lines[2], "- **Long sessions keep a state file; they never hand off.** Main session only (subagents never")
-        self.assertEqual(lines[12:18], [
+        self.assertEqual(lines[1], "- **Long sessions keep a state file; they never hand off.** Main session only (subagents never")
+        self.assertEqual(lines[11:13], [
             "  handoff.",
-            "  A coordinator rewrites the file with `true` before every turn end in which it waits for",
-            "  a side session or an agent, and sets `false` only around such a step, back to `true` right after.",
-            "  A coordinator's running sessions are the output of the `show` call of",
-            "  `/rigger-core:coordinate`, not memory.",
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
+        self.assertNotIn("coordinator", "\n".join(lines))
         self.assertEqual(lines[-2:], ["  from the state file.", ""])
 
 

@@ -31,6 +31,11 @@ one full gate runs on the machine at a time.
    then call `add <part> [--waits-on a,b]` once per part of the plan; every call below uses the same
    prefix and names only its command (`show` prints the table). Output without a `coord-state: ok` line is a refusal: a refused move
    (`coord-state: refused: <reason>`, exit 2) stops that step; put the reason line into the state file.
+   Only this orchestrator session sets `coordinator: true`, never a side session. A coordinator
+   rewrites the file with `true` before every turn end in which it waits for a side session or an
+   agent, and sets `false` only around such a step, back to `true` right after; its running
+   sessions are the output of the `show` call, not memory. Copy these two sentences into the state
+   file's `## Keep verbatim`: compaction brings back the state file, not this command.
 2. Split the approved plan by real inputs: parts that need nothing from each other start now, each
    in its own session (`move <part> started --session <id>` or `--branch <branch>`); a part that
    waits names the exact input it waits for. List every stage up
