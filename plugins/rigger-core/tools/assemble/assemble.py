@@ -345,6 +345,15 @@ def _place(entries: List[_Entry], index: Dict[str, int], entry: _Entry, notices:
         entries.append(entry)
         return
     old = entries[at]
+    if entry.personal and old.personal:
+        # rules_extra.sh printed rules.d whole (D4): a repeated id is appended under a key of its own.
+        number = 2
+        while "%s#%d" % (entry.id, number) in index:
+            number += 1
+        entry.id = "%s#%d" % (entry.id, number)
+        index[entry.id] = len(entries)
+        entries.append(entry)
+        return
     if LAYER_RANK[old.layer] >= LAYER_RANK[entry.layer]:
         notices.append(DUPLICATE.format(id=entry.id, a=old.label, b=entry.label))
         return

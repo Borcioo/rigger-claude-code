@@ -196,6 +196,22 @@ class PersonalTests(Base):
         self.assertEqual(block[0], assemble.root_text(self.layout.plugins / "rigger-rules"))
         self.assertEqual(self.ids(found)[1], "tests.tests")
 
+    def test_personal_repeated_id_keeps_every_section(self):
+        # I2: rules_extra.sh printed rules.d files whole; two headings with one slug both stay.
+        self.layout.rules_module()
+        self.layout.personal("notes.md", "## Testing - unit\n\nunit words\n## Testing - e2e\n\ne2e words\n")
+        self.layout.personal("tests.md", "## Tests\n\nmine first\n## Tests\n\nmine second\n")
+        found = self.layout.assemble()
+        text = self.text(found)
+        for words in (b"unit words", b"e2e words", b"mine first", b"mine second"):
+            self.assertIn(words, text)
+        self.assertLess(text.index(b"unit words"), text.index(b"e2e words"))
+        self.assertEqual(found.notices, ["rigger: rules.d/tests.md replaces rule tests.tests"])
+        ids = self.ids(found)
+        self.assertEqual(ids[1], "tests.tests")  # the first occurrence replaces in place
+        self.assertLess(ids.index("tests.tests"), ids.index("notes.testing"))
+        self.assertNotIn(b"run the tests", text)
+
     def test_personal_text_is_not_rendered(self):
         self.layout.rules_module()
         self.layout.personal("mine.md", "## Mine\n\n{{slot:testing}} and {{reply_language}}\n")
