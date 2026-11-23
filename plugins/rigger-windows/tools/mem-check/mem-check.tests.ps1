@@ -180,11 +180,12 @@ if (-not $IsWindows) {
   Write-Host "# skipped 1 check on $([Environment]::OSVersion.Platform): Windows-only (the live read needs the CIM memory counters and the System event log)"
 }
 else {
-Write-Host "# event 2004 providers: $((Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004 } -ErrorAction SilentlyContinue | Group-Object ProviderName | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', ')"
 Test-Case 'live read: committed and ceiling match an independent CIM and Event 2004 read' {
   $r = Invoke-MemCheck @()
   $cim = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory
-  $limits = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004 } -ErrorAction SilentlyContinue |
+  # Id 2004 of the detector only: Microsoft-Windows-Setup logs one too, with no commit limit
+  $detector = 'Microsoft-Windows-Resource-Exhaustion-Detector'
+  $limits = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004; ProviderName = $detector } -ErrorAction SilentlyContinue |
       ForEach-Object { [long]([xml]$_.ToXml()).Event.UserData.MemoryExhaustionInfo.SystemInfo.SystemCommitLimit })
   $ceilingBytes = if ($limits.Count -gt 0) { ($limits | Measure-Object -Maximum).Maximum } else { $cim.CommitLimit }
   $min = [math]::Min([double]30, 0.25 * $ceilingBytes / $gib)
@@ -193,6 +194,8 @@ Test-Case 'live read: committed and ceiling match an independent CIM and Event 2
   $g = $m.Groups
   $num = { param($t) [double]::Parse($t, $inv) }
   Assert-Equal ($ceilingBytes / $gib).ToString('0.00', $inv) $g[3].Value 'ceiling'
+  $source = if ($limits.Count -gt 0) { "max of $($limits.Count) Event 2004 entries" } else { 'current CommitLimit, fallback' }
+  Assert-Equal $source $g[4].Value 'ceiling source'
   Assert-Equal ($cim.CommitLimit / $gib).ToString('0.0', $inv) $g[2].Value 'limit'
   Assert-Equal $true ([math]::Abs((& $num $g[1].Value) - $cim.CommittedBytes / $gib) -lt 1.0) 'committed within 1 GiB of the CIM read'
   Assert-Equal $min.ToString('0.##', $inv) $g[6].Value 'minimum'
