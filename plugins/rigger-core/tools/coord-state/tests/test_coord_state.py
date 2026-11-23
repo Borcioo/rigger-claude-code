@@ -414,6 +414,147 @@ class ReviewFocus(Case):
         self.assertEqual(os.listdir(self.config), [])
 
 
+class Host(Case):
+    def test_host_from_entrypoint_and_path(self):
+        for entrypoint, on_path, expected in (("claude-desktop", False, "desktop"), ("claude-desktop", True, "desktop"),
+                                              ("cli", True, "cli"), ("cli", False, "none"), (None, True, "none"),
+                                              ("claude-vscode", True, "none"), ("sdk-cli", True, "none")):
+            with self.subTest(entrypoint=entrypoint, on_path=on_path):
+                environ = {} if entrypoint is None else {"CLAUDE_CODE_ENTRYPOINT": entrypoint}
+                self.assertEqual(cs.host(environ, lambda name: "/bin/claude" if on_path else None), expected)
+
+    def test_mode_is_the_last_permission_mode_in_the_transcript(self):
+        self.assertEqual(cs.permission_mode(self.environ), "unknown")  # no file
+        folder = os.path.join(self.config, "projects", "x")
+        os.makedirs(folder)
+        transcript = os.path.join(folder, "s1.jsonl")
+        for text, expected in (('{"permissionMode":"auto"}\n{"a":1,"permissionMode":"bypassPermissions"}\n',
+                                "bypassPermissions"), ('{"a":1}\n', "unknown")):
+            with self.subTest(expected=expected):
+                with open(transcript, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+                self.assertEqual(cs.permission_mode(self.environ), expected)
+
+    def test_host_line(self):
+        environ = dict(self.environ, CLAUDE_CODE_ENTRYPOINT="claude-desktop")
+        self.assertEqual(self.run_main("host", environ=environ), (0, "coord-state: ok host desktop unknown\n"))
+        self.assertFalse(os.path.exists(self.state_dir))
+
+    def test_host_refuses_arguments(self):
+        self.assertEqual(self.run_main("host", "extra"), (2, REFUSED + "wrong arguments for host\n"))
+
+
+class Reader:
+    """Fake `read_agents`: one entry per poll (a dict of id -> state, or a Refused to raise); the last entry repeats."""
+
+    def __init__(self, polls):
+        self.polls, self.calls = polls, 0
+
+    def __call__(self):
+        poll = self.polls[min(self.calls, len(self.polls) - 1)]
+        self.calls += 1
+        if isinstance(poll, Exception):
+            raise poll
+        return poll
+
+
+class Wait(Case):
+    def wait(self, ids, polls):
+        now = [0]
+        reader = Reader(polls)
+
+        def sleep(seconds):
+            now[0] += seconds
+        return cs.wait(ids, reader, sleep, lambda: now[0]), reader.calls
+
+    def test_reports_an_id_after_two_non_working_polls(self):
+        polls = [{"a": "working", "b": "working"}, {"a": "done", "b": "working"}, {"a": "done", "b": "working"}]
+        self.assertEqual(self.wait(["a", "b"], polls), (["coord-state: ok wait a done"], 3))
+
+    def test_only_a_change_from_the_first_state_is_reported(self):
+        working, done, blocked, bad = {"a": "working"}, {"a": "done"}, {"a": "blocked"}, cs.Refused("agents: x")
+        cap = ["coord-state: ok wait cap"]
+        reads_to_cap = cs.CAP // cs.POLL + 1  # a poll at 0 s, 15 s ... 1800 s
+        for name, polls, expected, reads in (
+                ("done-baseline throughout", [done], cap, reads_to_cap),
+                ("blocked-baseline throughout", [blocked], cap, reads_to_cap),
+                ("done, working, done, done", [done, working, done], ["done"], 4),
+                ("blocked, blocked, done, done", [blocked, blocked, done], ["done"], 4),
+                ("working, blocked, blocked", [working, blocked], ["blocked"], 3),
+                ("working, done, Refused, done, done", [working, done, bad, done], ["done"], 5),
+                ("working then a row that vanishes", [working, {}], ["gone"], 3),
+                ("working then failed", [working, {"a": "failed"}], ["failed"], 3),
+                ("working then stopped", [working, {"a": "stopped"}], ["stopped"], 3)):
+            with self.subTest(name):
+                lines = cap if expected == cap else ["coord-state: ok wait a " + expected[0]]
+                self.assertEqual(self.wait(["a"], polls), (lines, reads))
+
+    def test_a_missing_row_at_the_first_poll_is_its_baseline(self):
+        polls = [{}, {}, {"a": "working"}, {"a": "done"}]
+        self.assertEqual(self.wait(["a"], polls), (["coord-state: ok wait a done"], 5))
+
+    def test_three_failed_polls_refuse(self):
+        for reason in ("agents: claude did not answer", "agents: output is not a list", "agents: claude not found"):
+            with self.subTest(reason=reason):
+                reader = Reader([cs.Refused(reason)])
+                with self.assertRaises(cs.Refused) as caught:
+                    cs.wait(["a"], reader, lambda seconds: None, lambda: 0)
+                self.assertEqual(str(caught.exception), reason)
+                self.assertEqual(reader.calls, 3)
+        bad = cs.Refused("agents: claude did not answer")
+        polls = [bad, bad, {"a": "working"}, bad, bad, {"a": "done"}, {"a": "done"}]  # failures are not consecutive
+        self.assertEqual(self.wait(["a"], polls), (["coord-state: ok wait a done"], 7))
+
+    def test_wrong_shapes_from_agents_count_as_failed_polls(self):
+        for text in ("{}", '"x"', "[1]", '[{"id": 5}]', '[{"id": "a"}]', "nope"):
+            with self.subTest(text=text):
+                with self.assertRaises(cs.Refused):
+                    cs.parse_agents(text)
+        self.assertEqual(cs.parse_agents('[{"id":"a","state":"done"},{"pid":1,"state":"working"}]'), {"a": "done"})
+        with self.assertRaises(cs.Refused):
+            cs.read_agents(lambda name: None)
+
+    def test_a_non_zero_exit_of_claude_is_refused(self):
+        with mock.patch.object(cs.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"", b"")):
+            with self.assertRaises(cs.Refused) as caught:
+                cs.read_agents(lambda name: "claude")
+        self.assertEqual(str(caught.exception), "agents: claude exited 1")
+
+    def test_wait_refuses_bad_ids(self):
+        for argument in ("a,,b", "a,b c", ",", "-a"):
+            with self.subTest(argument=argument):
+                self.assertEqual(self.run_main("wait", argument), (2, REFUSED + "bad ids\n"))
+
+
+class FindClaude(Case):
+    def plant(self, folder):
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "claude.exe" if os.name == "nt" else "claude")
+        with open(path, "wb") as handle:
+            handle.write(b"x")
+        os.chmod(path, 0o755)
+        return path
+
+    def test_a_claude_in_the_cwd_is_never_picked(self):
+        here, other = os.path.join(self.config, "repo"), os.path.join(self.config, "bin")
+        self.plant(here)
+        installed = self.plant(other)
+        old = os.getcwd()
+        os.chdir(here)
+        try:
+            environ = {"PATHEXT": ".COM;.EXE"}
+            found = [cs.find_claude(dict(environ, PATH=os.pathsep.join([first, other]))) for first in (here, ".")]
+            self.assertEqual([os.path.normcase(path or "") for path in found], [os.path.normcase(installed)] * 2)
+            self.plant(os.path.join(here, "bin"))  # <cwd>/bin/claude: what a relative `bin` entry would reach
+            relative = cs.find_claude(dict(environ, PATH=os.pathsep.join(["bin", other])))
+            self.assertEqual(os.path.normcase(relative or ""), os.path.normcase(installed))
+            self.assertIsNone(cs.find_claude(dict(environ, PATH="bin")))
+            self.assertIsNone(cs.find_claude(dict(environ, PATH=here)))
+            self.assertIsNone(cs.find_claude(dict(environ, PATH="")))
+        finally:
+            os.chdir(old)
+
+
 class Cli(Case):
     def cli(self, *argv, config=None):
         return run_cli(config or self.config, *argv)

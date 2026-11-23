@@ -11,6 +11,55 @@ sys.dont_write_bytecode = True
 CORE = Path(__file__).resolve().parents[3]
 COORDINATE = Path(os.environ.get("RIGGER_COORDINATE_MD") or CORE / "commands" / "coordinate.md").read_text(encoding="utf-8")
 STATE_FILE = (CORE / "rules" / "state-file.md").read_text(encoding="utf-8")
+# RIGGER_CLI_HOST_MD does the same for the terminal steps.
+CLI_HOST = " ".join(Path(os.environ.get("RIGGER_CLI_HOST_MD") or CORE / "tools" / "coord-state" / "cli-host.md")
+                    .read_text(encoding="utf-8").split())
+
+
+class CliHostWiring(unittest.TestCase):
+    def test_step_one_runs_host_first(self):
+        step_one = " ".join(COORDINATE[COORDINATE.index("\n1. "):COORDINATE.index("\n2. ")].split())
+        self.assertIn('tools/coord-state/coord_state.py" host', step_one)
+        self.assertLess(COORDINATE.index('coord_state.py" host'), COORDINATE.index('coord_state.py" init'))
+        self.assertRegex(step_one, r"`desktop` \(the app\): this command as written")
+        self.assertRegex(step_one, r"`cli` \(the terminal\): also read `\$\{CLAUDE_PLUGIN_ROOT\}/tools/coord-state/"
+                                   r"cli-host\.md` and follow it")
+        self.assertRegex(step_one, r"`none`: .{0,60}background subagents")
+
+    def test_cli_host_names_each_terminal_call(self):
+        for call in ("claude --bg --name <plan slug>-<part> --model <model> --permission-mode <mode> "
+                     '"$(cat <brief file>)"', "with the Bash tool", "under 20 000 characters",
+                     "<prefix> host", "<prefix> wait <id>", "run_in_background", "claude attach <id>",
+                     'claude --bg --resume <sessionId> "<text>"', "claude stop <id>", "claude rm <id>",
+                     "git worktree remove", "## Side sessions kept", "## Keep verbatim",
+                     "$CLAUDE_JOB_DIR/tmp/report.md", "<config dir>/jobs/<id>/tmp/report.md",
+                     "move <part> started --session <id> --branch <branch>"):
+            self.assertIn(call, CLI_HOST)
+
+    def test_cli_host_says_the_mode_is_not_inherited(self):
+        self.assertRegex(CLI_HOST, r"A child does not inherit it.{0,120}every child gets that mode")
+
+    def test_cli_host_refuses_a_start_without_its_line(self):
+        self.assertRegex(CLI_HOST, r"counts only with exit 0 and its `backgrounded · <id> · <name>` line; anything "
+                                   r"else is a refusal: put its output line into the state file and stop that step")
+
+    def test_cli_host_copies_each_report_before_close_deletes_it(self):
+        self.assertRegex(CLI_HOST, r"`done`: copy its report to `<scratch>/<part>-report-<n>\.md` .{0,120}"
+                                   r"`claude rm` deletes the job folder.{0,40} work from the copy")
+
+    def test_cli_host_keeps_blocked_parts_in_wait(self):
+        self.assertRegex(CLI_HOST, r"with every part whose session works or is blocked")
+        self.assertRegex(CLI_HOST, r"`claude attach <id>`, and keep it in `wait`")
+
+    def test_cli_host_review_sessions_reuse_the_worktree_and_leave_it(self):
+        self.assertRegex(CLI_HOST, r"review or re-review session starts the same way but in the part's existing "
+                                   r"worktree, with no new worktree or branch")
+        self.assertRegex(CLI_HOST, r"A review session in a builder's worktree gets `stop` and `rm` only")
+
+    def test_cli_host_closes_on_every_end_state(self):
+        self.assertRegex(CLI_HOST, r"on every end state \(merged, dropped, given up\): `claude stop <id>`")
+        self.assertRegex(CLI_HOST, r"compare the kept lines with `claude agents --json --all` and close any orphan")
+
 
 
 class CoordinateWiring(unittest.TestCase):

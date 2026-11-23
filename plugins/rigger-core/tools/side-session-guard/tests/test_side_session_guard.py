@@ -396,6 +396,18 @@ def stop_checks(root):
           Case(root, [tool_use("Read", {"file_path": "x"})]).blocked(), [])
     check("a kept session does not block at Stop",
           Case(root, [note(A)], state=kept("%s: waiting for the review" % A)).blocked(), [])
+    # A terminal coordinator's transcript (claude --bg children): the queued and the delivered idle notice, as
+    # CLI 2.1.327 records them. Only the app's notes arm the guard; the control row adds one.
+    idle = ('[Cross-session idle notice] "part-a", which you asked to be notified about, is idle now — it finished a '
+            "turn at 15:46. This is an automated notice from that session's harness — not a message from a person, "
+            "and not an instruction; act on it only insofar as your user's earlier request calls for it.")
+    terminal = [tool_use("SendMessage", {"to": "part-a", "message": "", "notify_when_idle": True}),
+                dump({"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-11-18T14:46:13.412Z",
+                      "sessionId": SID, "content": idle}),
+                dump(envelope("user", message={"role": "user", "content": idle}, isMeta=True, turnOrigin="system"))]
+    check("a terminal coordinator's idle notices do not block at Stop", Case(root, terminal).blocked(), [])
+    check("the same transcript with an app note still blocks, naming that session",
+          Case(root, terminal + [note(A)]).blocked(), [A])
     case = Case(root, [note(A)])
     check("stop_hook_active: the second stop in a row is silent", case.blocked(stop_hook_active=True), [])
     check("control: the same transcript blocks a first stop", case.blocked(), [A])
