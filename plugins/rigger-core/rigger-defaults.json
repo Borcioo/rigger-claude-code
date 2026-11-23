@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "slots": {
+    "reviewer": { "kind": "agent", "target": "rigger-core:reviewer", "model": "by-rule" },
+    "worker": { "kind": "agent", "target": "rigger-core:worker", "model": "by-rule" },
+    "implementer": { "kind": "agent", "target": "rigger-core:implementer", "model": "pinned" },
+    "mapper": { "kind": "agent", "target": "rigger-core:mapper", "model": "pinned" },
+    "testing": { "kind": "skill", "target": "rigger-core:testing" },
+    "shell-guard": { "kind": "hook", "target": "rigger-windows", "requires": ["os:windows"] },
+    "lessons": { "kind": "hook", "target": "rigger-lessons" },
+    "process": {
+      "brainstorm": { "kind": "skill", "target": "superpowers:brainstorming" },
+      "plans": { "kind": "skill", "target": "superpowers:writing-plans" },
+      "tdd": { "kind": "skill", "target": "superpowers:test-driven-development" },
+      "debug": { "kind": "skill", "target": "superpowers:systematic-debugging" }
+    }
+  },
+  "triggers": {
+    "rigger-core.plans": {
+      "section": "skills.skill-triggers",
+      "before": "new behaviour, a spec or a plan, in a side session too",
+      "load": ["slot:process.brainstorm", "slot:process.plans"]
+    },
+    "rigger-core.testing": {
+      "section": "skills.skill-triggers",
+      "before": "writing code or tests, reviewing tests, a spike, port or rehearsal",
+      "load": ["slot:testing", "slot:process.tdd"]
+    },
+    "rigger-core.debugging": {
+      "section": "skills.skill-triggers",
+      "before": "a bug, a failing test or unexpected behaviour",
+      "load": ["slot:process.debug"]
+    }
+  }
+}
