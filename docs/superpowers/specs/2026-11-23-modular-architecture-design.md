@@ -68,8 +68,8 @@ This design makes Rigger a small fixed core plus modules:
 - A module registry or discovery service. Marketplaces are Claude Code's.
 - Per-turn reconfiguration. Config changes apply at the next `startup` or `/clear`, as `rules.d`
   does today (`plugins/rigger-rules/README.md:45`).
-- Porting company content into the public repository. Phase 4 moves it into its own private module
-  marketplace.
+- Porting company content into the public repository. Moving an existing company fork onto modules
+  is that fork's own plan. Phase 4 ships only the mechanism, a fixture and a migration path.
 
 ### Anti-goals (never)
 
@@ -152,6 +152,15 @@ This design makes Rigger a small fixed core plus modules:
   `enabledPlugins` maps of every settings scope Claude Code reads. It keeps the enabled plugins
   whose `installPath` holds `rigger-module.json`. `harness_start.py:1-20` already reads user
   settings and `installed_plugins.json` this way.
+- **Modules loaded with `--plugin-dir`:** they appear in neither file, so they are named
+  explicitly. `RIGGER_MODULE_DIRS` is a list of plugin roots separated by `os.pathsep` (`;` on
+  Windows, `:` elsewhere), each holding `rigger-module.json`. The stub tests, the evals
+  (`scripts/eval_stage.py` copies) and developers set it next to `--plugin-dir`.
+  - **Discovery is installed and enabled plugins plus `RIGGER_MODULE_DIRS`.**
+  - An entry that is not a directory, or holds no manifest, prints one notice line and is skipped.
+  - A name present both installed and in `RIGGER_MODULE_DIRS` is taken from `RIGGER_MODULE_DIRS`,
+    the same way `--plugin-dir` takes precedence for that session, and a notice names it.
+  - The variable is read like every other input: once, at `startup` or `clear`.
 - **Reading, not managing:** a plugin without a manifest is not a module. Superpowers is one. Its
   skills can still be named as slot targets or trigger skills, and core checks only that the plugin
   is enabled.
@@ -306,6 +315,7 @@ Claude Code's project-scope `enabledPlugins` in `.claude/settings.json`.
 | `leak_guard.denylist` | path | 3 | the person's own denylist file, outside any repository |
 | `trust.project_commands` | list of slot names | 3 | slots whose `kind: command` a project file may set (§7.4) |
 | `review.paths` | object `{glob: rules file}` | 1–4 | per-path review rules for rigger-review (phase 3) |
+| `shell_guard.shellwise_path` | path | 3 | the shellwise binary for `rigger-shellwise` when it is not on PATH (phase 3); a project file cannot set it, for the reason in §7.4 |
 
 Unknown keys print one notice line naming the file and key, and are ignored. A value of the wrong
 type is ignored at that level with a notice, and the lower level's value stands.
@@ -384,12 +394,26 @@ That is phase 2.
       "tdd":        { "kind": "skill", "target": "superpowers:test-driven-development" },
       "debug":      { "kind": "skill", "target": "superpowers:systematic-debugging" }
     }
+  },
+  "triggers": {
+    "rigger-core.testing": {
+      "section": "skills.skill-triggers",
+      "before": "writing code or tests, reviewing tests, a spike, port or rehearsal",
+      "load": ["slot:testing", "slot:process.tdd"] },
+    "rigger-core.debugging": {
+      "section": "skills.skill-triggers",
+      "before": "a bug, a failing test or unexpected behaviour",
+      "load": ["slot:process.debug"] }
   }
 }
 ```
 
+Core's rows carry `section` like module rows (§9.3). In phase 1 it places each row into the
+rigger-rules `## Skill triggers` table (`skills.md:6-15`) in today's order. From phase 2 all tables
+are merged and `section` is ignored; the key stays valid so phase-1 files keep loading.
+
 In phase 3 the defaults change to `rigger-review:reviewer`, `rigger-testing:testing` and
-`shellwise`. The `os:windows` condition on `shell-guard` goes at the same time: until then, a macOS
+`rigger-shellwise`. The `os:windows` condition on `shell-guard` goes at the same time: until then, a macOS
 or Linux session does not get a "slot not filled" notice for a guard that never existed there.
 
 Level 2, inside a company module's manifest:
@@ -555,7 +579,7 @@ their own modules plus an installed Rigger.
 | S1 | Several `SessionStart` handlers of one group run independently and their texts all reach the context. The context order follows `hooks.json` order, or order does not matter because every part is self-contained. | Stub run (`stub_api.py`, isolated config) with K handlers printing distinct markers. The first request holds all K, and their order is recorded. If the order is not stable, each part repeats the module root line it needs, and the golden test compares per-part text. |
 | S2 | `CLAUDE_PLUGIN_OPTION_*` of rigger-talk does not reach a rigger-core hook. Where Claude Code stores the option values is to be found (`talk_start.sh:3-5` says unset options are not exported). | Stub run that prints the environment of a rigger-core hook with a talk option set. If the values do not arrive, the fallback is §9.6. |
 | S3 | For a directory marketplace, `installPath` lags behind the checkout. | Install from a directory marketplace, edit a rules file, start a session. Compare what `installPath` holds with the checkout. If it lags, the assembler reads a directory marketplace's modules from the marketplace's `source` path. |
-| S4 | The settings scopes and their `enabledPlugins` maps are user `settings.json` and `settings.local.json`, project `.claude/settings.json` and `.claude/settings.local.json`, plus any managed settings. | Enable a plugin in each scope in an isolated config and compare the assembler's list with the `plugins` array of the stub's init event. Pass when they are equal in every scope. |
+| S4 | The settings scopes and their `enabledPlugins` maps are user `settings.json` and `settings.local.json`, project `.claude/settings.json` and `.claude/settings.local.json`, plus any managed settings. | Enable a plugin in each scope in an isolated config and compare the assembler's list with the `plugins` array of the stub's init event. Pass when they are equal in every scope. A plugin loaded with `--plugin-dir` is not compared: it is in the init list only, so the run sets `RIGGER_MODULE_DIRS` to its root, and the pass condition is "init list = installed and enabled ∪ `RIGGER_MODULE_DIRS`". |
 | S5 | `SubagentStart` input carries the parent `session_id`. | A stub run reads it. If it does not, the subagent parts recompute from files instead of the snapshot. |
 
 ### 9.2 Placeholders in rules text
@@ -716,7 +740,7 @@ It moves with it in phase 3.
 | `implementer` | `rigger-core:implementer`, `pinned` | agent | `STATUS`, `FILES`, `ROOT CAUSE`, `GATE`, `RED RUNS`, optional `QUESTION`; with BLOCKED or NEEDS_CONTEXT also `CALL`, `OUTPUT`, `ALTERNATIVE` (`implementer.md:33-43`). |
 | `mapper` | `rigger-core:mapper`, `pinned` | agent | Only lines `path:START[-END] - text` (at most 12 words) or one `NOT FOUND: <terms>` (`mapper.md:14,18`). Each path exists at the reviewed commit. |
 | `testing` | `rigger-core:testing` → `rigger-testing:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware). The filling module ships the commit-time test guards. |
-| `shell-guard` | `rigger-windows` → `shellwise` | hook (plus a command for rule checks) | (a) A PreToolUse hook on `Bash` and `PowerShell` that prints nothing to allow, or one JSON deny whose reason names a rule id and a fix; it always exits 0 (`tests/test_repo.py:336`). (b) An internal error allows and prints nothing: a guard that exits 2 blocks the tools needed to fix it (`CLAUDE.md:32`). (c) Median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) A command `<argv> rules` prints every rule id, one per line, and `<argv> rule-check --rule <id> --shell bash\|powershell --probe <text>` exits 0 only when that rule denies the probe. `lessons_lint.py --rule-checker` loads a Python file with `RULES` and `rule_guard_problem` (`lessons_lint.py:217-241`). So rigger-lessons ships `tools/cli_rule_checker.py`, which reads the filler's argv from the snapshot, fills `RULES` from `rules`, and answers `rule_guard_problem` through `rule-check`. `lessons_lint.py` itself does not change. |
+| `shell-guard` | `rigger-windows` → `rigger-shellwise` | hook | (a) A PreToolUse hook on `Bash` and `PowerShell`. It prints nothing to allow, may add a non-blocking note or warning the agent reads while the command runs (shellwise `warn`), or prints one JSON deny whose reason names a rule id and a fix. It always exits 0 (`tests/test_repo.py:336`), because an exit 2 from a crash blocks the tools needed to fix it (`CLAUDE.md:32`). (b) The filler declares `"failure_mode": "open"` or `"closed"` in its manifest: whether a command is allowed or denied when the guard cannot finish its analysis. Core prints the declared mode in the `## Slots` row and doctor reports it. A filler without the key is reported as `failure mode: undeclared`. rigger-windows declares `open`, and `rigger-shellwise` declares `closed` (shellwise answers `danger` when analysis cannot finish). (c) Median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) **Optional:** a rule checker, a Python module with `RULES` and `rule_guard_problem` as `lessons_lint.py --rule-checker` loads it (`lessons_lint.py:217-241`), named by `provides.shell-guard.rule_checker` in the filler's manifest. rigger-windows' default passes it with today's `lessons_guard.py`. A filler without one passes the contract. Each `live:<rule>` lesson is then reported `no checker` by doctor and curation, and is never dropped. |
 | `process.brainstorm`, `.plans`, `.tdd`, `.debug` | superpowers skills | skill | The skill exists in an enabled plugin. An empty role drops its rows and its `{{slot:…}}` sentences. |
 | `lessons` | `rigger-lessons` | hook | (a) A `SessionStart` line naming the inbox path and its open count (the panel reads the inbox, `rigger-panel/README.md:23`). (b) Inbox entries pass `inbox_lint.py`. (c) Its curation skill reads lesson targets from the snapshot (§11). |
 
@@ -855,6 +879,12 @@ offers each matching company target and nothing public.
 - **Gate or not:** unlike `--fix-round`, this mode is a gate for pull requests because each module's
   tests run complete. The full gate stays required for a release and for shared files.
   `select_tests.py` stays the engine of `--fix-round`.
+- **Test setup:** a test that starts `claude` with `--plugin-dir` also sets `RIGGER_MODULE_DIRS`
+  to the same roots, joined with `os.pathsep`, next to the isolated `CLAUDE_CONFIG_DIR` and the
+  stub's `ANTHROPIC_BASE_URL` (`CLAUDE.md:9,41`). `scripts/eval_stage.py` sets it for every eval
+  case it stages, pointing at the staged copies. `run_tests.py` strips `HARNESS_*` and `CLAUDE_*`
+  but not `RIGGER_*`, so it also clears `RIGGER_MODULE_DIRS` from the inherited environment. A test
+  that needs it sets it itself, and a developer's own value never leaks into the suite.
 - **CI:** pull requests to `main` only, on Windows, macOS and Linux (the workflow is a separate PR).
   It runs `--changed-modules --base origin/main`, the contract test and the sweep. A release runs
   `gate.py --release`.
@@ -916,7 +946,11 @@ byte with LF, plus the set of root lines.
 - the golden test passes on 3 OSes;
 - S1–S5 have recorded results;
 - the full gate passes;
-- a stub run shows every section reaching the first request.
+- a stub run shows every section reaching the first request. That run loads the repository's
+  plugins with `--plugin-dir` and names the same roots in `RIGGER_MODULE_DIRS`;
+- the same stub run with one root left out of `RIGGER_MODULE_DIRS` shows that module's sections
+  missing and one notice, which proves the variable, not a scan of `--plugin-dir`, is what
+  discovery reads.
 
 **Migration:**
 
@@ -1014,14 +1048,42 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
   rigger-windows (below).
 - **`rigger-platform`** (add-on, opt-in): the Windows and toolchain knowledge of rigger-windows
   that is not the shell guard. The name is the builder's call.
+- **`rigger-shellwise`** (`fills: shell-guard`): a thin Rigger plugin around the separately
+  installed shellwise binary.
+
+**About shellwise.** shellwise is a standalone tool and stays independent of Rigger: Rigger never
+requires a change in it, and phase 3 does not wait for a shellwise release. Today it is a binary
+that people add as a hook by hand, with no `.claude-plugin`. It has the commands `check`, `hook`,
+`bench`, `explain` and `lint`, and the levels `ok`, `warn`, `break`, `danger` and `critical`. When
+its analysis cannot finish it blocks with `danger`, so it fails closed.
+
+**What `rigger-shellwise` does:**
+
+- **Manifest:** it carries `rigger-module.json` with `fills: shell-guard` and
+  `"failure_mode": "closed"` (§10.4 (b)).
+- **Finding the binary:** it uses `shell_guard.shellwise_path` from config when set, else
+  `shellwise` on PATH.
+- **Version check:** it checks the binary against a minimum version pinned in the plugin. How the
+  version is read is spike S7: shellwise's README documents no `--version` flag, and the `"version":1`
+  in `check --json` is the output schema, not the tool's version.
+- **Missing binary:** when the binary is missing or too old, a `SessionStart` line says so and gives
+  the install route from the shellwise README. Doctor reports the same. The hook then allows and
+  prints nothing, and the core slot line reports the slot unfilled.
+- **Hook:** it registers one PreToolUse handler on `Bash|PowerShell` that runs
+  `shellwise hook claude-code` with the event on stdin, timeout 5 s, as the shellwise README's own
+  hook entry does. `warn` reaches the agent as a note, and `break`, `danger` and `critical` deny.
+- **Rule check (optional, §10.4 (d)):** built from shellwise's own commands. `explain <id>`
+  succeeding means the filler has that rule, and `check --shell <s> --json -- <probe>` returns the
+  findings, so a probe is denied by a rule when a finding names it at a blocking level. shellwise
+  has no command that lists every rule id, so `RULES` is answered per id through `explain`.
 
 **rigger-windows goes away. Where each item lands:**
 
 | Item today | Lands in | Note |
 |---|---|---|
-| `tools/shell-guard/shell_guard.py` (deny rules, PowerShell and git handlers, `hooks.json:20-77`) | **shellwise** | Its rule table and test cases (`tests/rules_common.py`, `test_rules.py`, `corpus_check.py`, `test_walk_portable.py`) are handed to shellwise as its corpus. The Python guard is deleted once shellwise passes that corpus. |
-| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **shellwise** `rules` and `rule-check`, reached through `rigger-lessons/tools/cli_rule_checker.py` (§10.4) | `curate-lessons/SKILL.md:92-99` passes `--rule-checker <rigger-lessons root>/tools/cli_rule_checker.py` instead of looking up `rigger-windows@`. |
-| `rigger-core/tools/token-audit/tests/test_archive.py` (checks `lessons_guard.py`'s rule ids against `shell_guard.py`, `test_archive.py:19,241-242,316`) | rewritten against `cli_rule_checker.py` with a stub filler command | The check that the two id lists agree moves to shellwise's own tests. |
+| `tools/shell-guard/shell_guard.py` (deny rules, PowerShell and git handlers, `hooks.json:20-77`) | **deleted**; the slot is filled by `rigger-shellwise` | shellwise is not changed for Rigger. 4 Python-guard rules have no shellwise counterpart: `bash-powershell-syntax`, `bash-ps-call-operator`, `bash-too-long` and `bash-unterminated-quote`. They are not a Rigger dependency, and their tests go with the Python guard. Proposing them to shellwise is a separate item outside this plan. |
+| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **`rigger-shellwise`** `tools/rule_checker.py`, a Python module with `RULES` and `rule_guard_problem` built on `explain` and `check` | `curate-lessons/SKILL.md:92-99` takes the checker path from the shell-guard filler's manifest (`provides.shell-guard.rule_checker`) instead of looking up `rigger-windows@`. A `live:<rule>` lesson for a rule the active filler lacks, the 4 above included, is reported as `no checker` by doctor and curation. It is never dropped, as `SKILL.md:96-99` already does for a missing checker. |
+| `rigger-core/tools/token-audit/tests/test_archive.py` (checks `lessons_guard.py`'s rule ids against `shell_guard.py`, `test_archive.py:19,241-242,316`) | rewritten against a stub checker module | It checks the checker interface, not one filler's rule list. |
 | commit shadow rule inside `shell_guard.py`, `stop_shadow.py`, `turn_evidence.py`, `.claude/gates.json` format (`INSTALL.md` "Shadow gates") | **rigger-testing** `tools/test-evidence/` | These ask whether a check ran after the last edit, a testing question, not a command-shape one. The commit rule is extracted from `shell_guard.py` into its own handler on `Bash(*commit*)` and `PowerShell(*commit*)`. `tests/test_repo.py` handler counts change. |
 | `tools/gate-lab/` (replay and report of the shadow gates) | **rigger-testing** `tools/gate-lab/` | It measures the gates above. The `CLAUDE.md:21` pitfall path follows. |
 | `tools/safe-edit/safe-edit.ps1` (red run in place) | **rigger-testing** `tools/safe-edit/` | pwsh runs on all 3 OSes. Its references `tests.md:13`, `defects.md:37` and `testing/SKILL.md:85` become `{{tool:…}}` with `requires: plugin:rigger-testing`. Porting it to Python is the builder's call. |
@@ -1051,8 +1113,11 @@ The doctor's Windows requirement (`doctor.sh:489`) becomes "recommends `rigger-p
 
 **Exit criterion:**
 
-- the three modules pass their own tests and contracts on 3 OSes;
-- shellwise fills `shell-guard` and passes the handed-over corpus with no new false positive;
+- the four modules pass their own tests and contracts on 3 OSes;
+- with the released shellwise binary installed, `rigger-shellwise` fills `shell-guard`:
+  - a stub run shows a `break` command denied and a `warn` command run with its note;
+  - with the binary removed, the session gets the install line and commands run unguarded;
+  - doctor reports the failure mode `closed`;
 - `rigger-windows` is removed from `marketplace.json`;
 - the full gate and a stub run pass;
 - `rigger-review` reviews this repository's last release diff with every in-scope file covered and
@@ -1061,75 +1126,91 @@ The doctor's Windows requirement (`doctor.sh:489`) becomes "recommends `rigger-p
 **Migration:**
 
 - **Windows:**
-  1. `claude plugin install rigger-testing@rigger rigger-platform@rigger` (and `rigger-review`).
-  2. Install shellwise as its README says.
+  1. `claude plugin install rigger-testing@rigger rigger-platform@rigger rigger-shellwise@rigger`
+     (and `rigger-review`).
+  2. Install the shellwise binary as its README says. If you had added its hook to `settings.json`
+     by hand, remove that entry: `harness_start.py` reports it as a handler that runs twice.
   3. `claude plugin disable rigger-windows@rigger`, then uninstall it.
   4. Run `/rigger-core:doctor`.
 - **Windows, from the first phase-3 release:** `harness_start.py` prints one line while rigger-windows
-  is still enabled. If both rigger-windows and shellwise are enabled, the double-filler line of
-  §10.2 says which to disable.
+  is still enabled. If both rigger-windows and rigger-shellwise are enabled, the double-filler line
+  of §10.2 says which to disable.
 - **Gates file:** a repository's `.claude/gates.json` keeps its format, and its rows move to
   rigger-testing's data folder (`CLAUDE_PLUGIN_DATA` changes with the plugin), so old rows stay
   where they were. Gate-lab takes `--data` for either folder.
-- **macOS:** install `rigger-testing` and `rigger-review` (doctor says so), and optionally shellwise.
+- **macOS:** install `rigger-testing` and `rigger-review` (doctor says so), and optionally
+  `rigger-shellwise` with the shellwise binary.
   The guard is new on macOS, a behaviour change listed in the release notes. Nothing to remove.
 
-**Estimate:** 24 h:
+**Estimate:** 28 h:
 
 | Part | Code | Tests |
 |---|---|---|
 | rigger-review (`review_scope.py` 250, skill and checklists 300 lines of Markdown counted as code, contract glue 150, agent 50) | 750 | 900 |
 | commit-rule extraction into rigger-testing | 250 | 300 |
+| `rigger-shellwise` (binary lookup and version check 120, hook launcher 40, rule checker 120, manifest and README 70) | 350 | 400 |
 | path and wording updates | 200 | 200 |
 | manifests | 150 | 0 |
-| **Total** | **about 1,350** | **about 1,400** |
+| **Total** | **about 1,700** | **about 1,800** |
 
-About 6,000 lines are moved unchanged and not counted.
+About 6,000 lines are moved unchanged and not counted. There is no corpus hand-over to shellwise
+and no wait for a shellwise release.
 
 **Simpler version:**
 
 - **What it keeps:** the new modules are built, but rigger-windows stays as the shell-guard filler
-  until shellwise is ready.
-- **What it drops:** the shellwise switch and the cross-platform guard for this release. It keeps
-  the Python guard Windows-only.
+  for one more release.
+- **What it drops:** `rigger-shellwise` and the cross-platform guard for this release. It keeps the
+  Python guard, Windows-only.
 
-### Phase 4: move the company overlay out
+### Phase 4: the company overlay mechanism
 
-**Scope, public side:**
+This phase delivers the generic overlay mechanism and proves it on a fixture private marketplace in
+Rigger's own tests. Migrating an existing company fork (renamed copies of every Rigger plugin) to
+modules is a separate plan in that fork's own private repository, not part of this design. Rigger
+provides two things for it: a documented migration path, and a doctor check for a fork installed
+next to Rigger.
+
+**Scope:**
 
 - `layer: company` handling in production;
 - level-2 config;
 - `lessons.target` and the lesson-target list in the snapshot;
 - `leak_guard.py` with per-target denylists and the client-context rule;
 - `curate-lessons` reading targets from the snapshot (`SKILL.md:49-55` rewritten);
-- `/rigger-core:doctor` for private marketplaces;
-- a generic fixture overlay under `tests/fixtures/company-overlay/` (a hosting-provider deploy
-  module, a ticket-intake module, an accessibility-audit module) with no real names, used by the
-  contract test.
+- **Fixture marketplace:** `tests/fixtures/company-marketplace/`, a directory marketplace with
+  three `layer: company` modules: a hosting-provider deploy module, a ticket-intake module and an
+  accessibility-audit module. It holds generic names only and a fixture denylist of invented terms.
+  The contract test loads it through `RIGGER_MODULE_DIRS` (§6.1).
+- **Migration path doc:** `docs/company-overlay.md` explains how a fork turns into modules on top of
+  Rigger:
+  - one manifest per module with `layer: company`;
+  - copied rules files reduced to the sections they change, which then replace general ones by id;
+  - renamed copies of Rigger plugins removed in favour of the originals;
+  - the module's denylist kept in the private repository;
+  - `assemble.py --check` run in that repository's CI against a released Rigger.
+- **Doctor check for a fork next to Rigger:** `harness_start.py` and `/rigger-core:doctor` report
+  handler pairs where an enabled non-Rigger plugin and a Rigger plugin run the same script basename
+  with the same arguments on the same event. That is the duplicate rule of `harness_start.py:1-11`,
+  extended to name both plugins. They also report rule sections that print twice under different
+  plugin names, found by equal section text.
 
-**Scope, private side (not in this repository):**
+**Exit criterion:** the fixture marketplace's check passes:
 
-- the company overlay is restructured into modules in a private module marketplace;
-- each module has a manifest, `layer: company`, its denylist and its `assemble.py --check` run;
-- copied rules files become section replacements by id;
-- copies of public files are deleted.
-
-**Exit criterion:**
-
-- the fixture overlay replaces, adds and drops sections exactly as §8 says (one test per case);
-- two company modules setting one key produce the conflict line and the L1 value;
+- `assemble.py --check` on Rigger plus the fixture marketplace passes;
+- the fixture overlay replaces, adds and drops sections exactly as §8 says, with one test per case;
+- two fixture modules setting one key produce the conflict line and the L1 value;
 - the leak guard refuses with a missing denylist and with an unplantable one, and blocks a planted
-  term bound for `rigger`;
-- a client-context lesson is offered only the company target;
-- the private marketplace's own check passes against the released Rigger.
+  fixture term bound for `rigger`;
+- a client-context lesson is offered only the fixture company's target;
+- a fixture "fork" plugin that copies a Rigger handler and a rules file is reported by the doctor
+  check.
 
 **Migration:**
 
-- **Windows and macOS, both:** a person using the company overlay removes the old copied files and
-  installs the private marketplace's modules (`claude plugin marketplace add <private source>`,
-  then `claude plugin install …`). They set `leak_guard.denylist` in `config.json`, and doctor
-  names any copied rules file in `rules.d` whose sections now come from a module. People without a
-  company overlay see no change.
+- **Windows and macOS, both:** no change for people without a company overlay.
+- **People with a fork:** they follow `docs/company-overlay.md` when their own repository's plan
+  ships. Until then, doctor tells them which handlers and sections run twice.
 
 **Estimate:** 10 h, about 650 lines of code, about 900 lines of tests (public side only).
 
@@ -1190,10 +1271,10 @@ About 6,000 lines are moved unchanged and not counted.
 |---|---|---|---|
 | 1 | 16 | 1,250 | 1,600 |
 | 2 | 12 | 800 | 1,100 |
-| 3 | 24 | 1,350 | 1,400 |
+| 3 | 28 | 1,700 | 1,800 |
 | 4 | 10 | 650 | 900 |
 | 5 | 12 | 700 | 900 |
-| **All** | **74** | **4,750** | **5,900** |
+| **All** | **78** | **5,100** | **6,300** |
 
 **Simpler design overall (about 30 h):**
 
@@ -1224,7 +1305,8 @@ About 6,000 lines are moved unchanged and not counted.
 | Section ids change when a heading is reworded and overrides silently stop applying. | medium | a company rule no longer replaces the general one | An orphan override fails the check. Doctor names it at startup. |
 | Two company modules conflict on config. | low | unexpected value | Neither applies, one line names both (§7.3). |
 | A leak guard that reports clean on an empty denylist. | was real for gates | private term published | Fail closed plus a planted-term control per run (§11.4). |
-| shellwise is not ready when phase 3 is due. | medium | phase 3 blocks | Phase 3's simpler version keeps rigger-windows as the shell-guard filler for one more release. |
+| The released shellwise binary changes its hook reply or `check --json` shape. | low | `rigger-shellwise` misreads it | Pin a minimum version (S7), and test against a recorded reply of that version. shellwise itself is never changed for Rigger. |
+| Users relied on the 4 Python-guard rules shellwise lacks. | medium on Windows | those mistakes are no longer caught | Release notes name them. `live:` lessons for them show `no checker` and stay. Proposing the rules to shellwise is a separate item. |
 | External reviewer output looks valid but reviews nothing. | medium | false "no findings" | Coverage must equal `review_scope.py`'s list. Quotes must anchor. Empty findings need `shortcuts_check`. |
 | Public text gains a private term through examples. | medium | leak | Generic examples only. Sweep with the maintainer's denylist at release (`gate.py --release`). The contract test refuses `lessons.denylist` in public manifests. |
 
@@ -1248,3 +1330,9 @@ Each of these is marked **builder's call**:
 9. **Slug edge cases:** headings that are only a placeholder, or two headings in one file with the
    same slug. The latter is a duplicate and fails the check. The question is only how the message
    reads.
+10. **shellwise version check (S7):** how `rigger-shellwise` reads the binary's version, since no
+    `--version` flag is documented. Options: a version flag if the binary has one, or the minimum
+    behaviour probed with a known `check --json` input. Spike it in phase 3 before the version pin
+    is written.
+11. **Core trigger rows:** core's rows in `rigger-defaults.json` carry `section` (§7.5), placed in
+    the rigger-rules table in today's order during phase 1.
