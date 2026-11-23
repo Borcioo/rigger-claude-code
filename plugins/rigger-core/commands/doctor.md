@@ -16,8 +16,8 @@ said yes.
 - macOS and Linux: `sh "${CLAUDE_PLUGIN_ROOT}/tools/doctor/doctor.sh"`.
 
 Each `CHECK` line is name, status (OK, MISSING, WARN, or INFO: information only, never with a FIX),
-detail, how checked; each `FIX` line is the command for a row that is MISSING or WARN. Neither
-script needs Python.
+detail, how checked; each `FIX` line is the command for a row that is MISSING or WARN. Without
+Python both scripts still run: the `python` row says so and `rules-assembly` is WARN, not checked.
 
 Check two more rows yourself:
 
