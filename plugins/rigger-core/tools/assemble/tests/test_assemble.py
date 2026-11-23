@@ -636,8 +636,6 @@ class CheckTests(unittest.TestCase):
         rows = [
             ("duplicate", [lay.module("mod-b", {"rules/tests.md": ("## Tests\n\ny\n", "both")})],
              "duplicate rule id tests.tests in mod-a and mod-b"),
-            ("orphan", [lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")],
-             "orphan override tests.testz in acme/rules/tests.md: no lower section has that id"),
             ("oversize", [lay.module("mod-c", {"rules/big.md": ("## Big\n\n" + "b" * 9000 + "\n", "both")})],
              "section big.big in mod-c/rules/big.md is over 9000 bytes"),
             ("placeholder", [lay.module("mod-d", {"rules/u.md": ("## U\n\n{{nope:x}}\n", "both")})],
@@ -655,6 +653,42 @@ class CheckTests(unittest.TestCase):
                 code, out, err = self.check(lay.core, good, *extra)
                 self.assertEqual(code, 1, out + err)
                 self.assertIn(line, out.decode("utf-8").splitlines())
+
+    def test_check_orphan_override_by_file_stem(self):
+        # D22: a company file whose stem matches a general file overrides that file's sections.
+        lay = self.layout
+        good = lay.module("mod-a", {"rules/tests.md": ("## Tests\n\nx\n## Plans\n\np\n", "both")})
+        rows = [
+            ("renamed heading", {"rules/tests.md": ("## Testz\n\ny\n", "both")},
+             "orphan override tests.testz in acme/rules/tests.md: no lower section has that id; "
+             "closest general id tests.tests"),
+            ("empty section, new file", {"rules/fresh.md": ("## Fresh\n\n", "both")},
+             "orphan override fresh.fresh in acme/rules/fresh.md: no lower section has that id"),
+        ]
+        for name, files, line in rows:
+            with self.subTest(name):
+                shutil.rmtree(str(lay.plugins / "acme"), ignore_errors=True)
+                acme = lay.module("acme", files, layer="company")
+                code, out, err = self.check(lay.core, good, acme)
+                self.assertEqual(code, 1, out + err)
+                orphans = [l for l in out.decode("utf-8").splitlines() if l.startswith("orphan override")]
+                self.assertEqual(orphans, [line])
+
+    def test_check_new_company_file_is_appended_and_clean(self):
+        # D22: an unmatched id in a file whose stem matches no general file is a new section, not a finding.
+        lay = self.layout
+        good = lay.module("mod-a", {"rules/tests.md": ("## Tests\n\nx\n", "both")})
+        acme = lay.module("acme", {"rules/policy.md": ("## Policy\n\ncompany policy\n", "both")}, layer="company")
+        code, out, err = self.check(lay.core, good, acme)
+        self.assertEqual(code, 0, out + err)
+        self.assertTrue(out.decode("utf-8").splitlines()[-1].endswith("findings 0"))
+        lay.dirs = [str(good), str(acme)]
+        found = lay.assemble()
+        self.assertEqual(found.sections[-1]["id"], "policy.policy")
+        self.assertIn(b"company policy", self.text_of(found))
+
+    def text_of(self, found):
+        return b"".join(block[1] for block in found.blocks)
 
     def test_check_company_in_public_marketplace(self):
         repo = self.tmp / "repo"

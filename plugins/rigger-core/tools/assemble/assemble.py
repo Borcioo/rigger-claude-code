@@ -609,6 +609,26 @@ def _render(argv: List[str], environ: Mapping[str, str]) -> bytes:
                                mark_personal="--mark-personal" in argv))
 
 
+def _distance(a: str, b: str) -> int:
+    """Levenshtein distance."""
+    row = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        previous, row[0] = row[0], i
+        for j, cb in enumerate(b, 1):
+            previous, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, previous + (ca != cb))
+    return row[-1]
+
+
+def _closest(section_id: str, candidates: List[str]) -> Optional[str]:
+    """The candidate id whose slug is nearest by edit distance; the first one on a tie (D22)."""
+    wanted = section_id.split(".", 1)[-1]
+    best = None  # type: Optional[Tuple[int, int, str]]
+    for order, candidate in enumerate(candidates):
+        key = (_distance(wanted, candidate.split(".", 1)[-1]), order, candidate)
+        best = key if best is None or key < best else best
+    return best[2] if best else None
+
+
 def _marketplace_of(root: Path) -> str:
     try:
         listing = _read_json(root.parent.parent / ".claude-plugin" / "marketplace.json")
@@ -641,7 +661,7 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
     names = {m.name: m for m in modules}
     files = 0
     seen = {}  # type: Dict[str, Tuple[str, str]]  id -> (layer, module)
-    general_stems = set()
+    general_stems = {}  # type: Dict[str, List[str]]  file stem -> general section ids, in file order
     for layer in ("general", "company"):
         for module in modules:
             for rule in module.rules:
@@ -650,7 +670,7 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
                 files += 1
                 where = "%s/%s" % (module.name, rule.file)
                 if layer == "general":
-                    general_stems.add(_stem(rule.file))
+                    general_stems.setdefault(_stem(rule.file), [])
                 data = (module.root / rule.file).read_bytes()
                 ctx = RenderContext(slots=slots, rows_by_section=by_section, vars=values, module=module.name)
                 for section in split(_stem(rule.file), data):
@@ -661,7 +681,11 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
                         findings.append("duplicate rule id %s in %s and %s" % (section.id, before[1], module.name))
                     elif before is None and layer == "company" and (
                             _stem(rule.file) in general_stems or _empty_body(section.text)):
-                        findings.append("orphan override %s in %s: no lower section has that id" % (section.id, where))
+                        line = "orphan override %s in %s: no lower section has that id" % (section.id, where)
+                        nearest = _closest(section.id, general_stems.get(_stem(rule.file), []))
+                        findings.append(line + ("; closest general id %s" % nearest if nearest else ""))
+                    if layer == "general" and section.id not in general_stems[_stem(rule.file)]:
+                        general_stems[_stem(rule.file)].append(section.id)
                     if before is None or before[0] != layer:
                         seen[section.id] = (layer, module.name)
                     text, unknown = render(section.text, ctx)
