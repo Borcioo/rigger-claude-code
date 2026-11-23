@@ -236,8 +236,9 @@ class Fixture:
             raise AssertionError("assemble.py %s wrote to stderr: %r" % (args, done.stderr[:2000]))
         return done.returncode, done.stdout
 
-    def run_new(self, scenario: Scenario) -> Tuple[bytes, bytes, Path]:
-        """(--render output, the hook parts joined, config dir) of the working tree's assembler."""
+    def run_new(self, scenario: Scenario) -> Tuple[bytes, bytes, Path, bytes]:
+        """(--render output, the hook parts joined, config dir, --render output without --mark-personal) of the
+        working tree's assembler."""
         config = self.new_config(scenario)
         env = self.new_env(scenario, config)
         session = "golden-" + scenario.id.replace("_", "-")
@@ -258,6 +259,12 @@ class Fixture:
         code, rendered = self.assembler(scenario, env, render_args)
         if code != 0:
             raise AssertionError("%s exited %d" % (render_args, code))
+        plain = rendered
+        if "--mark-personal" in render_args:
+            plain_args = [arg for arg in render_args if arg != "--mark-personal"]
+            code, plain = self.assembler(scenario, env, plain_args)
+            if code != 0:
+                raise AssertionError("%s exited %d" % (plain_args, code))
 
         count = SUBAGENT_PARTS if scenario.subagent else SESSION_PARTS
         stdin = gb.hook_input(scenario.event, scenario.source, scenario.agent, session, self.project)
@@ -270,7 +277,7 @@ class Fixture:
             if code != (0 if out else 10):
                 raise AssertionError("--part %d exited %d with %d bytes" % (index, code, len(out)))
             joined += gb.decode_subagent(out) if scenario.subagent else out
-        return rendered, joined, config
+        return rendered, joined, config, plain
 
 
 FIXTURE = None  # type: Optional[Fixture]
@@ -296,14 +303,18 @@ class GoldenTest(unittest.TestCase):
     def compare(self, scenario: Scenario):
         baseline = FIXTURE.baselines[scenario.baseline_key()]
         old_roots, old = gb.normalize(baseline, scenario.subagent)
-        rendered, joined, config = FIXTURE.run_new(scenario)
+        rendered, joined, config, plain = FIXTURE.run_new(scenario)
         names = FIXTURE.root_names(scenario)
         new_roots, new = gb.normalize_render(rendered, names)
         self.assertNotIn(b"\r", rendered + joined, "CR in the assembler's output")
         self.check_preconditions(scenario, baseline, old_roots, old, config)
         self.assertEqual(new_roots, old_roots, "root-line sets differ")
         self.assertEqual(new, old, "module pieces differ")
-        if not scenario.rules_d:
+        if scenario.rules_d:
+            # Personal text carries no marker in the parts: they must give the unmarked --render, root lines aside.
+            self.assertEqual(gb.without_root_lines(joined), gb.without_root_lines(plain),
+                             "hook parts differ from the unmarked --render")
+        else:
             # The hook path: every part as Claude Code runs it, joined (personal text carries no marker).
             part_roots, from_parts = gb.normalize_render(joined, names)
             self.assertEqual(part_roots, old_roots, "root-line sets of the hook parts differ")
@@ -394,7 +405,7 @@ class GoldenTest(unittest.TestCase):
                 at = keys(expected["rigger-rules"]).index("## Tests")
                 expected["rigger-rules"][at] = ("## Tests", MINE)
                 expected[gb.HEAD] = [(gb.PREAMBLE, OVERRIDE_NOTICE)]
-                rendered, joined, _ = FIXTURE.run_new(scenario)
+                rendered, joined, _, _ = FIXTURE.run_new(scenario)
                 names = FIXTURE.root_names(scenario)
                 new_roots, new = gb.normalize_render(rendered, names)
                 self.assertEqual(new_roots, old_roots)
@@ -405,7 +416,7 @@ class GoldenTest(unittest.TestCase):
     def test_lone_root_line_is_the_only_root_difference(self):
         """D1: a handler whose every section is dropped prints a lone root line today; the assembler prints none."""
         old_roots, old = gb.normalize(FIXTURE.baselines[LONE_ROOT.baseline_key()], False)
-        rendered, joined, _ = FIXTURE.run_new(LONE_ROOT)
+        rendered, joined, _, _ = FIXTURE.run_new(LONE_ROOT)
         names = FIXTURE.root_names(LONE_ROOT)
         new_roots, new = gb.normalize_render(rendered, names)
         talk_root = "Plugin root: " + gb.root_text(FIXTURE.tree(LONE_ROOT) / "rigger-talk")

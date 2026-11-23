@@ -129,6 +129,11 @@ def lf_lines(data: bytes) -> List[bytes]:
     return [line for line in lines if line]
 
 
+def without_root_lines(data: bytes) -> bytes:
+    """`data` without its `Plugin root:` lines (split at LF only)."""
+    return b"".join(line for line in lf_lines(data) if not line.startswith(ROOT_PREFIX))
+
+
 def _pieces(stream: bytes) -> List[Tuple[str, bytes]]:
     pieces = []  # type: List[Tuple[str, bytes]]
     key, chunk = PREAMBLE, []  # type: Tuple[str, List[bytes]]
