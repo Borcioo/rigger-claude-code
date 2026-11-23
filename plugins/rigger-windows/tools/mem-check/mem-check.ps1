@@ -41,6 +41,7 @@ $fields = 'CommittedBytes', 'CommitLimit', 'AvailableBytes'
 $inv = [Globalization.CultureInfo]::InvariantCulture
 $gib = [double]1GB
 $eventSeam = $PSBoundParameters.ContainsKey('EventLimitsJson')
+$detector = 'Microsoft-Windows-Resource-Exhaustion-Detector'
 
 function Stop-NoReading([string]$why) {
   Write-Host "mem-check: no reading ($why)"
@@ -56,8 +57,9 @@ function Get-EventCommitLimits {
   if ($script:eventSeam) {
     return @($script:EventLimitsJson | ConvertFrom-Json | ForEach-Object { [long]$_ })
   }
-  # No entries makes Get-WinEvent throw; the caller falls back like for any read error.
-  $events = Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004 } -ErrorAction Stop
+  # No entries makes Get-WinEvent throw; the caller falls back like for any read error. Other providers
+  # log an Id 2004 in System too (Microsoft-Windows-Setup), without a SystemCommitLimit.
+  $events = Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004; ProviderName = $detector } -ErrorAction Stop
   foreach ($e in $events) {
     [long](([xml]$e.ToXml()).GetElementsByTagName('SystemCommitLimit')[0].InnerText)
   }

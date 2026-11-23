@@ -554,6 +554,24 @@ class FindClaude(Case):
         finally:
             os.chdir(old)
 
+    def test_a_path_entry_linked_to_the_cwd_is_never_picked(self):
+        here, other = os.path.join(self.config, "repo"), os.path.join(self.config, "bin")
+        self.plant(here)
+        installed = self.plant(other)
+        link = os.path.join(self.config, "link")
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(here, link)   # a junction needs no symlink privilege
+        else:
+            os.symlink(here, link, target_is_directory=True)
+        old = os.getcwd()
+        os.chdir(here)
+        try:
+            found = cs.find_claude({"PATHEXT": ".COM;.EXE", "PATH": os.pathsep.join([link, other])})
+        finally:
+            os.chdir(old)
+        self.assertEqual(os.path.normcase(found or ""), os.path.normcase(installed))
+
 
 class Cli(Case):
     def cli(self, *argv, config=None):

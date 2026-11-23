@@ -1029,7 +1029,8 @@ BYPASS_ROWS = [
     ("Bash", "am", "git am -n {patch}", "skips"),
     ("Bash", "am", "git am -3n {patch}", "skips"),
     ("Bash", "am", "git am -p1 -n {patch}", "skips"),
-    ("Bash", "am", "git am -p -n {patch}", "runs"),
+    # `-n` is -p's value, never --no-verify: git before 2.56 runs the hook, 2.56 refuses a non-number
+    ("Bash", "am", "git am -p -n {patch}", "never-skips"),
     ("Bash", "am", "git am --no-verify --v {patch}", "runs"),
     ("Bash", "am", "git am --directory --no-verify {patch}", "runs"),
     ("Bash", "push", "git push --no-verify origin main", "skips"),
@@ -1247,7 +1248,8 @@ def bypass_run(tree, parent, base_env, index, tool, kind, command):
              else ["pwsh", "-NoProfile", "-NonInteractive", "-Command", text])
     proc = subprocess.run(shell, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
     logged = os.path.exists(log) and BYPASS_HOOK[kind] in open(log, encoding="utf-8").read()
-    return text, repo, proc.returncode, gate_git(repo, "rev-parse", "-q", "--verify", tip, check=False) != before, logged
+    return (text, repo, proc.returncode, gate_git(repo, "rev-parse", "-q", "--verify", tip, check=False) != before, logged,
+            proc.stderr.decode("utf-8", "replace").strip()[:300])
 
 
 def bypass_runs(root):
@@ -1267,17 +1269,18 @@ def hook_bypass_checks(runs):
     """deny == the hook really stayed silent on a command git ran, row by row; nothing here is a canonical spelling alone.
     The judgement stays on this thread, in row order."""
     failed = ran = 0
-    for (tool, kind, command, effect), (text, repo, code, moved, logged) in zip(BYPASS_ROWS, runs):
+    for (tool, kind, command, effect), (text, repo, code, moved, logged, stderr) in zip(BYPASS_ROWS, runs):
         ran += 1
         seen = {"skips": code == 0 and moved and not logged, "runs": code == 0 and logged,
                 "ignored": code == 0 and logged, "refused": code != 0 and not logged,
-                "no-commit": code == 0 and not moved and not logged}[effect]
+                "no-commit": code == 0 and not moved and not logged,
+                "never-skips": (code == 0 and logged) or (code != 0 and not moved and not logged)}[effect]
         got = next((f.rule for f in shell_guard.check_git(tool, text, repo) if f.deny), None)
         want = "git-no-verify" if effect in ("skips", "ignored") else None
         if not seen or got != want:
             failed += 1
-            print("BYPASS FAIL  want=%s %s got=%s real=%s code=%s moved=%s logged=%s  %s: %r"
-                  % (effect, want, got, seen, code, moved, logged, tool, command[:100]))
+            print("BYPASS FAIL  want=%s %s got=%s real=%s code=%s moved=%s logged=%s  %s: %r  stderr: %r"
+                  % (effect, want, got, seen, code, moved, logged, tool, command[:100], stderr))
     # a run that executed no row, or lost its controls, proves nothing
     if ran != len(BYPASS_ROWS) or sum(1 for r in BYPASS_ROWS if r[3] == "skips") < 50:
         failed += 1

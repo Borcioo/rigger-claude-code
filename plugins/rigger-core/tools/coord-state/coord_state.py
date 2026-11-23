@@ -75,10 +75,10 @@ def state_path(environ):
 def find_claude(environ=os.environ):
     """`claude` from the PATH folders only: Windows Python before 3.12 also searches the cwd first, which in a
     repository would run a planted `claude.exe`. None when no PATH folder outside the cwd holds it."""
-    here = os.path.normcase(os.path.abspath(os.curdir))
+    here = os.path.normcase(os.path.realpath(os.curdir))   # resolved: a PATH entry may be a link to the cwd
     suffixes = [""] if os.name != "nt" else [s for s in environ.get("PATHEXT", ".EXE;.CMD").split(";") if s]
     for folder in environ.get("PATH", "").split(os.pathsep):
-        if not folder or not os.path.isabs(folder) or os.path.normcase(os.path.abspath(folder)) == here:
+        if not folder or not os.path.isabs(folder) or os.path.normcase(os.path.realpath(folder)) == here:
             continue
         for suffix in suffixes:
             candidate = os.path.join(folder, "claude" + suffix)

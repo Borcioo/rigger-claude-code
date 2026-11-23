@@ -649,9 +649,19 @@ def _stated(commit, command):
 
 
 def _inside(folder, top):
+    """True when `folder` is `top` or under it, compared by file identity: git prints `top` resolved, while the folder
+    may come through a link (macOS /var), in another case or as a Windows 8.3 short name."""
     try:
-        return os.path.commonpath([os.path.abspath(folder), os.path.abspath(top)]) == os.path.abspath(top)
-    except ValueError:   # another drive
+        top_stat = os.stat(top)
+        path = os.path.realpath(folder)
+        while True:
+            if os.path.samestat(os.stat(path), top_stat):
+                return True
+            up = os.path.dirname(path)
+            if up == path:
+                return False
+            path = up
+    except OSError:
         return False
 
 

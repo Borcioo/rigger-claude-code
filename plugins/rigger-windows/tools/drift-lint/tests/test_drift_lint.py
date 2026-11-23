@@ -157,8 +157,45 @@ def repo_root():
     return None
 
 
+def without_machine_commands(code, lines, environ):
+    """drift-lint's (exit code, output lines) with the main section's `command` findings dropped when GITHUB_ACTIONS
+    is `true`, the summary count and exit code following; anything else unchanged."""
+    if environ.get("GITHUB_ACTIONS") != "true":
+        return code, lines
+    kept, dropped, upstream = [], 0, False
+    for line in lines:
+        upstream = upstream or line == "## upstream copies"
+        found = FINDING.match(line)
+        if not upstream and found and found.group(3) == "command":
+            dropped += 1
+            continue
+        kept.append(line)
+    summary = re.match(r"# drift-lint: \d+ files, (\d+) findings, ", kept[-1]) if kept else None
+    if dropped and summary:
+        left = int(summary.group(1)) - dropped
+        kept[-1] = re.sub(r"\d+ findings", "%d findings" % left, kept[-1], count=1)
+        code = 1 if left else 0
+    return code, kept
+
+
+def ci_filter_checks():
+    summary = "# drift-lint: 9 files, %d findings, 0 baselined, 0 in upstream copies, 2 rules files"
+    command, path = "plugins\\p\\skills\\s\\SKILL.md:4  command  tsc", "plugins\\p\\rules\\r.md:7  repo-path  tools/x.py"
+    mixed = [command, path, summary % 2]
+    on = {"GITHUB_ACTIONS": "true"}
+    check("CI filter: on GitHub Actions a command finding is dropped, every other kind and the exit code stay",
+          without_machine_commands(1, mixed, on), (1, [path, summary % 1]))
+    check("CI filter: on GitHub Actions only command findings leave exit 0 and 0 findings",
+          without_machine_commands(1, [command, summary % 1], on), (0, [summary % 0]))
+    for label, environ in (("GITHUB_ACTIONS unset", {}), ("GITHUB_ACTIONS=false", {"GITHUB_ACTIONS": "false"})):
+        check(f"CI filter: with {label} nothing is dropped", without_machine_commands(1, mixed, environ), (1, mixed))
+
+
 def real_tree_gate(folder):
-    """The repo's own plugins against an empty home: 0 findings and files read, then one planted fake caught."""
+    """The repo's own plugins against an empty home: 0 findings and files read, then one planted fake caught.
+
+    CI exclusion: on GitHub Actions (GITHUB_ACTIONS=true) `command` findings are dropped from both runs, since they
+    say whether this machine has the tools the skills name, not whether the repo is right; every other kind stays."""
     root = repo_root()
     if root is None:
         print("# drift-lint: the real-tree gate needs the harness repo around the tool; not run")
@@ -173,7 +210,7 @@ def real_tree_gate(folder):
     def run(cwd):
         proc = subprocess.run([sys.executable, "-I", SCRIPT, "--repo", ".", "--plugins-dir", "plugins",
                                "--baseline", base], capture_output=True, timeout=120, cwd=cwd, env=env)
-        return proc.returncode, proc.stdout.decode("utf-8").splitlines()
+        return without_machine_commands(proc.returncode, proc.stdout.decode("utf-8").splitlines(), os.environ)
 
     code, lines = run(root)
     m = re.fullmatch(r"# drift-lint: (\d+) files, 0 findings, (\d+) baselined, 0 in upstream copies, (\d+) rules files",
@@ -714,6 +751,7 @@ def main():
               [(1, "skill", "nope"), (3, "skill", "nope1"), (5, "skill", "nope2"), (7, "skill", "nope3"),
                (9, "agent", "nope4"), (11, "agent", "nope5"), (13, "repo-path", "templates/nope.md")])
 
+        ci_filter_checks()
         real_tree_gate(folder)
     finally:
         for path in locked:

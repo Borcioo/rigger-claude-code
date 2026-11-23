@@ -154,7 +154,7 @@ try {
   Test-Case 'killed run leaves a backup; the next call restores the file' {
     $f = New-Fixture 'killed.txt' "guard = on`nother edit kept`n"
     # The command kills the safe-edit process itself, as a tool timeout would.
-    $kill = 'Stop-Process -Id (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId -Force'
+    $kill = 'Stop-Process -Id (Get-Process -Id $PID).Parent.Id -Force'   # Process.Parent: pwsh 7 on every OS
     $null = Invoke-SafeEdit @('-Path', $f, '-Find', 'guard = on', '-Replace', 'guard = off', '-Run', $kill, '-ExpectRan', 'x')
     Assert-Equal "guard = off`nother edit kept`n" (Read-Text $f) 'content after the kill (mutation left in place)'
     Assert-Equal $true (Test-Path -LiteralPath "$f.safe-edit-backup") 'backup left behind'
@@ -166,7 +166,7 @@ try {
 
   Test-Case 'a backup whose file changed since is refused, nothing overwritten' {
     $f = New-Fixture 'drifted.txt' "guard = on`n"
-    $kill = 'Stop-Process -Id (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId -Force'
+    $kill = 'Stop-Process -Id (Get-Process -Id $PID).Parent.Id -Force'   # Process.Parent: pwsh 7 on every OS
     $null = Invoke-SafeEdit @('-Path', $f, '-Find', 'guard = on', '-Replace', 'guard = off', '-Run', $kill, '-ExpectRan', 'x')
     [IO.File]::WriteAllText($f, "someone edited this`n", $utf8)
     $r = Invoke-SafeEdit @('-Path', $f, '-Restore')
