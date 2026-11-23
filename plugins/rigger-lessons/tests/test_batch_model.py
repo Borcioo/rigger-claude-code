@@ -184,7 +184,8 @@ class CallTests(Temp):
         self.assertEqual(len(calls), 1)
         self.assertEqual((calls[0]["stage"], calls[0]["prompt"], calls[0]["argv"]),
                          ("triage", stub_claude.TRIAGE_MARK + " α", ["-p"]))
-        self.assertEqual(os.path.normcase(calls[0]["cwd"]), os.path.normcase(str(self.tmp / "run")))
+        same = [os.path.normcase(os.path.realpath(path)) for path in (calls[0]["cwd"], str(self.tmp / "run"))]
+        self.assertEqual(same[0], same[1])   # getcwd() is resolved: macOS temp is under the /var link
         self.assertNotIn("CLAUDE_CODE_SESSION_ID", calls[0]["env"])
 
     def test_call_result_text_json(self):

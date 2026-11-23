@@ -49,6 +49,12 @@ def alive(pid: int) -> bool:
         kernel.CloseHandle(handle)
         return code.value == 259  # STILL_ACTIVE
     try:
+        # A child of this process stays a zombie until reaped, and macOS has no /proc to show the Z state
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass   # not our child: its parent reaps it
+    try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False

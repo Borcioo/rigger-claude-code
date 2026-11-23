@@ -1872,7 +1872,8 @@ def main():
     import stat
     saved = os.environ.get("SHELL_GUARD_TEST_VAR")
     os.environ["SHELL_GUARD_TEST_VAR"] = "probe"
-    root = tempfile.mkdtemp(prefix="sg-")   # junctions are made only under this folder
+    # junctions are made only under this folder; resolved, as git prints it, since TEMP may be an 8.3 short name
+    root = os.path.realpath(tempfile.mkdtemp(prefix="sg-"))
     links = []
     try:
         return run_all(root, links)

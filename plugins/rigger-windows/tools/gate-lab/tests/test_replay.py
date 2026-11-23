@@ -240,6 +240,20 @@ class StopReplay(Lab):
         self.assertIn("fires 0\n", self.cli("--gate", "stop")[1])
 
 
+class Outside(unittest.TestCase):
+    def test_temp_folders_of_each_system_are_outside(self):
+        def rooted(*parts):   # joined at runtime: a literal user or drive path is a sweep finding
+            return "/".join(parts)
+        for path in (rooted("C:", "Users", "u", "AppData", "Local", "Temp", "x", "src", "a.py"), "/tmp/x/src/a.py",
+                     "/var/folders/q2/ab12/T/x/src/a.py", "/private/var/folders/q2/ab12/T/x/src/a.py"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(replay.OUTSIDE.search(path))
+        for path in (rooted("", "Users", "u", "code", "var", "folders.py"), rooted("", "home", "u", "repo", "src", "a.py"),
+                     rooted("C:", "code", "repo", "src", "a.py")):
+            with self.subTest(path=path):
+                self.assertIsNone(replay.OUTSIDE.search(path))
+
+
 class Shadow(Lab):
     """One corpus per gate: a joined fire, a joined quiet row, and every row that must not join."""
 

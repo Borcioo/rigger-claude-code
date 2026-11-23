@@ -91,7 +91,8 @@ CLAIM = re.compile(
 )
 NEGATED = re.compile(r"\b(?:not|isn't|aren't|never|still not)\s+(?:\w+\s+)?$", re.I)
 NON_CODE = re.compile(r"\.(?:md|txt|rst|po|pot|png|jpe?g|svg|gif|webp|csv|log)$", re.I)
-OUTSIDE = re.compile(r"(?:/\.claude/|/appdata/|/temp/|/tmp/|scratchpad|/side-session-notes/)", re.I)
+OUTSIDE = re.compile(r"(?:/\.claude/|/appdata/|/temp/|/tmp/|^(?:/private)?/var/folders/|scratchpad"
+                     r"|/side-session-notes/)", re.I)
 
 
 def projects_dir():
