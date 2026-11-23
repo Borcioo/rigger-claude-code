@@ -5,11 +5,14 @@ Usage: python -I scripts/eval_suite_check.py --cases evals/CASES.md <plugin_root
 Per plugin: every case folder under <plugin_root>/evals (the results/ folder is ignored) has a
 prompt.md with graders/*.md or a case.yaml with a graders: list, only frontmatter keys the eval tool
 accepts, runs above 0, a native or wsl tag, and no shell grant unless tagged wsl; the folders and the
-rows of the plugin's table in CASES.md match one to one, at most MAX_CASES of them.
+rows of the plugin's table in CASES.md match one to one, at most MAX_CASES of them. A plugin whose
+manifest declares `dependencies` needs `plugins: ['../..', '../../deps/<dep>', ...]` in every case:
+without them the case runs with the plugin unloaded (`dependency-unsatisfied`).
 Prints one line per problem and `# cases <n>, problems <m>`; exit 1 on any problem or on 0 cases.
 """
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -24,6 +27,7 @@ YAML_ONLY_KEYS = {"prompt", "graders"}
 KEY_LINE = re.compile(r"^([A-Za-z_][\w-]*):\s*(.*)$")
 ITEM_LINE = re.compile(r"^\s*-(\s|$)")
 SHELL = re.compile(r"^(Bash|PowerShell)\b")
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")  # a plugin folder name, never a path
 
 
 def _scalar(text):
@@ -89,7 +93,34 @@ def table_cases(cases_md, plugin):
     return names
 
 
-def _check_case(d):
+def dependencies(plugin_root):
+    """(names, problem) from the plugin manifest's `dependencies`; no manifest means none."""
+    manifest = Path(plugin_root) / ".claude-plugin" / "plugin.json"
+    if not manifest.is_file():
+        return [], None
+    try:
+        deps = json.loads(manifest.read_text(encoding="utf-8")).get("dependencies", [])
+    except (OSError, ValueError, AttributeError) as err:
+        return [], f"cannot read .claude-plugin/plugin.json: {err}"
+    if not isinstance(deps, list) or not all(isinstance(d, str) and NAME.match(d) for d in deps):
+        return [], "plugin.json dependencies is not a list of names"
+    return deps, None
+
+
+def _check_plugins(name, keys, deps):
+    """A case of a plugin with dependencies loads the plugin and each dependency (staged by eval_stage.py)."""
+    if not deps:
+        return []
+    listed = keys.get("plugins", [])
+    listed = [listed] if isinstance(listed, str) else listed
+    problems = [f"{name}: does not load dependency '{d}' (plugins: needs '../../deps/{d}')"
+                for d in deps if f"../../deps/{d}" not in listed]
+    if listed and "../.." not in listed:
+        problems.append(f"{name}: plugins: does not load the plugin itself ('../..')")
+    return problems
+
+
+def _check_case(d, deps=()):
     problems = []
     prompt, yaml = d / "prompt.md", d / "case.yaml"
     if prompt.is_file():
@@ -117,7 +148,7 @@ def _check_case(d):
     tools = [tools] if isinstance(tools, str) else tools
     if any(SHELL.match(t) for t in tools) and "wsl" not in tags:
         problems.append(f"{d.name}: grants a shell but is not tagged wsl")
-    return problems
+    return problems + _check_plugins(d.name, keys, deps)
 
 
 def check_suite(plugin_root, cases_md):
@@ -125,9 +156,10 @@ def check_suite(plugin_root, cases_md):
     dirs = case_dirs(plugin_root)
     if not (Path(plugin_root) / "evals").is_dir():
         return [f"{plugin}: no evals folder"]
-    problems = []
+    deps, problem = dependencies(plugin_root)
+    problems = [f"{plugin}: {problem}"] if problem else []
     for d in dirs:
-        problems += [f"{plugin}: {p}" for p in _check_case(d)]
+        problems += [f"{plugin}: {p}" for p in _check_case(d, deps)]
     if len(dirs) > MAX_CASES:
         problems.append(f"{plugin}: {len(dirs)} cases, at most {MAX_CASES} allowed")
     rows = table_cases(cases_md, plugin)

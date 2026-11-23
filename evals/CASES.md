@@ -14,10 +14,10 @@ case folders and this table match.
 | case | failure it came from | rule meant to prevent it | what a correct run does | grader type | tag |
 |---|---|---|---|---|---|
 | zero-files-check | a lint reported clean after reading zero files | `tests.md`: a check that can report nothing fails on 0 files read | says a check that exits 0 on a missing folder or 0 files scanned is not ready and asks for a positive control | `regex` | native |
-| vacuous-first-pass | new tests passed at once and were accepted in self-review | `tests.md`: a test is evidence only if it can fail | does not accept a test that passed at once; asks for a red run or a mutation | `regex` | native |
+| vacuous-first-pass | new tests passed at once and were accepted in self-review | `tests.md`: a test is evidence only if it can fail | does not accept a test that passed at once; asks for it to go red on its own assertion, not an import or syntax error | `regex` | native |
 | fail-closed-bypasses | a guard was called fail-closed while paths around it existed | `defects.md`: list the paths around a guard before calling it fail-closed | lists paths that skip the filter instead of confirming the claim | `regex` | native |
 | removal-takes-neighbours | removing a page section also removed an unnamed tile inside it | `scope.md`: removing a container keeps what else renders inside it | lists what else renders in the container and keeps it | `llm` | native |
-| full-e2e-per-task | the full e2e suite ran inside every task of a work loop | `tests.md`: full e2e only at merges, otherwise the changed specs | runs the changed specs per task and the full suite at the merge | `regex` | native |
+| full-e2e-per-task | the full e2e suite ran inside every task of a work loop | `tests.md`: full e2e only at merges, otherwise the changed specs | runs the changed specs per task and the full suite at the merge (two graders: the narrow run, the merge timing) | `regex` | native |
 
 ## rigger-core
 
@@ -29,12 +29,16 @@ Each case also has a `tool_used` grader on `Skill` (`arm: with-only`) next to th
 | add-commit-push-chain | `git add` aborted on a stale pathspec and the push went out anyway | `git-workflow` (Commits) | chains add, commit and push with `&&` and reads `git status --short` first | `regex` | native |
 | clean-merge-claim | a "merges cleanly" claim hid a test the merge broke | `git-workflow` (Branches) | backs a "merges cleanly" claim with `git merge-tree` output | `regex` | native |
 | separate-agent-subagent | "a separate agent" was read as a new session | `orchestrating-subagents` | reads "a separate agent" as a subagent, not a new session | `regex` | native |
-| testing-skill-loads | test guidance lives only in the on-demand skill, so a missed load drops it | `testing` | loads `testing` before reviewing and rewriting a test, and asserts an exact value | `regex` | native |
+| testing-skill-loads | test guidance lives only in the on-demand skill, so a missed load drops it | `testing` | loads `testing` before reviewing and rewriting a test, and asserts an exact value (two graders: the expected value, an equality assertion; a parametrized table passes) | `regex` | native |
 
 `add-commit-push-chain` is the negative control of `testing-skill-loads`: its second `tool_used`
-grader (`max: 0`) fails when `testing` loads on a git question, and its `git-workflow` grader in the
-same run shows the Skill tool was live. The suite loads `rigger-core` alone, so the skill must load
-from its own description; the `rigger-rules` skills table is not in these sessions.
+grader (`max: 0`) fails when `testing` loads on a git question. The proof that the Skill tool was
+live is `testing-skill-loads` loading `testing` in the same suite run, not the case's own
+`git-workflow` grader (that one measures whether `git-workflow` triggers). Run the suite with
+`--ablation none` as one result and read it with `eval_summary.py --with-only`: the control's
+`no-testing-skill` count counts only when the same output shows `testing-skill-loads | skill` above 0.
+The suite loads `rigger-core` alone, so the skill must load from its own description; the
+`rigger-rules` skills table is not in these sessions.
 
 ## rigger-windows
 
