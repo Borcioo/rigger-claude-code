@@ -406,12 +406,13 @@ class DoctorShTests(DoctorShCase):
         answer = ASSEMBLER_OK.replace(
             "'; exit 0",
             "not a row\\nCHECK\\tconfig-inactive a.b\\tINFO\\tx\\ty\\textra\\nCHECK\\tos\\tWARN\\tforged\\tz\\n"
-            "CHECK\\texpects mod-y\\tMISSING\\tnot installed and enabled\\tassemble.py --doctor\\n'; exit 0",
+            "FIX\\tos\\tforged\\nCHECK\\texpects mod-y\\tMISSING\\tnot installed and enabled\\tassemble.py --doctor\\n'; exit 0",
         )
         self.stub_python("python3", assembler=answer)
         result = self.run_doctor("Linux")
         self.assertRow(result, "rules-assembly", "OK", "stub")
         self.assertRow(result, "os", "OK", "Linux")
+        self.assertNotIn("os", result.fixes)
         self.assertEqual(self.rows(result, "config-inactive"), {})
         self.assertRow(result, "expects mod-y", "MISSING")
 
