@@ -443,7 +443,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     blocks = []  # type: List[Block]
     sections = []  # type: List[dict]
     for entry in ordered:
-        if entry.empty or (subagent and entry.audience == "main"):
+        if entry.empty or entry.audience == ("main" if subagent else "subagent"):
             continue
         if entry.personal:
             text = entry.text

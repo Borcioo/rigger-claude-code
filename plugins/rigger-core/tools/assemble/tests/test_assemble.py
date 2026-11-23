@@ -154,6 +154,17 @@ class Base(unittest.TestCase):
     def text(self, found):
         return b"".join(block[1] for block in found.blocks)
 
+    def session_outputs(self, session_id):
+        """Every way a session prints rules: the six parts on startup, on compact (from the snapshot), --render."""
+        startup = self.layout.hook_input(session_id=session_id, source="startup")
+        compact = self.layout.hook_input(session_id=session_id, source="compact")
+        outputs = {"startup parts": b"".join(self.layout.part(i, stdin=startup) for i in range(1, 7))}
+        self.assertTrue((self.layout.config / "rigger" / "state" / (session_id + ".resolved.json")).is_file())
+        outputs["compact parts"] = b"".join(self.layout.part(i, stdin=compact) for i in range(1, 7))
+        outputs["render"] = self.layout.render()
+        outputs["render compact"] = self.layout.render("--source", "compact", "--session-id", session_id)
+        return outputs
+
 
 class LayerTests(Base):
     def test_layer_replace_in_place_and_append(self):
@@ -243,6 +254,17 @@ class PersonalTests(Base):
         self.assertIn(b"my tests", sub)
         self.assertNotIn(b"main words", sub)
 
+    def test_personal_override_of_a_subagent_only_section_stays_out_of_the_session(self):
+        self.layout.rules_module(**{"rules/sub.md": ("## Sub only\n\nmodule sub words\n", "subagent")})
+        self.layout.personal("sub.md", "## Sub only\n\nmy sub words\n")
+        for name, out in self.session_outputs("aud2").items():
+            self.assertNotIn(b"my sub words", out, name)
+            self.assertNotIn(b"module sub words", out, name)
+            self.assertIn(b"plan rule", out, name)  # control: the session got the other sections
+        sub = self.layout.render("--subagent")
+        self.assertIn(b"my sub words", sub)  # the replacement reaches subagents, in place of the module text
+        self.assertNotIn(b"module sub words", sub)
+
     def test_personal_layer_needs_rigger_rules(self):
         self.layout.personal("a.md", "## A\n\npersonal words\n")
         self.assertNotIn(b"personal words", self.layout.render())  # rigger-rules not discovered
@@ -328,6 +350,16 @@ class SelectionTests(Base):
         self.layout.personal("tests.md", "## Tests\n\nmy tests\n")
         for drop in ("tests.md", "## Tests", "tests.tests"):
             self.assertIn(b"my tests", self.text(self.layout.assemble(HARNESS_RULES_DROP=drop)), drop)
+
+    def test_subagent_only_section_stays_out_of_the_session(self):
+        self.layout.rules_module(**{"rules/sub.md": ("## Sub only\n\nsubagent words\n", "subagent")})
+        for name, out in self.session_outputs("aud1").items():
+            self.assertNotIn(b"subagent words", out, name)
+            self.assertIn(b"plan rule", out, name)  # control: the session got the other sections
+        stdin = self.layout.hook_input(session_id="aud1", hook_event_name="SubagentStart",
+                                       agent_type="rigger-core:worker")
+        self.assertIn(b"subagent words", self.layout.part(1, subagent=True, stdin=stdin))  # from the snapshot
+        self.assertIn(b"subagent words", self.layout.render("--subagent"))
 
     def test_subagent_audience_and_skip(self):
         self.layout.rules_module()
