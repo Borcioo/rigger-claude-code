@@ -66,7 +66,7 @@ class ManifestTests(unittest.TestCase):
             ("rules file outside", rule(file="../demo.md"), None, "rigger", None, "outside the module"),
             ("rules file absolute", rule(file="/abs.md"), None, "rigger", None, "outside the module"),
             ("rules file drive", rule(file="C" + ":/abs.md"), None, "rigger", None, "outside the module"),
-            ("rules file backslash", rule(file="rules\\..\\..\\x.md"), None, "rigger", None, "outside the module"),
+            ("rules file backslash", rule(file="\\".join(["rules", "..", "..", "x.md"])), None, "rigger", None, "outside the module"),
             ("company public", with_(layer="company"), None, "rigger", None, "company layer in the public marketplace"),
             ("config general", with_(config={"slots": {}}), None, "rigger", None, "config"),
             ("duplicate trigger", two_rows, None, "rigger", None, "duplicate trigger id"),
