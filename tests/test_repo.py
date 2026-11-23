@@ -27,11 +27,9 @@ import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-windows")
-PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules",)
-# Plugins whose rules rigger-core's part handlers print and that keep no hook of their own.
-PLUGINS_WITHOUT_HOOKS = ("rigger-talk", "rigger-wp")
-# A hooks folder without hooks.json holds only scripts that ship one more release and no hook runs.
-RETIRED_HOOK_SCRIPTS = {"rigger-talk": ["talk_start.sh"]}
+PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
+# Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
+PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
 
 
 def load_json(path):
@@ -181,6 +179,14 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertEqual(path.read_bytes(), reference)
 
+    def test_core_check_copies_identical(self):
+        copies = sorted(ROOT.glob("plugins/*/hooks/core_check.sh"))
+        self.assertEqual(sorted(path.parent.parent.name for path in copies), sorted(PLUGINS_WITH_CORE_CHECK))
+        reference = (ROOT / "plugins" / "rigger-rules" / "hooks" / "core_check.sh").read_bytes()
+        for path in copies:
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                self.assertEqual(path.read_bytes(), reference)
+
 
 HOOK_EVENTS = frozenset(
     "SessionStart UserPromptSubmit PreToolUse PostToolUse PreCompact PostCompact SubagentStart SubagentStop Stop SessionEnd".split()
@@ -297,10 +303,6 @@ class HookFileTests(unittest.TestCase):
         for folder in folders:
             with self.subTest(folder=folder.relative_to(ROOT).as_posix()):
                 path = folder / "hooks.json"
-                retired = RETIRED_HOOK_SCRIPTS.get(folder.parent.name)
-                if retired is not None:
-                    self.assertEqual(sorted(item.name for item in folder.iterdir()), retired)
-                    continue
                 self.assertTrue(path.is_file(), path)
                 if is_function_hooks(path):
                     modules = load_json(path)["modules"]
@@ -321,9 +323,6 @@ class HookFileTests(unittest.TestCase):
         for name in PLUGINS_WITH_HOOKS:
             with self.subTest(plugin=name):
                 self.assertTrue((ROOT / "plugins" / name / "hooks" / "hooks.json").is_file())
-        for name in PLUGINS_WITHOUT_HOOKS:
-            with self.subTest(plugin=name):
-                self.assertFalse((ROOT / "plugins" / name / "hooks" / "hooks.json").exists())
 
     def test_commands_use_the_plugin_root_and_call_existing_files(self):
         files = hook_files()
@@ -404,7 +403,7 @@ class HookFileTests(unittest.TestCase):
         for path in hook_files():
             plugin = path.parent.parent
             for event, _, handler in hook_handlers(path):
-                sh_only = any(name in handler["command"] for name in RULES_SCRIPTS)
+                sh_only = any(name in handler["command"] for name in RULES_SCRIPTS + ("core_check.sh",))
                 if event not in EXIT_2_BLOCKS and (plugin.name not in FAIL_OPEN_PLUGINS or sh_only):
                     continue
                 with self.subTest(hooks=path.relative_to(ROOT).as_posix(), event=event, command=handler["command"]):
@@ -510,8 +509,8 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 12)
-        self.assertEqual(names.count("core_check.sh"), 1)
+        self.assertEqual(len(names), moved + 15)
+        self.assertEqual(names.count("core_check.sh"), 4)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
@@ -519,6 +518,14 @@ class DuplicateHookTests(unittest.TestCase):
         self.assertEqual(names.count("report_shadow.py"), 1)
         self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
+
+    def test_the_core_checks_raise_no_duplicate_warning(self):
+        # One script in five plugins: rigger-core's startup check would tell the user to disable plugins.
+        found = self.plugin_handlers()
+        checks = sorted((item.source, item.event, item.matcher) for item in found if item.identity[1] == "core_check.sh")
+        self.assertEqual(checks, sorted(("plugin " + name, "SessionStart", "startup|clear")
+                                        for name in PLUGINS_WITH_CORE_CHECK))
+        self.assertEqual(harness_start.duplicate_warnings(found), [])
 
     def test_rules_print_only_through_the_core_part_handlers(self):
         found = self.plugin_handlers()

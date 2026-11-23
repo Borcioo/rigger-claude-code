@@ -10,7 +10,7 @@
       {
         "matcher": "startup|clear",
         "hooks": [
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\"", "timeout": 10 }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\" rigger-rules", "timeout": 10 }
         ]
       }
     ]

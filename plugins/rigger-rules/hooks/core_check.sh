@@ -1,14 +1,25 @@
 #!/bin/sh
-# SessionStart hook of rigger-rules: one visible line when the installed rigger-core has no assembler.
-# rigger-core prints every rules section; `claude plugin update rigger-rules@<marketplace>` alone can
-# leave an older rigger-core in the cache, and the session would then start with no rules at all.
+# SessionStart hook of every plugin whose rules rigger-core prints: one visible line when the installed
+# rigger-core has no assembler. `claude plugin update <plugin>@<marketplace>` alone can leave an older
+# rigger-core in the cache, and that plugin's rules would then be missing with no word about it.
+# Usage: sh core_check.sh <plugin name>; no name prints nothing. The same file ships in each of those
+# plugins (tests/test_repo.py checks the copies are equal); the name keeps their hooks.json commands
+# and their lines apart.
+#
+# Contract with rigger-core across releases: a core is current when it holds tools/assemble/part.sh.
 #
 # It reads <config dir>/plugins/installed_plugins.json and checks only when this plugin runs from one
-# of rigger-rules' installPath folders (a cache install), compared after pwd -P on both. A directory marketplace runs hooks from its source
-# while installPath is a stale snapshot, so there a current core would read as old: no check. Every
-# installPath whose last or second-to-last path element is rigger-core counts as a core; the line
-# prints when at least one exists and none holds tools/assemble/part.sh. A missing or unreadable
-# file prints nothing. Keep this file POSIX (dash); it needs no Python. It always exits 0.
+# of its own installPath folders (a cache install), compared after pwd -P on both. A directory
+# marketplace runs hooks from its source while installPath is a stale snapshot, so there a current core
+# would read as old: no check. Every installPath whose last or second-to-last path element is
+# rigger-core counts as a core; the line prints when at least one exists and none holds part.sh. A
+# missing or unreadable file prints nothing. Known gaps: a current core loaded with --plugin-dir next
+# to an old cached core still prints the line, and when two scopes list rigger-core any current entry
+# keeps it silent, whichever one the session loaded. Keep this file POSIX (dash); it needs no Python.
+# It always exits 0.
+
+name=${1:-}
+[ -n "$name" ] || exit 0
 
 here=${0%/*}
 [ "$here" != "$0" ] || here=.
@@ -19,39 +30,37 @@ config=${CLAUDE_CONFIG_DIR:-}
 list=$config/plugins/installed_plugins.json
 [ -f "$list" ] || exit 0
 
-# One line per Rigger installPath, "core <path>" or "rules <path>", by its last or second-to-last
-# path element: the other plugins cost no process here. The JSON escapes \\ \/ \" are undone (a value
-# holding any other escape is skipped) and a drive-letter path gets forward slashes. The file may be
-# indented or on one line.
-paths=$(awk '
-  { text = text $0 "\n" }
-  END {
-    key = "\"installPath\""
-    while ((at = index(text, key)) > 0) {
-      text = substr(text, at + length(key))
-      sub(/^[ \t\r\n]*:[ \t\r\n]*/, "", text)
-      if (substr(text, 1, 1) != "\"") continue
-      text = substr(text, 2)
+# One line per installPath of rigger-core or of this plugin, "core <path>" or "mine <path>", by its last
+# or second-to-last path element: the other plugins cost no process here. The file is one record (JSON
+# holds no raw \001) and one split() on the key keeps the scan linear in the file size; joining lines
+# instead is quadratic in mawk and busybox awk. The JSON escapes \\ \/ \" are undone (a value holding
+# any other escape is skipped) and a drive-letter path gets forward slashes. The file may be indented or
+# on one line.
+paths=$(awk -v name="$name" '
+  BEGIN { RS = "\001" }
+  {
+    count = split($0, chunk, /"installPath"[ \t\r\n]*:[ \t\r\n]*"/)
+    for (i = 2; i <= count; i++) {
+      rest = chunk[i]
+      size = length(rest)
       value = ""
       closed = 0
-      while (length(text) > 0) {
-        c = substr(text, 1, 1)
-        if (c == "\"") { closed = 1; text = substr(text, 2); break }
+      for (at = 1; at <= size; at++) {
+        c = substr(rest, at, 1)
+        if (c == "\"") { closed = 1; break }
         if (c == "\\") {
-          c = substr(text, 2, 1)
+          at++
+          c = substr(rest, at, 1)
           if (c != "\\" && c != "/" && c != "\"") break
-          text = substr(text, 3)
-        } else {
-          text = substr(text, 2)
         }
         value = value c
       }
       if (!closed || value == "") continue
       if (value ~ /^[A-Za-z]:\\/) gsub(/\\/, "/", value)
       sub(/\/+$/, "", value)
-      count = split(value, parts, "/")
-      if (parts[count] == "rigger-core" || (count > 1 && parts[count - 1] == "rigger-core")) print "core " value
-      else if (parts[count] == "rigger-rules" || (count > 1 && parts[count - 1] == "rigger-rules")) print "rules " value
+      n = split(value, parts, "/")
+      if (parts[n] == "rigger-core" || (n > 1 && parts[n - 1] == "rigger-core")) print "core " value
+      else if (parts[n] == name || (n > 1 && parts[n - 1] == name)) print "mine " value
     }
   }
 ' "$list" 2>/dev/null) || exit 0
@@ -65,7 +74,7 @@ while read -r kind path; do
       cores=$((cores + 1))
       [ ! -f "$path/tools/assemble/part.sh" ] || current=yes
       ;;
-    rules)
+    mine)
       real=$(cd "$path" 2>/dev/null && pwd -P) || continue
       [ "$real" != "$own" ] || ours=yes
       ;;
@@ -75,6 +84,6 @@ $paths
 EOF
 
 if [ "$ours" = yes ] && [ "$cores" -gt 0 ] && [ "$current" = no ]; then
-  printf '%s\n' 'Rigger rules not loaded: rigger-core is older than rigger-rules (run claude plugin update for rigger-core)'
+  printf '%s\n' "Rigger rules not loaded for $name: rigger-core is older than $name (run claude plugin update rigger-core)"
 fi
 exit 0

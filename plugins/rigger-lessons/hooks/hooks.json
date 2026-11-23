@@ -9,6 +9,12 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\" rigger-lessons", "timeout": 10 }
+        ]
       }
     ],
     "PreToolUse": [

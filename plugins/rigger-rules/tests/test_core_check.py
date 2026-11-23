@@ -1,5 +1,6 @@
-"""Tests for hooks/core_check.sh: one visible line when rigger-rules runs from its cache next to a rigger-core
-that has no assembler, and silence everywhere else. Each row runs the hooks.json command through a real sh."""
+"""Tests for hooks/core_check.sh: one visible line when a rules plugin runs from its cache next to a rigger-core
+that has no assembler, and silence everywhere else. Each row runs the plugin's own hooks.json command through a
+real sh. The same script ships in every plugin of RULES_PLUGINS; tests/test_repo.py checks the copies are equal."""
 
 import json
 import os
@@ -14,8 +15,17 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 PLUGIN = Path(__file__).resolve().parent.parent
-HOOKS_JSON = PLUGIN / "hooks" / "hooks.json"
-LINE = b"Rigger rules not loaded: rigger-core is older than rigger-rules (run claude plugin update for rigger-core)\n"
+PLUGINS = PLUGIN.parent
+# Every plugin whose rules rigger-core prints: each warns for itself when it moved past the installed core.
+RULES_PLUGINS = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
+
+
+def line(name):
+    return ("Rigger rules not loaded for %s: rigger-core is older than %s (run claude plugin update rigger-core)\n"
+            % (name, name)).encode("utf-8")
+
+
+LINE = line("rigger-rules")
 
 
 def find_sh():
@@ -25,12 +35,36 @@ def find_sh():
     return "/bin/sh"
 
 
-def check_command():
-    with open(HOOKS_JSON, encoding="utf-8") as handle:
+def check_command(plugin=PLUGIN):
+    with open(plugin / "hooks" / "hooks.json", encoding="utf-8") as handle:
         groups = json.load(handle)["hooks"]["SessionStart"]
     found = [(group, h) for group in groups for h in group["hooks"] if "core_check.sh" in h["command"]]
     assert len(found) == 1, found
     return found[0]
+
+
+def realistic_listing(size, rigger):
+    """(installed_plugins.json bytes, average bytes per other entry): `size` other plugins shaped like a live
+    Windows listing, extra keys included, then the `rigger` entries ({key: installPath})."""
+    plugins = {}
+    home = "\\".join(("C:", "Users", "someone"))
+    for index in range(size):
+        market = "marketplace-%02d" % (index % 7)
+        plugins["plugin-%03d@%s" % (index, market)] = [{
+            "scope": "user",
+            "installPath": "\\".join((home, ".claude", "plugins", "cache", market, "plugin-%03d" % index,
+                                      "1.%d.0" % (index % 9))),
+            "version": "1.%d.0" % (index % 9),
+            "installedAt": "2026-11-01T10:%02d:00.000Z" % (index % 60),
+            "lastUpdated": "2026-11-20T10:%02d:00.000Z" % (index % 60),
+            "gitCommitSha": "%040x" % (index * 7919 + 1),
+            "projectPath": "\\".join((home, "Projects", "project-%03d" % index)),
+        }]
+    others = len(json.dumps({"plugins": plugins}, indent=2).encode("utf-8"))
+    for key, path in rigger.items():
+        plugins[key] = [{"scope": "user", "installPath": path, "version": Path(path).name}]
+    text = json.dumps({"version": 2, "plugins": plugins}, indent=2, ensure_ascii=False)
+    return text.encode("utf-8"), others // size
 
 
 class CoreCheckTests(unittest.TestCase):
@@ -46,10 +80,10 @@ class CoreCheckTests(unittest.TestCase):
         self.cache = self.config / "plugins" / "cache" / "rigger"
         self.rules = self.plugin_copy(self.cache / "rigger-rules" / "945ea046f764")
 
-    def plugin_copy(self, root):
-        """rigger-rules as the cache holds it: its hooks folder and manifest under a version folder."""
-        shutil.copytree(str(PLUGIN / "hooks"), str(root / "hooks"))
-        shutil.copytree(str(PLUGIN / ".claude-plugin"), str(root / ".claude-plugin"))
+    def plugin_copy(self, root, plugin=PLUGIN):
+        """A plugin as the cache holds it: its hooks folder and manifest under a version folder."""
+        shutil.copytree(str(plugin / "hooks"), str(root / "hooks"))
+        shutil.copytree(str(plugin / ".claude-plugin"), str(root / ".claude-plugin"))
         return root
 
     def core(self, folder, assembler):
@@ -62,13 +96,18 @@ class CoreCheckTests(unittest.TestCase):
     def spelled(self, path, form):
         return Path(path).as_posix() if form == "posix" else str(path)
 
-    def listing(self, entries, minified=False, form="posix"):
-        """installed_plugins.json the way Claude Code writes it: version 2, raw non-ASCII."""
+    def listing(self, entries, minified=False, form="posix", split=False):
+        """installed_plugins.json the way Claude Code writes it: version 2, raw non-ASCII; `split` puts each
+        installPath key, its colon and its value on lines of their own, with CRLF."""
         plugins = {key: [{"scope": "user", "installPath": self.spelled(path, form), "version": Path(path).name}]
                    for key, path in entries.items()}
         data = {"version": 2, "plugins": plugins}
         text = json.dumps(data, ensure_ascii=False, separators=(",", ":")) if minified else \
             json.dumps(data, ensure_ascii=False, indent=2)
+        if split:
+            text = text.replace('"installPath": "', '"installPath"\r\n  :\r\n  "').replace("\n", "\r\n")
+            text = text.replace("\r\r\n", "\r\n")
+            self.assertEqual(text.count('"installPath"\r\n  :\r\n  "'), len(entries))
         self.write_listing(text.encode("utf-8"))
 
     def write_listing(self, data, config=None):
@@ -76,15 +115,15 @@ class CoreCheckTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
-    def run_check(self, root=None, config="set"):
-        _, handler = check_command()
+    def run_check(self, root=None, config="set", plugin=PLUGIN, command=None):
+        command = command or check_command(plugin)[1]["command"]
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
         env["HOME"] = str(self.home)
         if config == "set":
             env["CLAUDE_CONFIG_DIR"] = str(self.config)
         env["CLAUDE_PLUGIN_ROOT"] = Path(root or self.rules).as_posix()
         env["PATH"] = os.pathsep.join([str(Path(self.sh).parent), env.get("PATH", "")])
-        proc = subprocess.run([self.sh, "-c", handler["command"]], input=b'{"source":"startup"}',
+        proc = subprocess.run([self.sh, "-c", command], input=b'{"source":"startup"}',
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(self.tmp), timeout=60)
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         return proc.stdout
@@ -115,10 +154,15 @@ class CoreCheckTests(unittest.TestCase):
              {}, b""),
             ("minified one-line file", {"rigger-rules@rigger": self.rules, "rigger-core@rigger": old},
              {"minified": True}, LINE),
+            # JSON allows any whitespace around the colon; the file is scanned as a whole, not line by line.
+            ("key, colon and value on CRLF lines", {"rigger-rules@rigger": self.rules, "rigger-core@rigger": old},
+             {"split": True}, LINE),
+            ("own entry named by its last element", {"rigger-rules@x": source, "rigger-core@rigger": old},
+             {"root": source}, LINE),
         ]
         for name, entries, options, expected in rows:
             with self.subTest(row=name):
-                self.listing(entries, minified=options.get("minified", False))
+                self.listing(entries, minified=options.get("minified", False), split=options.get("split", False))
                 self.assertEqual(self.run_check(options.get("root")), expected)
 
     def test_many_other_plugins_stay_fast(self):
@@ -133,6 +177,21 @@ class CoreCheckTests(unittest.TestCase):
         started = time.monotonic()
         self.assertEqual(self.run_check(), LINE)
         self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_long_listing_stays_fast_at_two_sizes(self):
+        # A scan that copies the rest of the file per step looks fine at 100 entries and takes 3.4 s at 500:
+        # two sizes show the growth. Entries as Claude Code writes them, with Windows paths on every platform.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        for size in (100, 500):
+            with self.subTest(entries=size):
+                text, per_entry = realistic_listing(size, {"rigger-rules@rigger": self.rules.as_posix(),
+                                                           "rigger-core@rigger": old.as_posix()})
+                self.assertTrue(400 <= per_entry <= 480, per_entry)
+                self.write_listing(text)
+                started = time.monotonic()
+                out = self.run_check()
+                self.assertLess(time.monotonic() - started, 2.0)
+                self.assertEqual(out, LINE)
 
     def test_listing_cut_inside_the_core_value_prints_nothing(self):
         # Claude Code rewriting the file while another session starts: an unterminated value is no path.
@@ -201,9 +260,47 @@ class CoreCheckTests(unittest.TestCase):
         self.assertEqual(self.run_check(), LINE)
 
     def test_wiring(self):
-        group, handler = check_command()
-        self.assertEqual(group, {"matcher": "startup|clear", "hooks": [
-            {"type": "command", "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh"', "timeout": 10}]})
+        for name in RULES_PLUGINS:
+            with self.subTest(plugin=name):
+                group, _ = check_command(PLUGINS / name)
+                self.assertEqual(group, {"matcher": "startup|clear", "hooks": [
+                    {"type": "command", "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" ' + name,
+                     "timeout": 10}]})
+
+    def test_each_rules_plugin_speaks_for_itself(self):
+        # Through each plugin's own copy and hooks.json command, installed in a git cache next to the core.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        new = self.core(self.cache / "rigger-core" / "945ea046f764", assembler=True)
+        for name in RULES_PLUGINS:
+            cached = self.plugin_copy(self.cache / name / "0a1b2c3d4e5f", PLUGINS / name)
+            source = self.plugin_copy(self.tmp / "marketplace" / "plugins" / name, PLUGINS / name)
+            rows = [
+                ("old core", old, cached, line(name)),
+                ("current core", new, cached, b""),
+                # A directory marketplace runs hooks from its source; installPath is a snapshot in the cache.
+                ("directory marketplace", old, source, b""),
+            ]
+            for row, core, root, expected in rows:
+                with self.subTest(plugin=name, row=row):
+                    self.listing({name + "@rigger": cached, "rigger-core@rigger": core})
+                    self.assertEqual(self.run_check(root, plugin=PLUGINS / name), expected)
+
+    def test_two_moved_plugins_print_two_lines(self):
+        # Claude Code merges identical hook text; each line names its plugin, so both reach the session.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        windows = self.plugin_copy(self.cache / "rigger-windows" / "945ea046f764", PLUGINS / "rigger-windows")
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-windows@rigger": windows, "rigger-core@rigger": old})
+        outputs = [self.run_check(), self.run_check(windows, plugin=PLUGINS / "rigger-windows")]
+        self.assertEqual(outputs, [line("rigger-rules"), line("rigger-windows")])
+
+    def test_no_plugin_name_prints_nothing(self):
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": old})
+        self.assertEqual(self.run_check(), LINE)
+        for row, argument in (("missing", ""), ("empty", ' ""')):
+            with self.subTest(row=row):
+                command = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh"' + argument
+                self.assertEqual(self.run_check(command=command), b"")
 
 
 if __name__ == "__main__":

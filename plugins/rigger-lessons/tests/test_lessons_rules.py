@@ -48,7 +48,10 @@ class LessonsRulesTests(unittest.TestCase):
         self.assertNotIn("SubagentStart", hooks)
         self.assertEqual(hooks["SessionStart"], [{"hooks": [{
             "type": "command", "timeout": 10,
-            "command": 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" --notice "${CLAUDE_PLUGIN_ROOT}/hooks/lessons_start.py"'}]}])
+            "command": 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" --notice "${CLAUDE_PLUGIN_ROOT}/hooks/lessons_start.py"'}]},
+            {"matcher": "startup|clear", "hooks": [{
+                "type": "command", "timeout": 10,
+                "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-lessons'}]}])
 
     def test_session_prints_the_root_line_and_the_file(self):
         out = self.render()

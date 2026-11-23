@@ -30,7 +30,7 @@ SUBAGENT_FILES = [
 SKIPPED_AGENTS = ["Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper"]
 WORKTREE_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/worktree_root.sh"'
 EXTRA_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_extra.sh"'
-CORE_CHECK_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh"'
+CORE_CHECK_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-rules'
 HOSTILE = 'back\\slash "quoted" \\u0041 tab\there äöüß → ≠\ntrailing backslash\\\n"\n\\\\\n'
 
 

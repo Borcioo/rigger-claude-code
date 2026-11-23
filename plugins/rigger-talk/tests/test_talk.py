@@ -113,7 +113,13 @@ class TalkTests(unittest.TestCase):
                 self.assertNotIn("{{%s}}" % name, text)
 
     def test_no_hook_of_this_plugin_prints_the_rules(self):
-        self.assertFalse((PLUGIN / "hooks" / "hooks.json").exists())
+        # The only hook says so when rigger-core is too old to print talk.md; the rules come from the core.
+        self.assertEqual(load_json(PLUGIN / "hooks" / "hooks.json"), {"hooks": {"SessionStart": [{
+            "matcher": "startup|clear", "hooks": [{
+                "type": "command", "timeout": 10,
+                "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-talk'}]}]}})
+        self.assertEqual(sorted(path.name for path in (PLUGIN / "hooks").iterdir()),
+                         ["core_check.sh", "hooks.json", "talk_start.sh"])
 
     def test_rules_file_is_under_the_size_limit(self):
         self.assertGreater(len(RULES.read_bytes()), 1000)
