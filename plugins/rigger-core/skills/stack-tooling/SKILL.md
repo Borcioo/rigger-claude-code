@@ -83,6 +83,7 @@ Run `actionlint` before committing a workflow change, `shellcheck` on bash scrip
 | | Vitest, Jest | Vitest `sequence.shuffle`; Jest `--randomize` (within a file) |
 | Cheaper mutation runs | PHP | Infection, mutating only the files changed in the pull request |
 | | Python | mutmut (covered tests only, cached; on Windows only inside WSL) |
+| An import that matches a file only by case (`./blocks` → `Blocks.tsx` beside `blocks/`) fails | TypeScript | `tsc --noEmit` in the gate: bundlers resolve it silently on Windows and macOS and differently on Linux; `forceConsistentCasingInFileNames` (on by default) reports TS1149 |
 
 ## Open spikes (do one when you next touch that project)
 
