@@ -14,7 +14,7 @@ here=${0%/*}
 [ "$here" != "$0" ] || here=.
 own=$(cd "$here/.." 2>/dev/null && pwd -P) || exit 0
 
-# A drive-letter path with backslashes (C:\Users\...) reaches sh with forward slashes.
+# A Windows drive-letter path written with backslashes reaches sh with forward slashes.
 posix() {
   case $1 in
     [A-Za-z]:\\*) printf '%s\n' "$1" | tr '\\' '/' ;;
