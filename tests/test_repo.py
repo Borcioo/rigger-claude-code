@@ -510,7 +510,8 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 11)
+        self.assertEqual(len(names), moved + 12)
+        self.assertEqual(names.count("core_check.sh"), 1)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)

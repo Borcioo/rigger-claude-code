@@ -30,6 +30,7 @@ SUBAGENT_FILES = [
 SKIPPED_AGENTS = ["Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper"]
 WORKTREE_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/worktree_root.sh"'
 EXTRA_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_extra.sh"'
+CORE_CHECK_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh"'
 HOSTILE = 'back\\slash "quoted" \\u0041 tab\there äöüß → ≠\ntrailing backslash\\\n"\n\\\\\n'
 
 
@@ -110,9 +111,11 @@ class Base(unittest.TestCase):
 
 
 class HooksJsonTests(unittest.TestCase):
-    def test_session_start_runs_only_the_worktree_line(self):
+    def test_session_start_runs_the_worktree_line_and_the_core_check(self):
         self.assertEqual(load_hooks()["SessionStart"], [{
             "matcher": MATCHER, "hooks": [{"type": "command", "command": WORKTREE_COMMAND, "timeout": 10}],
+        }, {
+            "matcher": "startup|clear", "hooks": [{"type": "command", "command": CORE_CHECK_COMMAND, "timeout": 10}],
         }])
 
     def test_no_rules_handler_and_no_subagent_handler(self):
@@ -134,7 +137,7 @@ class HooksJsonTests(unittest.TestCase):
     def test_every_handler_is_a_forward_slash_command_with_a_timeout(self):
         hooks = load_hooks()
         handlers = [h for groups in hooks.values() for group in groups for h in group["hooks"]]
-        self.assertEqual(len(handlers), 1)
+        self.assertEqual(len(handlers), 2)
         for handler in handlers:
             self.assertEqual(handler["type"], "command")
             self.assertEqual(handler["timeout"], 10)
