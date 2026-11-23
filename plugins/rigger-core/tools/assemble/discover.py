@@ -111,7 +111,7 @@ def _directory_source(marketplaces: dict, market: str) -> Optional[str]:
 
 
 def module_root(
-    entry: dict, marketplaces: dict, key: str = "", read_listing: Callable[[str], Optional[dict]] = _listing
+    entry: dict, marketplaces: dict, key: str, read_listing: Callable[[str], Optional[dict]] = _listing
 ) -> Path:
     """Where a plugin's hooks run: a directory marketplace's source folder, else installPath (S3)."""
     name, _, market = key.rpartition("@")

@@ -338,6 +338,12 @@ class DiscoverTests(unittest.TestCase):
         outside = {"plugins": [{"name": "p", "source": "../elsewhere"}]}
         self.assertEqual(discover.module_root(entry, known, "p@m", lambda _: outside), Path(entry["installPath"]))
 
+    def test_module_root_needs_the_plugin_key(self):
+        # Without the key a directory marketplace's source folder can never be chosen; fail loudly.
+        entry = {"installPath": str(self.tmp / "cache")}
+        with self.assertRaises(TypeError):
+            discover.module_root(entry, {})
+
     def test_eval_module_dirs_file(self):
         # E1 branch B: a staged rigger-core lists the staged roots in .rigger-module-dirs.
         staged = make_plugin(self.tmp / "staged" / "rigger-rules", "rigger-rules")

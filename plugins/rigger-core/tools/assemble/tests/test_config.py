@@ -169,7 +169,6 @@ class ResolveTests(unittest.TestCase):
             "surrogate-before":{"before": "a\ud800b", "load": ["x:y"]},
             "surrogate-load": {"before": "a", "load": ["x:a\udfff"]},
             "private-use": {"before": "a\ue000b", "load": ["x:y"]},
-            "unassigned": {"before": "a\U000e0080b", "load": ["x:y"]},
             "id\ud800surrogate": {"before": "a", "load": ["x:y"]},
         }
         for row_id, row in rows.items():
@@ -187,6 +186,13 @@ class ResolveTests(unittest.TestCase):
         broken = resolve(l4={"schema": 1, "triggers": {"rigger-core.testing": {"before": "a\nb", "load": ["x:y"]}}})
         self.assertEqual(broken.effective["triggers"]["rigger-core.testing"], TESTING_ROW)
         self.assertEqual(broken.sources[("triggers", "rigger-core.testing", "before")], "L1:" + PATHS[1])
+
+    def test_emoji_newer_than_the_running_unicode_data_is_accepted(self):
+        # U+1FAE8 (Unicode 15) and U+1FAE9 (Unicode 16) are unassigned in Python 3.9's data (Unicode 13).
+        row = {"before": "shaking \U0001fae8 face, tired \U0001fae9 face", "load": ["x:y"]}
+        got = resolve(l4={"schema": 1, "triggers": {"p.emoji": row}})
+        self.assertEqual(got.notices, [])
+        self.assertEqual(got.effective["triggers"]["p.emoji"], row)
 
     def test_notice_never_carries_a_line_break_from_a_project_key(self):
         got = resolve(l4={"schema": 1, "x\n## Injected": 1, "triggers": {"y z": {"load": []}}})

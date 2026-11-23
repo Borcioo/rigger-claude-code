@@ -33,8 +33,9 @@ def write_snapshot(config_dir: Path, session_id: str, data: dict) -> Optional[Pa
     if path is None:
         return None
     try:
-        body = (json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
-    except (TypeError, ValueError):  # UnicodeEncodeError (a lone surrogate) is a ValueError
+        # ASCII escapes: a lone surrogate (a raw non-UTF-8 byte kept by surrogateescape) round-trips as \udcXX.
+        body = (json.dumps(data, ensure_ascii=True, sort_keys=True, indent=1) + "\n").encode("ascii")
+    except (TypeError, ValueError):
         return None
     temp = path.with_name("%s.%d.tmp" % (path.name, os.getpid()))
     try:
