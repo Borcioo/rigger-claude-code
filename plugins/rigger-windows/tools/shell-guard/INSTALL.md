@@ -29,7 +29,8 @@ guard. `--pwsh-all` runs both in one process, git first; the first deny wins.
 | Rule | Denies |
 |---|---|
 | `ps-git-commit-stdin` | PowerShell `git commit -F -` / `--file=-` not fed by a pipe: the here-string after it becomes a pathspec and no commit is made |
-| `git-restore-discards` | `git checkout -- <paths>`, `git checkout .`, `git checkout <words>` for each word that exists on disk (file or folder, against `git -C`, the location `cd` left, the event's `cwd`) unless it is the first word and names a commit, as in git (`git checkout feature` with a file `feature` switches branch; one `git rev-parse` runs, and a failed or timed-out one counts as a path); not `-b`/`-B`/`-d`/`--orphan`/`--detach`, and a redirect's target is no path. `git restore <paths>` (not `--staged` in any spelling git accepts down to `--st`, unless `-W`, `-SW`, `--w…` joins it; not `--ours`/`--theirs`/`-p`/`-m`): they discard every uncommitted edit in those files; intended ones (throwaway worktrees) pass with the marker |
+| `git-unreadable` | a git command whose global options or subcommand the hook cannot read (`git $x worktree remove …`, `git $(cat opts) …`): it cannot tell what git runs. A variable of known literal value is read (`$o = '-C'; git $o <repo> worktree remove …` is judged as `git -C`); an option's value (`git -C $d status`) is left to the rules |
+| `git-restore-discards` | `git checkout -- <paths>`, `git checkout .`, `git checkout <words>` for each word that exists on disk (file or folder, against `git -C`, the location `cd` left, the event's `cwd`) unless it is the first word and names a commit, as in git (`git checkout feature` with a file `feature` switches branch; one `git rev-parse` runs, and a failed or timed-out one counts as a path), and for each word the hook cannot place (a variable it cannot read, a folder it cannot follow, no `cwd`): the reason names `git switch <branch>` and `git -C <absolute path> checkout -- <file>`; not `-b`/`-B`/`-d`/`--orphan`/`--detach`, and a redirect's target is no path. `git restore <paths>` (not `--staged` in any spelling git accepts down to `--st`, unless `-W`, `-SW`, `--w…` joins it; not `--ours`/`--theirs`/`-p`/`-m`): they discard every uncommitted edit in those files; intended ones (throwaway worktrees) pass with the marker |
 | `gate-truncated-pipeline` | a pipeline that tees a full log, or executes `safe-edit.ps1` (by path, a quoted path with spaces too, `& "…"`, or as the script of `pwsh`/`powershell`/`bash`/`sh` `-File`/`-Command`/positional), cut with `Select-Object -First` (`-First:N`, `-f N`) or `head`; a script-block stage in between does not hide it |
 | `bash-backslash-collapse` | a Bash tool command holding `\\` anywhere: Git Bash's runtime turns it into `\` when it reads the command line the tool starts it with, before bash sees quotes or a heredoc, so a script or a `sed -i` edit runs with other text than written. The reason names the line and shows it as bash gets it. A single backslash passes |
 | `cli-inline-prose` | PowerShell `gh pr\|issue\|release … --body/-b/--notes/-n/--title/-t <text>` (also `--body=…`, `-b"…"`) whose text is a string opened by `"` holding `„“”`, or opened by `'` holding `‘’‚‛`: PowerShell ends the string there too, so gh gets it torn or without its quotes. Straight quotes, newlines, the other family and here-strings arrive intact and pass |
@@ -40,7 +41,7 @@ guard. `--pwsh-all` runs both in one process, git first; the first deny wins.
 | `bat-metachar` | an argument to a launcher (`php`, `php8N`, `composer`, `wp`, `phpcs`, `vendor\bin\*`) that resolves to a `.bat`/`.cmd`, looked up as PowerShell does (the first `PATH` folder with a match wins; inside it `.ps1`, then `PATHEXT` in order, so a real `php.exe` passes; a bare name found nowhere passes; a name with a folder resolves against the event's `cwd`, and is unresolved once the command changed location before the call; in PowerShell an unresolved one still counts, as the launchers are `.bat` and the hook does not expand a variable or `~` or follow every `cd`: `& "$env:USERPROFILE\…\php84"`, `~\…\php`, `.\composer` after a `Set-Location`, `vendor\bin\*`; in Bash it does not, as Git Bash starts no `.bat` by a name without its extension: `~/bin/php`, `./composer`), which cmd.exe re-parses: `^ \| & < >` outside quotes once PowerShell has put the argument on the command line (wrapped in `"…"` when it is empty or holds whitespace outside its own quotes, a `\"` not counted; its own `"` unescaped, so each `"` toggles: `'[\"a\"=>1]'` writes a file `1]`, `'a "b\|c" d'` runs `c" d"`, `'"a b"\|c'` runs `c`), or a `%NAME%` of a defined environment variable (expanded even inside quotes). The fix names the program only when that file exists here |
 | `ps-bad-parameter` | a bash flag a cmdlet rejects: `Select-String -Recurse/-B/-C/-i/-n/-E` and `-A <n>`, `ls -la`, `rm -rf`, `Where-Object -A`, `Get-Content -n`, `cd /d`, and `ls -l` with no path after it. `ls -l <path>` (`-LiteralPath`) and a bare `Select-String -A` (`-AllMatches`) run and pass |
 | `git-no-verify` | The flag: `git commit` with `--no-verify` (or a prefix down to `--no-veri`), `-n` or a cluster holding it (`-nm`, `-anm`); `git push` and `git rebase` with `--no-verify` (down to `--no-veri`); `git merge --no-verify` (the whole word: git refuses a prefix there); `git am` with `--no-verify` (down to `--no-v`), `-n` or a cluster holding it (`-3n`); the last of `--no-verify`/`--verify` winning. The word as an option's value (`-m`, `--message`, `--author`, `git rebase -x`, `git am -p`…) and `-n` on push (dry run), merge and rebase (no diffstat) pass. `git cherry-pick --no-verify` passes: git refuses it. The override, on `commit`, `push`, `merge`, `rebase`, `cherry-pick` and `am`: `git -c <key>=…` or `git --config-env[=| ]<key>=…` with `core.hooksPath`, `include.path` or `includeIf.<condition>.path`, the key compared as git compares it (section and name in any case), a path inside the repo included, and a `-c` key the hook cannot read; `GIT_CONFIG_PARAMETERS` set to anything but empty, or `GIT_CONFIG_COUNT` with a `GIT_CONFIG_KEY_<n>` below it naming such a key or unreadable, or a count that is no literal number of up to 10 digits, set in the same command (`VAR=x git`, `env VAR=x git`, `export VAR=x; git`, `$env:VAR = 'x'; git`, the name in any case). `GIT_CONFIG_PARAMETERS` is not parsed, so a harmless value is refused too. `core.hooksPath` set in repository config (`git config core.hooksPath .husky`, Husky) is not this rule's business and passes |
-| `git-worktree-junction` | `git worktree remove [--force] <path>` (git 2.53 emptied a junction's target with and without `--force`) when the tree holds a junction or volume mount point whose target is outside the tree (a `\\?\Volume{…}` target counts as outside, an unreadable one too; symbolic links do not count, git keeps their targets); found without following any, breadth first on one worker thread. A folder or entry the walk cannot read counts as an unreadable target. Also denies when the hook cannot tell the folder (a variable it cannot resolve, a relative path after a `cd` it cannot follow, no `cwd`, `git worktree list` timing out, or failing on a name that is no folder) and when the walks do not finish within the hook's budget (a folder that never answers, such as an offline share, counts as not finished; a tree of 37,760 folders takes 2.7 s through the hook): only links whose target is outside the tree matter, so list them with `Get-ChildItem <dir> -Recurse -Force -Attributes ReparsePoint \| Select-Object FullName, Target`, delete those pointing outside first, and when there are none add `# shell-guard: allow`. The path is resolved as git does: against `git -C`, the location `cd`/`Set-Location`/`Push-Location`/`Pop-Location` left in the same command, `$w = '<literal>'`, then the event's `cwd`; a relative name is first looked up among `git worktree list` by its last path components, as typed apart from ASCII case and with `\` read as `/`, in git's order, so a registered worktree wins over a plain folder of that name; one match is the tree judged (its folder gone, a prunable worktree: nothing to empty, so the hook allows), otherwise the path is (no such folder: git refuses, so the hook allows) |
+| `git-worktree-junction` | `git worktree remove [--force] <path>` (git 2.53 emptied a junction's target with and without `--force`) when the tree holds a junction or volume mount point whose target is outside the tree (a `\\?\Volume{…}` target counts as outside, an unreadable one too; symbolic links do not count, git keeps their targets); found without following any, breadth first on one worker thread. A folder or entry the walk cannot read counts as an unreadable target. Also denies when the hook cannot tell the folder (a variable it cannot resolve, a relative path after a `cd` it cannot follow, no `cwd`, `git worktree list` timing out, or failing on a name that is no folder) and when the walks do not finish within the hook's budget (a folder that never answers, such as an offline share, counts as not finished; a tree of 37,760 folders takes 2.7 s through the hook): only links whose target is outside the tree matter, so list them with `Get-ChildItem <dir> -Recurse -Force -Attributes ReparsePoint \| Select-Object FullName, Target`, delete those pointing outside first, and when there are none add `# shell-guard: allow`. The path is resolved as git does: against `git -C`, the location `cd`/`Set-Location`/`Push-Location`/`Pop-Location` left in the same command, `$w = '<literal>'`, then the event's `cwd`. A variable counts only when its value is certain (see "Variables and locations" below), and a bash word with a glob, a brace list or range or `~user` is unknown. A location change that may not run (after `&&` past its chain, after `||`, before `||`, `|` or `&`, into a folder that does not exist yet) leaves two candidate folders, and the hook judges git in each; one inside a loop, branch, function or script block leaves the location unknown from that block on; a relative name is first looked up among `git worktree list` by its last path components, as typed apart from ASCII case and with `\` read as `/`, in git's order, so a registered worktree wins over a plain folder of that name; one match is the tree judged (its folder gone, a prunable worktree: nothing to empty, so the hook allows), otherwise the path is (no such folder: git refuses, so the hook allows) |
 
 `tests/test_rules.py` proves each rule on hand-written cases and on the synthetic
 `tests/fixtures/corpus.jsonl`; `tests/test_commit_gate.py` proves the commit shadow rule on real
@@ -51,6 +52,32 @@ A leading assignment of the form `$name = …`, `[type]$name = …` or `$name +=
 the operator, does not hide the command: `$o = git commit -nm x`, `$r = bash …` and
 `$r = & '…/safe-edit.ps1' … | Select-Object -First N` are judged as the command after `=`. The other
 assignment forms still hide it (see the known gaps).
+
+Variables and locations (the git rules): a variable holds a literal only when it is assigned in a
+statement of its own (`$w = '<literal>'`, `w=<literal>`) outside every block or `( )`, after the
+start, `;` or a newline and before `;`, a newline or the end (bash also `&&`), before the command that
+reads it, and every other mention of its name is a plain read (`$w`, `"$w\x"`): a bare `w` as a word
+(`-OutVariable w`, `-OutVariable 'w'`, `+w`, `read w`, `for w in`), `foreach ($w in`, `$script:w`,
+`$w += …`, a `#` or `--%` earlier on the assignment's line, or a command that sets variables by a
+name it does not spell (`Invoke-Expression`, dot-sourcing, the `*-Variable` cmdlets, `variable:`,
+`eval`, `source`, `trap`, `let`, `printf -v`) makes it unknown; so do names bash sets itself
+(`REPLY`, `OPTARG`, `PIPESTATUS`, …) and any word split by a bash command that mentions `IFS`. A
+variable word is `$w` or `${w}`, alone or before a tail the shell keeps as text (unquoted
+PowerShell `$w=x` is two arguments and `$w.x` a member; bash drops an unquoted backslash). A splat
+(`git @a`), a bash glob, brace list or `~user`, and a word after `--%` that holds `%NAME%` are
+unknown too, as is a git option word with an unknown part (`--git-dir=$d`: bash may split it), an
+unknown option value that is one bare expansion (`$v`, `@v`, `$(…)`) unless a subcommand name follows
+it (`git -C $v`, `git -C $v README.md`, `git -C $v --force`: an array or a split word may hold the
+rest of the command), an unknown word after `git worktree`, and an
+`env` option the hook does not model (`env -S '…'`, an abbreviation, a bundle) before a `git`. A location change inside
+a loop, branch, function (`f() { … }`, `function f { … }`) or PowerShell `( )` makes the location
+unknown from that block's first command on; one that may not run (after `&&`, `||`, in a pipeline
+stage, in the background, to a missing folder) keeps both folders as candidates, judged one by one
+(at most 4). A plain `{ … }` group runs once. `builtin cd`, `command cd`, `eval`, `source`/`.`, `trap`, `coproc`,
+`Invoke-Expression`, dot-sourcing, `pushd ±N` and `popd` with an argument make it unknown; a
+module-qualified `Microsoft.PowerShell.Management\Set-Location` is followed, `env -C <dir> git`
+runs git in `<dir>`, and `cd` alone goes home. An unknown variable or folder takes the rule's
+refusal ("cannot tell").
 
 Only those two shapes of truncation are denied. `Select-Object -Last N` / `tail` read the whole
 stream, so the exit code and the red run's restore line survive; cutting a test run to read its last
@@ -66,9 +93,24 @@ Known gaps (allowed today):
   command then runs unchecked.
 - Another way to start git: `& '…\git.exe' commit -n` (any path to git), `cmd /c git …`, `pwsh -c '…'`,
   `Invoke-Expression`, `bash -c '…'`.
-- `git-restore-discards`: a checkout word the hook cannot place (a variable, a relative word after a
-  `cd` it cannot follow, no `cwd`), a pathspec glob (`git checkout '*.txt'`), `--work-tree`, pathspec
-  magic (`git checkout :/`, `':(top)README.md'`, `':/README.md'`, `HEAD ':/'`), `--pathspec-from-file=f`.
+- `git-restore-discards`: a pathspec glob (`git checkout '*.txt'`), `--work-tree`, pathspec
+  magic (`git checkout :/`, `':(top)README.md'`, `':/README.md'`, `HEAD ':/'`), `--pathspec-from-file=f`
+  (also for `git restore`), `git checkout -f` / `-f HEAD`.
+- Locations the hook does not follow: the PowerShell functions `cd..` and `cd\`, a `.ps1` run with `&`,
+  `$ExecutionContext.SessionState.Path.SetLocation(…)`, `& (Get-Command Set-Location) …`, a wildcard target
+  (`cd sr*`), a bash `{ cd …; }` group piped or sent to the background, and `CDPATH`.
+- Hooks turned off through the repository config (`git config core.hooksPath NUL`, then `git commit`), or
+  through an array before a hook-running subcommand (`git -C $v commit …` with `$v = @('.', '-c',
+  'core.hooksPath=NUL')`): refusing an unknown value there measured 13 everyday commands in 14 days.
+- `env` with an unknown option word (`env $o git …`) or a quoted `-C` (`env '-C..' git …`); `command git …`,
+  and git inside `trap '…'` or `eval '…'` in bash.
+- A variable written in a way no mention shows: `$w` changed by a function called with it (`f $w`, not
+  `[ref]`), by a script the command runs, a computed or escaped name (`printf -v "w${x}"`, `read \w`,
+  `-OutVariable "w$()"`), or `Invoke-Command -NoNewScope`.
+- The git rules: a git alias (`git -c alias.x='worktree remove' x wt`, or one set in config), an unknown
+  variable that may hold `--no-verify` (`git commit $x`), a value set in a way the hook does not read
+  (a variable inherited from the environment, a script run through a program it does not model), and
+  a command the lexer cannot follow (all rules allow it, below).
 - `bat-metachar`: `$env:PATH = …` in the same command, and a PowerShell alias or function of the
   launcher's name, are not seen by the lookup.
 - `cli-inline-prose`: `gh -R o/r pr create …` (a global flag before the subcommand hides it).
@@ -79,8 +121,8 @@ Known gaps (allowed today):
 - A command the lexer cannot follow is not judged by any rule, and PowerShell may still run it: an
   apostrophe in one of the forms below leaves the lexer an unclosed string while PowerShell reads a
   comment. Typographic quotes are read as PowerShell reads them; when that fails, the text as typed gets a
-  second pass. `$w = ‘literal’` is no literal for the git rules (a `git checkout $w` is not judged, a
-  `git worktree remove $w` is denied as unknown).
+  second pass. `$w = ‘literal’` is no literal for the git rules (`git checkout $w` and
+  `git worktree remove $w` are denied as unknown).
 - A comment glued to a value or an operator is read as code: `$a = 1# don't`, `$b[0]# don't`, `[int]# don't`,
   `$(x)# don't`, `@(1)# don't`, `Write-Output ('a')# don't`, `$a=#don't`, `$a=1,#don't`, `'a'#don't`,
   `$a = 1<# don't #>`: its apostrophe hides the rest of the command.

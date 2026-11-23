@@ -16,7 +16,7 @@ RULES = frozenset((
     "bash-backslash-collapse", "bash-cd-slash-d", "bash-msys-path-mangle", "bash-powershell-syntax", "bash-ps-call-operator", "bash-too-long",
     "bash-unquoted-backslash-path", "bash-unterminated-quote", "bash-vendor-bin-shebang", "bash-versioned-php",
     "bat-metachar", "cli-inline-prose", "gate-truncated-pipeline", "git-no-verify", "git-restore-discards",
-    "git-worktree-junction", "ps-bad-parameter", "ps-bare-bash", "ps-dotnet-relative-path", "ps-git-commit-stdin",
+    "git-unreadable", "git-worktree-junction", "ps-bad-parameter", "ps-bare-bash", "ps-dotnet-relative-path", "ps-git-commit-stdin",
     "ps-native-nonewline", "ps-unix-command", "stale-write-var",
 ))
 # `tools` entries that name a shell, and the tool name check_installed takes for it
