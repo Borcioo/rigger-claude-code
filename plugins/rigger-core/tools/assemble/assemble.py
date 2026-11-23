@@ -7,7 +7,7 @@ read) are put in front of part 1 after packing, never into the packed text.
 
 Modes, all reading CLAUDE_CONFIG_DIR, RIGGER_MODULE_DIRS, HARNESS_RULES_DROP and CLAUDE_PLUGIN_ROOT:
 
-  --part I [--subagent]       hook mode: hook JSON on stdin, prints part I; always exits 0
+  --part I [--subagent]       hook mode: hook JSON on stdin, prints part I; exits 0, or 10 when it prints nothing
   --render [--subagent] [--agent-type T] [--source S] [--session-id ID] [--mark-personal]
   --check [--modules DIR ...] exit 1 with one line per finding, else 0 with a summary line
   --doctor                    tab-separated CHECK lines in doctor.sh's format
@@ -44,6 +44,9 @@ DROP = "HARNESS_RULES_DROP"
 LAYER_RANK = {"general": 0, "company": 1, PERSONAL: 2}
 SOURCES = ("startup", "clear", "compact")
 DOCTOR = "run /rigger-core:doctor"
+# --part exits with this when it prints nothing on purpose (resume, a skipped agent, an empty part);
+# part.sh reads exit 0 with no output as a broken assembler (a file created but never filled).
+EXIT_NOTHING = 10
 LANGUAGE_DEFAULT = ("the language of Claude Code's `language` setting (the user's language when it is "
                     "unset)")
 TALK_DEFAULTS = {"reply_language": LANGUAGE_DEFAULT, "reply_lines": "5", "report_lines": "15"}
@@ -769,7 +772,7 @@ def main(argv: Optional[List[str]] = None, stdin: Optional[bytes] = None, stdout
                 data = wrap(line) if subagent else line
         out.write(data)
         out.flush()
-        return 0
+        return 0 if data else EXIT_NOTHING
     if "--render" in argv:
         out.write(_render(argv, environ))
         code = 0

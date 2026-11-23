@@ -129,7 +129,8 @@ class Layout:
     def part(self, index, subagent=False, stdin=None, **extra):
         args = ["--part", str(index)] + (["--subagent"] if subagent else [])
         code, out, err = self.cli(*args, stdin=stdin, **extra)
-        assert code == 0, (code, err)
+        # I3: a part prints nothing only on purpose, and then says so with exit status 10.
+        assert code == (10 if out == b"" else 0), (code, out[:80], err)
         return out
 
     def render(self, *args, **extra):
@@ -390,12 +391,12 @@ class OutputTests(Base):
 
         assemble.assemble = boom
         try:
-            for argv, expected in (
-                (["--part", "1"], b"rigger: rules not assembled: RuntimeError: boom (run /rigger-core:doctor)\n"),
-                (["--part", "2"], b""),
+            for argv, expected, code in (
+                (["--part", "1"], b"rigger: rules not assembled: RuntimeError: boom (run /rigger-core:doctor)\n", 0),
+                (["--part", "2"], b"", 10),
             ):
                 out = io.BytesIO()
-                self.assertEqual(assemble.main(argv, stdin=self.layout.hook_input(), stdout=out), 0)
+                self.assertEqual(assemble.main(argv, stdin=self.layout.hook_input(), stdout=out), code)
                 self.assertEqual(out.getvalue(), expected)
             out = io.BytesIO()
             self.assertEqual(assemble.main(["--part", "1", "--subagent"], stdin=b"{}", stdout=out), 0)

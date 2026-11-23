@@ -13,6 +13,7 @@ HERE = Path(__file__).resolve().parent
 CORE = HERE.parents[2]
 NO_PYTHON = b"Rigger rules not loaded: Python 3 not found (run /rigger-core:doctor)\n"
 EXITED = "Rigger rules not loaded: the assembler exited {} (run /rigger-core:doctor)\n"
+PRINTED_NOTHING = "Rigger rules not loaded: the assembler printed nothing (run /rigger-core:doctor)\n"
 COPIED = ("bin", ".claude-plugin", "rigger-module.json", "rigger-defaults.json", "agents", "skills")
 
 
@@ -69,9 +70,9 @@ class PartShTests(unittest.TestCase):
         env["PATH"] = path if path is not None else os.pathsep.join([str(Path(SH).parent), env.get("PATH", "")])
         return env
 
-    def run_part(self, *args, env=None):
+    def run_part(self, *args, env=None, stdin=None):
         done = subprocess.run([SH, posix(self.core / "tools" / "assemble" / "part.sh")] + list(args),
-                              input=self.stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              input=self.stdin if stdin is None else stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               env=env or self.env(), cwd=str(self.tmp), timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr)
         return done.stdout
@@ -97,15 +98,23 @@ class PartShTests(unittest.TestCase):
         self.assertIn(b"Plugin root: ", control)
         self.assertTrue(control.endswith(b"keep a state file\n\n"), control[-40:])
         self.assertEqual(control, direct)
+        resume = json.dumps({"cwd": str(self.tmp), "source": "resume"}).encode()
+        self.assertEqual(self.run_part("1", stdin=resume), b"")  # exit 10: nothing on purpose
         real = script.read_bytes()
-        for body, status in ((b"raise SystemExit(3)\n", 3), (None, 2)):
-            with self.subTest(status=status):
+        partial = b"import sys\nsys.stdout.write('half')\nsys.stdout.flush()\nraise SystemExit(1)\n"
+        rows = (
+            ("exit 3", b"raise SystemExit(3)\n", EXITED.format(3)),
+            ("missing", None, EXITED.format(2)),
+            ("empty file", b"", PRINTED_NOTHING),  # I3: a half-written cache exits 0 with no output
+            ("partial output then exit 1", partial, EXITED.format(1)),  # M2
+        )
+        for name, body, line in rows:
+            with self.subTest(name):
                 if body is None:
                     script.unlink()
                 else:
                     script.write_bytes(body)
                 try:
-                    line = EXITED.format(status)
                     self.assertEqual(self.run_part("1"), line.encode())
                     self.assertEqual(wrapped(self.run_part("1", "--subagent")), line)
                     self.assertEqual(self.run_part("2"), b"")
