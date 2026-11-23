@@ -309,6 +309,14 @@ class HarnessStartTests(unittest.TestCase):
             + self.warning("## Third", "other/rules/b.md"),
         )
 
+    def test_overlap_found_through_a_placeholder_heading(self):
+        # Rules text names skills by placeholder; CLAUDE.md holds the heading as the session prints it.
+        self.add_rules(OTHER, {"git.md": "## Git (procedure and naming: {{skill:rigger-core:git-workflow}})\nx\n"})
+        self.settings({})
+        rendered = "## Git (procedure and naming: `rigger-core:git-workflow`)"
+        self.claude_md(rendered + "\nmine\n")
+        self.assertEqual(self.run_hook(), self.warning(rendered, "other/rules/git.md"))
+
     def test_no_overlap_prints_nothing(self):
         self.add_rules(OTHER, {"tests.md": "## Tests\n## Plans\n"})
         self.settings({})
