@@ -176,6 +176,11 @@ Test-Case 'out-of-range parameters are refused, not run' {
   }
 }
 
+if (-not $IsWindows) {
+  Write-Host "# skipped 1 check on $([Environment]::OSVersion.Platform): Windows-only (the live read needs the CIM memory counters and the System event log)"
+}
+else {
+Write-Host "# event 2004 providers: $((Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004 } -ErrorAction SilentlyContinue | Group-Object ProviderName | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ', ')"
 Test-Case 'live read: committed and ceiling match an independent CIM and Event 2004 read' {
   $r = Invoke-MemCheck @()
   $cim = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory
@@ -194,6 +199,7 @@ Test-Case 'live read: committed and ceiling match an independent CIM and Event 2
   Assert-Equal $true ([math]::Abs((& $num $g[7].Value) - $cim.AvailableBytes / $gib) -lt 1.0) 'available within 1 GiB of the CIM read'
   Assert-Equal $true ([math]::Abs((& $num $g[5].Value) - ((& $num $g[3].Value) - (& $num $g[1].Value))) -lt 0.1) 'headroom = ceiling - committed'
   Assert-Equal ([int]((& $num $g[5].Value) -lt $min)) $r.Code 'exit code for the printed headroom'
+}
 }
 
 Write-Host ''
