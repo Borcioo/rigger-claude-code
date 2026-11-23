@@ -401,8 +401,12 @@ found=$(
 )
 first_line "$found"
 found=$line
+python_ok=
 case $found in
-  *' '[0-9]*) check python OK "$found" 'bin/py.sh, the search the hooks use' ;;
+  *' '[0-9]*)
+    python_ok=1
+    check python OK "$found" 'bin/py.sh, the search the hooks use'
+    ;;
   *)
     check python MISSING 'no Python 3.9+ found' 'bin/py.sh, the search the hooks use'
     if [ "$os" = Windows ] && command -v winget >/dev/null 2>&1; then
@@ -410,7 +414,9 @@ case $found in
     elif [ "$os" = Windows ]; then
       cmd='install Python 3.9+ from python.org'
     elif [ "$os" = macOS ] && [ -z "$clt" ]; then
-      cmd='xcode-select --install'
+      # Python 3 comes with the Command Line Tools or from Homebrew: both are named.
+      fix python 'xcode-select --install'
+      cmd='brew install python'
     elif [ "$os" = macOS ] && { command -v brew >/dev/null 2>&1 || [ -x "$fs/opt/homebrew/bin/brew" ] || [ -x "$fs/usr/local/bin/brew" ]; }; then
       cmd='brew install python'
     elif [ "$os" = macOS ]; then
@@ -555,5 +561,41 @@ elif get "$settings" /env/HARNESS_WORKTREE_ROOT && [ "$jtype" = s ] && [ -n "$jv
   check worktree-root OK "$jval" "$how_settings env"
 else
   check worktree-root OK 'unset: app setting or .claude/worktrees/' "$how_settings env"
+fi
+
+# -- rules-assembly, rule-override, expects, config-inactive (assemble.py --doctor) -----------------
+# Only the assembler's own rows pass, one whole CHECK or FIX line each; anything else leaves one WARN row.
+how_assembly='assemble.py --doctor'
+if [ -z "$python_ok" ]; then
+  check rules-assembly WARN 'not checked: no Python 3.9+' "$how_assembly"
+else
+  rows=$(
+    unset CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT
+    exec sh "$root/bin/py.sh" -S -B "$root/tools/assemble/assemble.py" --doctor </dev/null 2>/dev/null
+  )
+  status=$?
+  passed=
+  if [ "$status" -eq 0 ]; then
+    rest=$rows$nl
+    while [ -n "$rest" ]; do
+      line=${rest%%"$nl"*}
+      rest=${rest#*"$nl"}
+      case $line in
+        *"$tab"*"$tab"*"$tab"*"$tab"*"$tab"*) continue ;;
+        CHECK"$tab"rules-assembly"$tab"?*"$tab"?*"$tab"?*) passed=1 ;;
+        CHECK"$tab"rule-override\ ?*"$tab"?*"$tab"?*"$tab"?* | CHECK"$tab"expects\ ?*"$tab"?*"$tab"?*"$tab"?*) ;;
+        CHECK"$tab"config-inactive\ ?*"$tab"?*"$tab"?*"$tab"?* | FIX"$tab"expects\ ?*"$tab"?*) ;;
+        *) continue ;;
+      esac
+      printf '%s\n' "$line"
+    done
+  fi
+  if [ -z "$passed" ]; then
+    if [ "$status" -ne 0 ]; then
+      check rules-assembly WARN "not checked: assemble.py --doctor exited $status" "$how_assembly"
+    else
+      check rules-assembly WARN 'not checked: assemble.py --doctor printed no row' "$how_assembly"
+    fi
+  fi
 fi
 exit 0

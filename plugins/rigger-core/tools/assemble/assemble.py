@@ -741,15 +741,48 @@ def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
     return (1 if findings else 0), "".join(line + "\n" for line in lines).encode("utf-8", "replace")
 
 
+_FIX_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")  # a name a FIX line may carry into a pasted shell command
+
+
 def _doctor(environ: Mapping[str, str]) -> bytes:
+    """The doctor rows: rules-assembly first (WARN with the first notice that has no row of its own), then one
+    rule-override, expects and config-inactive row per finding (D11)."""
     found = assemble(_inputs(environ, {}), "main")
     modules = len([m for m in found.discovery.modules if m.origin != PERSONAL])
-    if found.notices:
-        status, detail = "WARN", found.notices[0]
+    how = "assemble.py --doctor"
+    rows = []  # type: List[Tuple[str, str, str]]
+    own = set()
+    for section in found.sections:
+        if section["layer"] == PERSONAL:
+            line = OVERRIDE.format(file=section["file"], id=section["id"])
+            if line in found.notices:
+                own.add(line)
+                rows.append(("rule-override " + _shown(section["id"]), "INFO", line[len("rigger: "):]))
+    fixes = {}  # type: Dict[str, str]
+    expects = found.resolved.effective.get("expects") if found.resolved is not None else None
+    for name in dict.fromkeys(expects if isinstance(expects, list) else ()):
+        if name not in found.discovery.enabled:
+            own.add(EXPECTS.format(name=_shown(name)))
+            row = "expects " + _shown(name)
+            rows.append((row, "MISSING", "not installed and enabled"))
+            if isinstance(name, str) and _FIX_NAME.fullmatch(name):
+                fixes[row] = "claude plugin install " + name
+    inactive = found.resolved.inactive if found.resolved is not None else {}
+    for path, source in sorted(inactive.items()):
+        key = _shown(".".join(path))
+        where = _shown(source.partition(":")[2], 300)  # L3/L4: the file; L2: the company module
+        rows.append(("config-inactive " + key, "INFO", "%s in %s: no effect in this release" % (key, where)))
+    others = [notice for notice in found.notices if notice not in own]
+    if others:
+        head = ("rules-assembly", "WARN", others[0])
     else:
-        status, detail = "OK", "modules %d, sections %d" % (modules, len(found.sections))
-    return ("CHECK\trules-assembly\t%s\t%s\tassemble.py --doctor\n" % (status, detail.replace("\t", " "))).encode(
-        "utf-8", "replace")
+        head = ("rules-assembly", "OK", "modules %d, sections %d" % (modules, len(found.sections)))
+    lines = []
+    for name, status, detail in [head] + rows:
+        lines.append("CHECK\t%s\t%s\t%s\t%s\n" % (name, status, detail.replace("\t", " "), how))
+        if name in fixes:
+            lines.append("FIX\t%s\t%s\n" % (name, fixes[name]))
+    return "".join(lines).encode("utf-8", "replace")
 
 
 def _part_index(argv: List[str]) -> int:

@@ -1,6 +1,7 @@
 """Tests for scripts/eval_stage.py: the staged copy holds the plugin and each dependency the cases load."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -9,6 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "eval_stage.py"
+PLUGINS = ROOT / "plugins"
+ASSEMBLE = PLUGINS / "rigger-core" / "tools" / "assemble"
 
 
 def write(path, text):
@@ -117,6 +120,50 @@ class StageTests(unittest.TestCase):
         write(self.plugins / "rigger-core" / ".claude-plugin" / "plugin.json", json.dumps({"name": "other"}))
         root = plugin(self.plugins, "rigger-rules", ["rigger-core"])
         self.refused(self.stage(root), "manifest names 'other'")
+
+    def test_staged_module_roots(self):
+        """E1 branch B: an eval child sees no RIGGER_MODULE_DIRS, so the staged rigger-core lists the staged roots
+        in .rigger-module-dirs, and the real discovery, run from that core, finds every staged module."""
+        sys.path.insert(0, str(ASSEMBLE))
+        self.addCleanup(sys.path.remove, str(ASSEMBLE))
+        import discover
+
+        config = Path(self._tmp.name) / "config"
+        config.mkdir()
+        # The second row names its output folder relative to the working directory: the listed roots stay absolute.
+        for target, core_rel, names, relative in (
+            ("rigger-rules", "deps/rigger-core", {"rigger-core", "rigger-rules"}, False),
+            ("rigger-core", ".", {"rigger-core"}, True),
+        ):
+            with self.subTest(target=target):
+                out = Path(self._tmp.name) / ("staged-" + target)
+                p = subprocess.run([sys.executable, "-I", str(SCRIPT), str(PLUGINS / target), out.name if relative else str(out)],
+                                   capture_output=True, text=True, encoding="utf-8", cwd=self._tmp.name)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                staged = out / target
+                core = (staged / core_rel).resolve()
+                listed = core / ".rigger-module-dirs"
+                self.assertTrue(listed.is_file(), listed)
+                listing = listed.read_bytes()
+                self.assertNotIn(b"\r", listing)
+                self.assertTrue(listing.endswith(b"\n"))
+                lines = listing.decode("utf-8").splitlines()
+                self.assertTrue(all(Path(line).is_absolute() for line in lines), lines)
+                # One line per staged root: the target and each dependency, rigger-core included.
+                self.assertEqual(sorted(os.path.realpath(line) for line in lines),
+                                 sorted({os.path.realpath(staged), os.path.realpath(core)}))
+                found = discover.discover(config, config, {}, core)
+                self.assertEqual(found.notices, [])
+                self.assertEqual({m.name for m in found.modules}, names)
+                for module in found.modules:
+                    self.assertTrue(os.path.samefile(module.root, staged if module.name == target else core), module)
+                self.assertFalse((PLUGINS / "rigger-core" / ".rigger-module-dirs").exists())
+
+    def test_no_module_dirs_file_without_rigger_core(self):
+        root = plugin(self.plugins, "mod-alone")
+        p = self.stage(root)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(list(self.out.rglob(".rigger-module-dirs")), [])
 
     def test_folder_without_manifest_is_refused(self):
         root = self.plugins / "nothing"

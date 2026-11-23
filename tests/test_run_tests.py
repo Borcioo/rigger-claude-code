@@ -154,6 +154,35 @@ class RunFileKillTests(unittest.TestCase):
         self.assertEqual(proc.kills, 1)
 
 
+class ChildEnvTests(unittest.TestCase):
+    PASSED = ("RIGGER_RULES_ROOT", "RIGGER_COORDINATE_MD", "RIGGER_CLI_HOST_MD")
+
+    def test_module_dirs_is_dropped_and_other_rigger_names_pass(self):
+        """main hands run_suite the env every test file gets; run_suite and run_file are faked, so nothing runs."""
+        seen = []
+
+        def fake_suite(groups, env, root, jobs, minimum, log, stop_at_failure=False):
+            seen.append(env)
+            return 0
+
+        def no_file(*args, **kwargs):
+            raise AssertionError("run_file called: the faked suite must run nothing")
+
+        parent = {"RIGGER_MODULE_DIRS": "/staged/a", "rigger_module_dirs": "/staged/b"}
+        parent.update({name: "/knob/" + name for name in self.PASSED})
+        with mock.patch.dict(run_tests.os.environ, parent):
+            with mock.patch.object(run_tests, "run_suite", fake_suite), mock.patch.object(run_tests, "run_file", no_file):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = run_tests.main(["--min-files", "1"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(seen), 1)
+        env = seen[0]
+        self.assertEqual([key for key in env if key.upper() == "RIGGER_MODULE_DIRS"], [])
+        for name in self.PASSED:
+            with self.subTest(name=name):
+                self.assertEqual(env.get(name), "/knob/" + name)
+
+
 class LoadRetryTests(unittest.TestCase):
     """A file that fails in the shared run is rerun alone; run_file is faked, so nothing is timed."""
 
