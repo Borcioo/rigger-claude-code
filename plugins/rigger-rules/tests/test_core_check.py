@@ -134,6 +134,41 @@ class CoreCheckTests(unittest.TestCase):
         self.assertEqual(self.run_check(), LINE)
         self.assertLess(time.monotonic() - started, 2.0)
 
+    def test_listing_cut_inside_the_core_value_prints_nothing(self):
+        # Claude Code rewriting the file while another session starts: an unterminated value is no path.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": old})
+        path = self.config / "plugins" / "installed_plugins.json"
+        data = path.read_bytes()
+        cut = data.index(b"85be9b16363b", data.index(b"rigger-core@rigger")) + 2
+        path.write_bytes(data[:cut])
+        self.assertEqual(self.run_check(), b"")
+
+    def test_a_value_with_another_json_escape_is_skipped(self):
+        # ó is not undone, so the value is skipped; read literally it would name a folder that does not exist.
+        self.core(self.cache / "xó" / "rigger-core" / "945ea046f764", assembler=True)
+        text = json.dumps({"version": 2, "plugins": {
+            "rigger-rules@rigger": [{"installPath": self.rules.as_posix()}],
+            "rigger-core@rigger": [{"installPath": (self.cache / "xó" / "rigger-core" / "945ea046f764").as_posix()}]},
+        }, ensure_ascii=False).replace("xó", "x\\u00f3")
+        self.write_listing(text.encode("utf-8"))
+        self.assertIn(b"x\\u00f3", (self.config / "plugins" / "installed_plugins.json").read_bytes())
+        self.assertEqual(self.run_check(), b"")
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlinks; Git Bash pwd -P does not resolve a Windows link the same way")
+    def test_config_reached_through_a_symlink_prints_the_line(self):
+        # A dotfiles ~/.claude that links elsewhere: the hook runs from the link spelling, installPath names the target.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        link = self.tmp / "linked config"
+        link.symlink_to(self.config, target_is_directory=True)
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": old})
+        through_link = link / self.rules.relative_to(self.config)
+        self.assertEqual(self.run_check(root=through_link), LINE)
+
+    def test_the_assembler_path_it_probes_exists_in_rigger_core(self):
+        # rigger-rules probes this path in whatever rigger-core is installed: renaming it in core breaks the check.
+        self.assertTrue((PLUGIN.parent / "rigger-core" / "tools" / "assemble" / "part.sh").is_file())
+
     def test_one_current_core_entry_is_enough(self):
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
         new = self.core(self.cache / "rigger-core" / "945ea046f764", assembler=True)
