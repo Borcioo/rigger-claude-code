@@ -86,6 +86,7 @@ LOG_FOLDER = "harness-tests"
 # Wall-time budgets, live machine readings, or hundreds of process trees close to TIMEOUT: another
 # file's load fails them.
 SERIAL = (
+    "plugins/rigger-core/tools/assemble/tests/test_stub_session.py",
     "plugins/rigger-rules/tests/test_reinject.py",
     "plugins/rigger-windows/tools/mem-check/mem-check.tests.ps1",
     "plugins/rigger-windows/tools/shell-guard/tests/test_rules.py",
