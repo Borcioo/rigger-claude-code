@@ -1,5 +1,4 @@
 ## State file for long sessions
-Only the user's orchestrator session sets `coordinator: true`, never a side session.
 - **Long sessions keep a state file; they never hand off.** Main session only (subagents never
   write one). From the first task boundary of a plan, or at the context-guard reminder, keep
   `<config dir>/state/<CLAUDE_CODE_SESSION_ID>.md` (`CLAUDE_CONFIG_DIR`, else
@@ -11,10 +10,6 @@ Only the user's orchestrator session sets `coordinator: true`, never a side sess
   before a step that must not be cut (a merge, a multi-file edit, a migration). Compaction waits
   for `true` (up to a hard cap); after it, continue from Next step without asking or writing a
   handoff.
-  A coordinator rewrites the file with `true` before every turn end in which it waits for
-  a side session or an agent, and sets `false` only around such a step, back to `true` right after.
-  A coordinator's running sessions are the output of the `show` call of
-  `/rigger-core:coordinate`, not memory.
 - **The state file stays under 9 000 characters,** all that comes back after compaction.
   `## Next step` is the first section: rewrite it, never append to it, at most ~15 lines. History
   goes to `<session id>.log.md` next to it, linked

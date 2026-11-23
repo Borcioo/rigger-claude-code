@@ -17,14 +17,12 @@
   once per branch up to 5 per check, the rest listed in the report; there only, a surviving mutant
   nothing relies on gets no test but is listed with why. Everything else gets one test per
   behaviour a user would notice and one red run per test. A brief or report names which checks it
-  treated as full. These rules replace the TDD skill's checklist, whole-suite and delete-first
-  steps where they differ.
+  treated as full.
 - Tests check the requirement; they do not define it. Never special-case or hard-code to pass one;
   a test you believe is wrong is reported, not worked around. Never get to green by weakening a
   test: removing, loosening or skipping one needs a reason in the report, with the test-dir diff.
 - Anything that can report "nothing" (a leak check, a sweep, a lint, an audit, an aggregate, an
   eval score, an exclusion pattern) fails on 0 files read or a missing input and gets a positive
   control it must catch; a diagnostic or a spike gets an input whose answer you already know.
-- Time in a test is pinned (a frozen clock, timing-sorted output compared as a set).
 - A "test" on the real code path writes real data: before running one against a shared database,
   site or device, check what it writes and force its dry-run flag.

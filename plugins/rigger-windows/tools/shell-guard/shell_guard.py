@@ -276,6 +276,7 @@ class BashLexer:
         def end_cmd(op, pos):
             nonlocal words, last_sig, wrote
             end_word()
+            ended = bool(words)   # a newline after a whole command ends it; one right after `|` or `&&` does not
             if words:
                 if last_sig in ("|", "|&"):
                     self.piped.add(words[0].start)
@@ -288,7 +289,7 @@ class BashLexer:
                     self.empty_op = (op, pos)
             words = []
             wrote = False
-            if op != "\n" or last_sig not in ("&&", "||", "|", "|&"):
+            if op != "\n" or ended or last_sig not in ("&&", "||", "|", "|&"):
                 last_sig = op
 
         while i < n:
@@ -452,7 +453,7 @@ def bash_command_words(words):
     while k < len(words):
         v = words[k].raw
         if v in BASH_RESERVED:
-            k += 1
+            k += 2 if v == "function" else 1   # `function f { cd x; }`: the name is no command
             continue
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=", v):
             env.append(v)
@@ -480,11 +481,15 @@ def _closes_block(s, i):
 
 
 class PsLexer:
-    def __init__(self, src):
+    def __init__(self, src, nested=False):
         self.s = src
         self.n = len(src)
         self.commands = []   # list of lists of (raw, value, quoted)
         self.errors = []
+        # start offsets of commands that may run never or more than once: inside `{ }` (a loop, a branch, a
+        # function, a script block) or a `( )` / `$( )` (it can sit behind `-and`, in a loop's condition)
+        self.nested = set()
+        self._all_nested = nested
         self.piped = set()   # start offsets of commands that a single `|` feeds
         # start offset of a piped command -> start offset of the stage feeding it; a stage that
         # takes a script block (`ForEach-Object { ... }`) feeds the next `|`, not its block body
@@ -493,9 +498,10 @@ class PsLexer:
 
     def _sub(self, i):
         """i just after '$(' or '@(' or '(' ; returns index after matching ')'."""
-        sub = PsLexer(self.s)
+        sub = PsLexer(self.s, nested=True)
         j = sub._lex(i, stop=")")
         self.commands.extend(sub.commands)
+        self.nested |= sub.nested
         self.errors.extend(sub.errors)
         self.piped |= sub.piped
         self.feeds.update(sub.feeds)
@@ -563,6 +569,7 @@ class PsLexer:
         def end_cmd(op):
             nonlocal words, pipe_pending, last_stage, last_sig
             end_word()
+            ended = bool(words)   # a newline after a whole command ends it; one right after `|` or `&&` does not
             if words:
                 if pipe_pending:
                     self.piped.add(words[0][3])
@@ -571,9 +578,11 @@ class PsLexer:
                     pipe_pending = False
                 self.after[words[0][3]] = last_sig
                 self.commands.append(words)
+                if brace or self._all_nested:
+                    self.nested.add(words[0][3])
                 last_stage = words[0][3]
             words = []
-            if op != "\n" or last_sig not in ("&&", "||", "|"):
+            if op != "\n" or ended or last_sig not in ("&&", "||", "|"):
                 last_sig = op
 
         while i < n:
@@ -1058,7 +1067,9 @@ def _checkout_paths(args, literal, base):
     paths = []
     for n, (word, text) in enumerate(words):
         full = _abs(text, base)
-        if full is not None and os.path.exists(full) and not (n == 0 and _git_is_commit(base, text)):
+        if full is None:   # a word or a folder the hook cannot read may name a file: counted as one
+            paths.append(word)
+        elif os.path.exists(full) and not (n == 0 and _git_is_commit(base, text)):
             paths.append(word)
     return paths
 
@@ -1128,6 +1139,8 @@ HOOK_FLAGS = {
     "am": (6, 3, "n", "Cp", "S", AM_VALUE_LONG),
 }
 HOOK_COMMANDS = set(HOOK_FLAGS) | {"cherry-pick"}
+# A word that is one expansion and nothing else: a PowerShell array or a bash field list may stand there.
+WHOLE_EXPANSION = re.compile(r"^(?:[$@]\{?\w+\}?(?:\.\w+|\[[^\]]*\])*|\$?\(.*\)|`.*`)$", re.S)
 # In a config key: a variable, a substitution, an expression or an escape only the shell resolves.
 UNREADABLE_KEY = re.compile(r"[$`(\\]")
 
@@ -1449,7 +1462,43 @@ def rule_git(tool, args, piped, literal=None, loc=None, env=None):
     """Rules for one `git ...` command; args are the argument values after `git`, literal their literal
     text (None for an unknown variable), loc the shell's location, and env what the same command put in the
     environment (git_env_override)."""
+    literal = literal or list(args)
+    i = 0   # git's own options and the subcommand are read from their literal text: `$o = '-C'; git $o ...`
+    while i < len(args):
+        if literal[i] is None:
+            return Finding(
+                "git-unreadable", True,
+                "The hook cannot tell what `git` runs here: `%s` stands before the subcommand and is a variable or "
+                "an expression it cannot read, so `worktree remove` or `checkout` would go unchecked. Write git's "
+                "options and the subcommand literally." % args[i])
+        args = args[:i] + [literal[i]] + args[i + 1:]
+        if literal[i] in GIT_OPTS_WITH_VALUE:
+            # an array or a split word may hold options and a subcommand: only a literal subcommand name may follow
+            # it (what such a value slips in then gets that name as an extra argument; a path, an option or `--`
+            # would complete it)
+            # bash splits any unquoted expansion; PowerShell builds one string unless the word is a bare expansion
+            # or a list
+            value = args[i + 1] if i + 1 < len(args) else ""
+            many = tool == "Bash" or WHOLE_EXPANSION.match(value) or "," in value
+            if literal[i + 1:i + 2] == [None] and many and not (
+                    i + 2 < len(args) and literal[i + 2] is not None and re.match(r"^[a-z][a-z-]*$", literal[i + 2])):
+                return Finding(
+                    "git-unreadable", True,
+                    "The hook cannot tell what `git` runs here: the value `%s` of `%s` is a variable or an expression "
+                    "it cannot read, and an array or a split word can carry the subcommand too, so `worktree "
+                    "remove` or `checkout` would go unchecked. Write the value literally (`git -C <path> ...`)."
+                    % (args[i + 1], literal[i]))
+            i += 2
+        elif literal[i].startswith("-"):
+            i += 1
+        else:
+            break
     sub, rest = git_subcommand(args)
+    if sub == "worktree" and rest and literal[len(args) - len(rest)] is None:
+        return Finding(
+            "git-unreadable", True,
+            "The hook cannot tell what `git worktree` runs here: `%s` is a variable or an expression it cannot "
+            "read, so a `remove` would go unchecked. Write the worktree subcommand literally." % rest[0])
     if sub in HOOK_COMMANDS:
         override = git_config_override(args, literal or [None] * len(args)) or git_env_override(env or {})
         if override:
@@ -1482,6 +1531,14 @@ def rule_git(tool, args, piped, literal=None, loc=None, env=None):
         words = literal or [None] * len(args)
         base, i = _git_base(args, words, loc)
         paths = git_restore_paths(sub, rest, words[i + 1:], base)
+        unknown = [a for a, t in zip(rest, words[i + 1:]) if a in paths and _abs(t, base) is None]
+        if sub == "checkout" and unknown and "--" not in rest:
+            return Finding(
+                "git-restore-discards", True,
+                "The hook cannot tell whether `%s` names a file here (a variable, or a folder it cannot follow), and "
+                "`git checkout` on a file throws away every uncommitted edit in it. Switch branches with `git switch "
+                "<branch>`; restore a file by its literal path from a folder the hook can follow (`git -C <absolute "
+                "path> checkout -- <file>`), or add the marker below when discarding is intended." % unknown[0])
     if paths:
         return Finding(
             "git-restore-discards", True,
@@ -1497,56 +1554,307 @@ CD_NAMES = {"cd", "chdir", "set-location", "sl", "push-location", "pushd"}
 POP_NAMES = {"pop-location", "popd"}
 LOCATION_NAMES = CD_NAMES | POP_NAMES
 LOCATION_AND_GIT = LOCATION_NAMES | {"git", "git.exe"}
-# `$name = 'literal'` / `name='literal'`: the one value a variable holds when nothing else assigns it
-PS_ASSIGN = re.compile(r"\$(?:script:|global:|local:)?(\w+)\s*((?:[-+*/%]|\?\?)?)=(?!=)", re.I)
 PS_LITERAL_RHS = re.compile(r"""\s*(?:'((?:[^']|'')*)'|"([^"$`]*)")\s*(?=[;\r\n|)}]|$)""")
-BASH_ASSIGN = re.compile(r"""(?:^|[\s;&|(])(\w+)=(?:'([^']*)'|"([^"$`]*)"|([^\s;&|()'"$`<>]*))""")
-BASH_WORD_END = " \t\r\n;&|)<>"
-VAR_WORD = re.compile(r"""^"?\$\{?(\w+)\}?([^$`"]*)"?$""")
+PS_LITERAL_ASSIGN = re.compile(r"""\$(\w+)[ \t]*=[ \t]*(?:'((?:[^']|'')*)'|"([^"$`]*)")""")
+BASH_ASSIGN_WORD = re.compile(r"^([A-Za-z_]\w*)=([^$`]*)$")
+# A word that is one variable, alone or before a literal tail: `$w`, `"${w}"`, `"$w\x"`. The tail must start
+# with a character the shell keeps as text there (TAIL_START, read in the spike: unquoted PowerShell splits
+# `$w=x` into two arguments and reads `$w.x` as a member, `"$w:x"` names another variable); anything else
+# (`$w[0]`, `${w:-x}`, `"${w}..\x"`) makes the word unknown.
+VAR_WORD = re.compile(r"""^("?)\$(?:\{(\w+)\}|(\w+))([^$`"]*)\1$""")
+TAIL_START = {("PowerShell", ""): "\\/+@%^~-", ("PowerShell", '"'): "\\/+@%^~-=,.",
+              ("Bash", ""): "/=,+@%^~-.:", ("Bash", '"'): "\\/=,+@%^~-.:"}
+# Assigning these does not leave the value read back: read-only, constant or set by the shell itself.
+BASH_SPECIAL_VARS = {
+    "BASHOPTS", "BASHPID", "BASH_ARGC", "BASH_ARGV", "BASH_ARGV0", "BASH_COMMAND", "BASH_LINENO", "BASH_SOURCE",
+    "BASH_SUBSHELL", "BASH_VERSINFO", "EPOCHREALTIME", "EPOCHSECONDS", "EUID", "FUNCNAME", "GROUPS", "HISTCMD",
+    "LINENO", "OLDPWD", "PPID", "PWD", "RANDOM", "SECONDS", "SHELLOPTS", "SRANDOM", "UID", "_",
+    # written by builtins that do not name them: read, select, mapfile, getopts, coproc, [[ =~ ]], a pipeline
+    "IFS", "REPLY", "MAPFILE", "OPTARG", "OPTIND", "COPROC", "BASH_REMATCH", "PIPESTATUS"}
+BASH_OPENERS = {"if", "while", "until", "for", "select", "case", "{"}
+BASH_CLOSERS = {"fi", "done", "esac", "}"}
+BASH_REDIRECT = re.compile(r"(?:\d+|&)?(?:>>?|<<<|<<-?|<>|<|>&|<&|>\|)[ \t]*(?:[^\s;&|()<>]+)?")
+NEXT_OP = ("&&", "||", "|&", ";;", "\r\n", "|", "&", ";", "\n", ")", "}")
+STRAIGHT_BEFORE = (None, ";", "\n", "(")   # the operator before a command that runs exactly once, in order
 PS_ENV_ASSIGN = re.compile(r"^\$(?:\{env:(\w+)\}|env:(\w+))\s*((?:\+|\?\?)?=)\s*(.*)$", re.I | re.S)
 ENV_NAME = re.compile(r"^(?:.*[\\/])?env(?:\.exe)?$", re.I)
 ENV_VALUE_OPTS = {"-u", "--unset", "-C", "--chdir"}
+ENV_FLAGS = {"-i", "--ignore-environment", "-0", "--null", "-v", "--debug", "-", "--", "--help", "--version"}
 BASH_EXPORTS = {"export", "declare", "typeset"}
 
 
-def _literal_vars(cmd, shell):
-    """{lowercase name: value} for variables this command assigns only from one literal."""
-    vals, other = {}, set()
+def _var_key(name, shell):
+    """A variable's name as the shell compares it: PowerShell ignores case, bash does not."""
+    return name.lower() if shell == "PowerShell" else name
+
+
+def _word_end(lex, word):
+    """Offset just after a word in the lexed text, or None when its raw text is not that span (a line
+    continuation inside it, a backtick body's mapped offsets)."""
+    raw, start = (word[0], word[3]) if isinstance(word, tuple) else (word.raw, word.start)
+    return start + len(raw) if lex.s[start:start + len(raw)] == raw else None
+
+
+def _op_after(lex, words, shell):
+    """The operator that ends a command (`&&`, `;`, a newline, `)`, ...), None at the end of the text, "?" when
+    the text after its last word cannot be read."""
+    s, i = lex.s, _word_end(lex, words[-1])
+    if i is None:
+        return "?"
+    while True:
+        while i < len(s) and s[i] in " \t":
+            i += 1
+        m = BASH_REDIRECT.match(s, i) if shell == "Bash" else None
+        if m and m.end() > i:   # the bash lexer keeps no redirect in the words
+            i = m.end()
+            continue
+        break
+    if i >= len(s):
+        return None
+    if s[i] == "#":
+        return "\n"
+    return next((op for op in NEXT_OP if s.startswith(op, i)), "?")
+
+
+def _bash_depths(lex):
+    """Per command, True when it sits inside a compound command (`if`/`while`/`until`/`for`/`select`/`case`,
+    a function body) opened inside its innermost subshell or substitution body: it may run never or more than
+    once. A plain `{ }` group runs once and does not count."""
+    out = []
+    stack, entering, after = [], [], []   # stack: True for a block, False for a plain `{ }` group (runs once)
+    for words in lex.commands:
+        entering.append(sum(stack))
+        for i, w in enumerate(words):
+            if w.raw in BASH_OPENERS:
+                stack.append(not (w.raw == "{" and i == 0 and lex.after.get(words[0].start) != ")"))
+            elif w.raw in BASH_CLOSERS:
+                stack = stack[:-1]
+            elif w.raw not in BASH_RESERVED and not (i == 1 and words[0].raw == "function"):
+                break
+        after.append(sum(stack))
+    # a subshell or substitution body starts from the same place each time it runs: count from its start
+    for k in range(len(lex.commands)):
+        inner = max((first for first, end in lex.bodies if first <= k < end), default=None)
+        out.append(after[k] > (entering[inner] if inner is not None else 0))
+    return out
+
+
+def _views(lex, shell):
+    """(index, start, op before, nested, assignment words, name or None, argument words) per command; a word
+    is (raw, value, start). Nested: it may run never or more than once."""
     if shell == "PowerShell":
-        for m in PS_ASSIGN.finditer(cmd):
-            name, rhs = m.group(1).lower(), PS_LITERAL_RHS.match(cmd, m.end())
-            if rhs is None or m.group(2):   # computed, or a compound assignment (`+=`, `??=`)
-                other.add(name)
-                continue
-            v = rhs.group(1).replace("''", "'") if rhs.group(1) is not None else rhs.group(2)
-            if vals.setdefault(name, v) != v:
-                other.add(name)
+        for k, words in enumerate(lex.commands):
+            start = words[0][3]
+            n, name = ps_command_name(words)
+            args = [] if name is None else [(w[0], w[1], w[3]) for w in words[n + 1:]]
+            yield k, start, lex.after.get(start), start in lex.nested, [], name, args
+        return
+    depths = _bash_depths(lex)
+    for k, words in enumerate(lex.commands):
+        env, cw = bash_command_words(words)
+        assigns = [(w.raw, w.value, w.start) for w in words[:len(words) - len(cw)] if w.raw not in BASH_RESERVED]
+        args = [(w.raw, w.value, w.start) for w in cw[1:]]
+        yield k, words[0].start, lex.after.get(words[0].start), depths[k], assigns, cw[0].value if cw else None, args
+
+
+PS_ASSIGN_AFTER = re.compile(r"(?:\s*,\s*\$[\w:{}]+)*\s*(?:[-+*/%]|\?\?)?=(?!=)|\+\+|--")
+MAX_MENTIONS = 400   # past this many `$`, no variable is read: the scans below grow with the square of the text
+
+
+def _plain_reads(cmd, shell):
+    """Offsets of the names in `$name` / `${name}` mentions that only read the variable: not after `]` (a cast,
+    `[ref]`) or an escape, not before an assignment or `++`/`--` (also as one of `$a, $b = ...`), and in bash
+    not a `${name...}` with an operator."""
+    reads = set()
+    for m in re.finditer(r"(?<![`\\])\$(\{)?(\w+)(\})?", cmd):
+        if m.group(1) and not m.group(3):
+            continue   # `${w:=x}`, `${w=x}`: an operator inside the braces
+        j = m.start() - 1
+        while j >= 0 and cmd[j] in " \t":
+            j -= 1
+        if j >= 0 and cmd[j] == "]":
+            continue   # a cast: `[ref]$w`, `[ref] $w`
+        if shell == "PowerShell" and m.group(1) is None and cmd[m.end():m.end() + 1] == ":":
+            continue   # `$w:x` is the variable `x` of drive or scope `w`
+        if shell == "PowerShell" and PS_ASSIGN_AFTER.match(cmd, m.end()):
+            continue   # bash never assigns through a `$` mention
+        reads.add(m.start(2))
+    return reads
+
+
+PS_VAR_WRITERS = {"set-variable", "sv", "set", "new-variable", "nv", "clear-variable", "clv", "remove-variable", "rv",
+                  "get-variable", "gv", "invoke-expression", "iex"}
+BASH_CODE_RUNNERS = {"eval", "source", ".", "trap", "let"}
+BASH_VAR_WRITERS = {"declare", "typeset", "local", "readonly", "export", "read", "mapfile", "readarray", "getopts",
+                    "unset"}
+COMPUTED_WORD = re.compile(r"""^["']?(?:\$|`)""")
+
+
+def _writes_vars_by_name(lex, shell):
+    """True when the command may set a variable without naming it as a word: it runs text as code in this shell
+    (`Invoke-Expression`, dot-sourcing, `eval`, `source`, `trap`), uses PowerShell's variable cmdlets, drive or
+    API (names may be wildcards or built at run time), or gives a bash builtin that sets variables a name it
+    computes (`printf -v "$n"`)."""
+    if shell == "PowerShell":
+        if re.search(r"(?i)variable:|psvariable|sessionstate", lex.s):
+            return True
+        return any(words[0][0] == "." or (ps_command_name(words)[1] or "").lower() in PS_VAR_WRITERS
+                   for words in lex.commands)
+    for words in lex.commands:
+        _, cw = bash_command_words(words)
+        if not cw:
+            continue
+        name, args = cw[0].value, cw[1:]
+        if name in BASH_CODE_RUNNERS or (name in BASH_VAR_WRITERS and any(COMPUTED_WORD.match(w.raw) for w in args)):
+            return True
+        if name == "printf" and any(w.value == "-v" and (i + 1 >= len(args) or COMPUTED_WORD.match(args[i + 1].raw))
+                                    for i, w in enumerate(args)):
+            return True
+    return False
+
+
+def _bare_text(lex, shell, skip=()):
+    """The unquoted text of every word but those starting at an offset in skip, one word per line, with each
+    `$name` / `${...}` mention blanked: where a bare variable name can stand as a word."""
+    if shell == "PowerShell":
+        quoted = re.compile(r"""@'.*?\n'@|@".*?\n"@|'(?:[^']|'')*'|"(?:[^"`]|`.|"")*"|`.""", re.S)
+        words = [(w[0], w[1]) for c in lex.commands for w in c if w[3] not in skip]
     else:
-        for m in BASH_ASSIGN.finditer(cmd):
-            name = m.group(1).lower()
-            v = next(g for g in m.groups()[1:] if g is not None)
-            # A right side that goes on past the match (`$(`, a backtick, `a$b`) is unknown, not what matched.
-            if vals.setdefault(name, v) != v or cmd[m.end():m.end() + 1] not in BASH_WORD_END:
-                other.add(name)
-    return {k: v for k, v in vals.items() if k not in other}
+        quoted = re.compile(r"""\$'(?:[^'\\]|\\.)*'|'[^']*'|"(?:[^"\\]|\\.)*"|\\.""", re.S)
+        words = [(w.raw, w.value) for c in lex.commands for w in c if w.start not in skip]
+    lines = [re.sub(r"\$\{[^}]*\}?|\$[\w:]+", " ", quoted.sub(" ", raw)) for raw, _ in words]
+    # a quoted word that is a name and nothing else can name the variable: `-OutVariable 'w'`, `Set-Variable "w"`
+    lines += [value for raw, value in words if raw[:1] in "'\"" and re.match(r"^\+?[A-Za-z_]\w*$", value)]
+    return "\n".join(lines)
 
 
-def _literal_word(raw, value, shell, vars_, loc):
-    """The literal text a word passes, with `$PWD`/`$HOME`/literal variables filled in; None if unknown."""
+def _literal_vars(cmd, shell, lex):
+    """{name as the shell compares it: (value, offset after its assignment)} for each variable that holds one
+    literal for certain. Every mention of its name in the text (as a word anywhere: `$w`, `${w}`, `w` in
+    `-OutVariable w`, `foreach ($w in`, a string, a comment) is either a certain assignment or a plain read
+    (_plain_reads), and PowerShell binds it nowhere (`foreach ($w in`, `param($w)`). A certain assignment is a
+    statement of its own from a literal, outside every block, run exactly once in order (after the start, `;`
+    or a newline; before `;`, a newline, the end or, in bash, `&&`), to a name the shell does not own; in
+    PowerShell with no `#` or `--%` before it on its line and no bare CR in the command, where the hook's lexer
+    and PowerShell may read the text apart. `$PWD` and `$HOME` count when never assigned."""
+    if cmd.count("$") > MAX_MENTIONS:
+        return {}
+    cands, reads = {}, _plain_reads(cmd, shell)
+    bound = set()
+    if shell == "PowerShell":
+        for m in PS_BOUND.finditer(cmd):
+            bound |= {v.lower() for g in m.groups() if g for v in re.findall(r"\$(\w+)", "$" + g if "$" not in g else g)}
+    bare_cr = shell == "PowerShell" and re.search(r"\r(?!\n)", lex.s)
+    for k, start, before, nested, assigns, name, _ in _views(lex, shell):
+        if nested or before not in (None, ";", "\n") or bare_cr:
+            continue
+        words = lex.commands[k]
+        after = _op_after(lex, words, shell)
+        if shell == "PowerShell":
+            line = lex.s[lex.s.rfind("\n", 0, start) + 1:start]
+            if "#" in line or "--%" in line:
+                continue
+            end = _word_end(lex, words[-1])
+            m = PS_LITERAL_ASSIGN.fullmatch(lex.s, start, end) if end is not None else None
+            if m and after in (None, ";", "\n", "\r\n") and m.group(1).lower() not in PS_BUILTIN_VARS:
+                value = m.group(2).replace("''", "'") if m.group(2) is not None else m.group(3)
+                cands.setdefault(m.group(1).lower(), []).append((value, start + 1, end))
+        elif name is None and assigns and after in (None, ";", "\n", "\r\n", "&&") \
+                and not any(first <= k < end for first, end in lex.bodies):   # a subshell keeps its own
+            for raw, value, at in assigns:
+                m = BASH_ASSIGN_WORD.match(raw)
+                if m and m.group(1) not in BASH_SPECIAL_VARS and m.group(1) not in ("HOME",):
+                    cands.setdefault(m.group(1), []).append((value.partition("=")[2], at, at + len(raw)))
+    if _writes_vars_by_name(lex, shell):
+        return {}
+    flags = re.I if shell == "PowerShell" else 0
+    bare = _bare_text(lex, shell, {at for entries in cands.values() for _, at, _ in entries})
+    found = {"\0IFS": (None, None)} if shell == "Bash" and re.search(r"(?<!\w)IFS(?!\w)", cmd) else {}
+    names = list(cands) + (["pwd", "home"] if shell == "PowerShell" else ["PWD", "HOME"])
+    for key in names:
+        entries = cands.get(key, [])
+        if key in bound:
+            continue
+        allowed = reads | {at for _, at, _ in entries}
+        name = re.escape(key)
+        if any(m.group(1) or m.start(2) not in allowed
+               for m in re.finditer(r"\$\{?(\w+:)?(%s)(?!\w)" % name, cmd, flags)):
+            continue   # a `$` mention that is no plain read, or one with a scope or drive (`$script:w`)
+        if re.search(r"(?:^|(?<=[\s:{(,=+]))%s(?![\w/\\.]|-\w)" % name, bare, flags):
+            continue   # the bare name as a word: `-OutVariable w`, `read w`, `for w in`, `unset w`, `variable:w`
+        named = r"(['\"])\+?%s\1|:%s(?![\w/\\.])|`%s(?!\w)" % (name, name, name)
+        if shell == "Bash":
+            named += r"|(?<!\S)-[A-Za-z]+%s(?!\w)" % name
+        if re.search(named, cmd, flags):
+            continue   # named inside a string, a drive path or an option: `='w'`, `'Vari'+'able:w'`, `` `w ``, `-vw`
+        if not entries:
+            found[key] = (None, -1)   # `$PWD` / `$HOME`, never assigned: what the shell sets
+        elif len({v for v, _, _ in entries}) == 1 and entries[0][2] is not None:
+            found[key] = (entries[0][0], entries[0][2])
+    return found
+
+
+def _bash_expands(raw):
+    """True when bash expands the unquoted text of a word into other text: a glob (`*`, `?`, `[`), a brace
+    list or range (`{a,b}`, `{1..3}`), or a `~` that is not alone or before a slash."""
+    if raw.startswith("~") and not (raw == "~" or raw.startswith("~/")):
+        return True
+    i, n, plain = 0, len(raw), []
+    while i < n:
+        c = raw[i]
+        if c == "\\":
+            plain.append(" ")
+            i += 2
+        elif c == "'":
+            j = raw.find("'", i + 1)
+            plain.append(" ")
+            i = n if j < 0 else j + 1
+        elif c == '"':
+            j = i + 1
+            while j < n and raw[j] != '"':
+                j += 2 if raw[j] == "\\" else 1
+            plain.append(" ")
+            i = j + 1
+        else:
+            plain.append(c)
+            i += 1
+    text = "".join(plain)
+    return bool(re.search(r"[*?\[]", text) or re.search(r"(?<!\$)\{[^{}]*(?:,|\.\.)[^{}]*\}", text))
+
+
+def _literal_word(raw, value, shell, vars_, loc, at=None, pathspec=False):
+    """The literal text a word passes, with `$PWD`/`$HOME`/literal variables filled in; None if unknown.
+    at: where the command holding the word starts; a variable counts only when assigned before it.
+    pathspec: a bash glob counts as typed (the commit shadow reads `git add src/*.py` as git's pathspec)."""
     if shell == "PowerShell" and raw.startswith("'"):
         text = value
-    elif raw.startswith(("(", "@(")):
-        return None   # an expression: `(Join-Path ...)`
+    elif raw.startswith("(") or (shell == "PowerShell" and raw.startswith("@") and not raw.startswith(("@'", '@"'))):
+        return None   # an expression `(Join-Path ...)`, `@(...)`, a splat `@a` (any number of arguments)
     elif "$" in raw or "`" in raw:
         m = VAR_WORD.match(raw)
-        if not m:
+        tail = m.group(4) if m else ""
+        # after `${w}` the braces end the name: any tail is text, but unquoted PowerShell still reads `.` and `[`
+        braced_ok = m and m.group(2) and (shell == "Bash" or m.group(1) or re.match(r"[\w:]", tail))
+        if not m or (tail and not braced_ok and tail[0] not in TAIL_START[(shell, m.group(1))]):
             return None
-        name = m.group(1).lower()
-        head = loc if name == "pwd" else os.path.expanduser("~") if name == "home" else vars_.get(name)
+        if shell == "Bash" and ("\\" in tail if not m.group(1) else "\\\\" in tail):
+            return None   # bash drops an unquoted backslash, and `\\` in double quotes is one
+        name = m.group(2) or m.group(3)
+        key = _var_key(name, shell)
+        held, end = vars_.get(key, (None, None))
+        if end is None or at is None or end > at:
+            return None
+        head = held if end >= 0 else (loc if key in ("pwd", "PWD") else os.path.expanduser("~"))
         if head is None:
             return None
-        text = head + m.group(2)
+        if shell == "Bash" and not m.group(1) and ("\0IFS" in vars_ or not pathspec and (
+                re.search(r"[*?\[]", head) or _bash_expands(m.group(4)))):
+            return None   # unquoted: bash expands a glob in the value or in the tail, and splits on IFS
+            # (_bash_fields splits on whitespace; an IFS set anywhere in the command makes that unknown)
+        text = head + m.group(4)
     else:
+        if shell == "Bash" and not pathspec and _bash_expands(raw):
+            return None
         text = value
     if text == "~" or text.startswith(("~/", "~\\")):
         text = os.path.expanduser("~") + text[1:]
@@ -1561,12 +1869,34 @@ def _msys_to_win(path):
 
 
 class _Location:
-    """The shell's location as `cd` / `Set-Location` / `Push-Location` / `Pop-Location` move it; None
-    once it cannot be followed (a variable target, `cd -`, popping an empty stack)."""
+    """The shell's location as `cd` / `Set-Location` / `Push-Location` / `Pop-Location` move it. It is a set of
+    candidates, each (folder or None, push stack): a change that may not run (after `&&` or `||`, before `||`,
+    in a pipeline stage or the background, to a folder that does not exist yet) adds where the shell would be
+    without it. A candidate folder is None once it cannot be followed (a variable target, `cd -`, popping an
+    empty stack); a change inside a block (a loop, a branch, a function, a script block, a PowerShell `( )`)
+    leaves the location unknown from the block's first command on, as the block may run never or more than once."""
 
-    def __init__(self, cwd):
-        self.loc = cwd
-        self.stack = []
+    MAX = 4   # candidates kept; past that the location is unknown
+
+    def __init__(self, cwd, lex=None, shell=None):
+        self.lex, self.shell = lex, shell
+        self.freeze_at = None if lex is None else _location_in_block(lex, shell)
+        self.frozen = False
+        self.states = [(cwd, ())]
+        self.pending = []   # where the shell is if an `&&` chain stopped before its location change
+
+    @property
+    def loc(self):
+        """The one folder, None when unknown or when there are several candidates."""
+        return self.states[0][0] if len(self.states) == 1 else None
+
+    def locs(self):
+        """Every candidate folder (None among them when one is unknown)."""
+        return list(dict.fromkeys(loc for loc, _ in self.states))
+
+    def _union(self, extra):
+        merged = list(dict.fromkeys(self.states + extra))
+        self.states = merged if len(merged) <= self.MAX else [(None, ())]
 
     def walk(self, commands, bodies):
         """Yields each command. A subshell or substitution body leaves the location as it found it: at bodies'
@@ -1574,56 +1904,151 @@ class _Location:
         back = {end: first for first, end in sorted(bodies, reverse=True) if first < end}
         marks = []
         for k, words in enumerate(commands):
-            if k in back:
-                self.loc, self.stack = marks[back[k]]
-            marks.append((self.loc, list(self.stack)))
+            if self.freeze_at is not None and k >= self.freeze_at:
+                self.frozen, self.states, self.pending = True, [(None, ())], []
+            elif k in back:
+                self.states, self.pending = marks[back[k]], []
+            if self.pending and self.lex.after.get(_start(words)) not in ("&&", "|", "|&"):
+                self._union(self.pending)   # past the end of the `&&` chain
+                self.pending = []
+            marks.append(list(self.states))
             yield words
 
-    def step(self, name, words):
-        """words: (raw, value, quoted, literal text or None) after the command name."""
-        low = name.lower()
-        if low in POP_NAMES:
-            self.loc = self.stack.pop() if self.stack else None
-            return
-        if low not in CD_NAMES:
-            return
+    @staticmethod
+    def _move(low, words, loc, stack):
+        if low in POP_NAMES:   # `popd +1` drops another entry: unknown
+            return ((stack[-1], stack[:-1]) if stack else (None, ())) if not words else (None, ())
+        if not words and low not in ("push-location", "pushd"):
+            return os.path.expanduser("~"), stack   # `cd` alone goes home, in bash and in PowerShell 7
         if low in ("push-location", "pushd"):
-            self.stack.append(self.loc)
+            stack = stack + (loc,)
         pos = [w for i, w in enumerate(words) if not (w[0].startswith("-") and not w[2])
                and not (i and words[i - 1][0].lower() in ("-path", "-literalpath", "-lp", "-stackname"))]
         named = [words[i + 1] for i, w in enumerate(words[:-1]) if w[0].lower() in ("-path", "-literalpath", "-lp")]
         target = (named or pos or [None])[0]
-        self.loc = None if target is None else _abs(target[3], self.loc)
+        if target is None or (low == "pushd" and re.match(r"^[+-]\d+$", target[1])):
+            return None, stack   # no folder, or `pushd +1` rotating the stack
+        return _abs(target[3], loc), stack
+
+    def lose(self):
+        """A command that may move the location in a way the hook does not follow: unknown from here."""
+        if not self.frozen:
+            self.states, self.pending = [(None, ())], []
+
+    def step(self, name, words, command=None):
+        """words: (raw, value, quoted, literal text or None) after the command name; command: the lexed words of
+        the whole command, to read the operators around it."""
+        low = _location_key(name)
+        if self.frozen or low not in LOCATION_NAMES:
+            return
+        old = list(self.states)
+        if not words and command is not None and self.lex is not None \
+                and self.lex.after.get(_start(command)) in ("|", "|&"):
+            self.states = [(None, ())]   # `'src' | Set-Location`: the folder comes down the pipeline
+        else:
+            self.states = list(dict.fromkeys(self._move(low, words, loc, stack) for loc, stack in old))
+        if command is None or self.lex is None:
+            return
+        before, after = self.lex.after.get(_start(command)), _op_after(self.lex, command, self.shell)
+        fails = any(loc is not None and not os.path.isdir(loc) for loc, _ in self.states)
+        if before not in STRAIGHT_BEFORE + ("&&",) or after in ("||", "|", "|&", "&", "?"):
+            self._union(old)   # it may run or not, or run in a subshell of a pipeline stage or the background
+        elif before == "&&" or (after == "&&" and fails):
+            self.pending = list(dict.fromkeys(self.pending + old))   # past the chain it may not have run
+        elif fails:
+            self._union(old)   # a folder that does not exist yet: the change fails unless an earlier step makes it
 
 
-def _assignment(raw, value, shell, vars_, loc):
+def _start(words):
+    return words[0][3] if isinstance(words[0], tuple) else words[0].start
+
+
+LOCATION_RUNNERS_BASH = {"builtin", "command", "eval", "source", ".", "trap"}
+LOCATION_RUNNERS_PS = {"invoke-expression", "iex"}
+
+
+def _location_key(name):
+    """A command name as the location rules compare it: `Microsoft.PowerShell.Management\\Set-Location` is
+    `set-location`."""
+    return name.rsplit("\\", 1)[-1].lower()
+
+
+def _runs_unknown(name, words, shell):
+    """True for a command that may move the location in a way the hook does not follow: text run as code
+    (`eval`, `source`, `.`, `Invoke-Expression`, dot-sourcing) or a builtin run through `builtin`/`command`."""
+    if shell == "PowerShell":
+        return words[0][0] == "." or _location_key(name) in LOCATION_RUNNERS_PS
+    return name in LOCATION_RUNNERS_BASH or words[0].raw == "coproc"   # a coprocess runs in a subshell
+
+
+def _location_in_block(lex, shell):
+    """The index of the first command of the earliest block (a loop, a branch, a function, a script block, a
+    PowerShell `( )`/`$( )`) that holds a location change, None when no block does: from there on the location
+    is unknown, as the block may run never or more than once."""
+    run = None   # where the current run of nested commands started
+    for k, _, _, nested, _, name, _ in _views(lex, shell):
+        run = (k if run is None else run) if nested else None
+        if nested and name is not None and (_location_key(name) in LOCATION_NAMES
+                                            or _runs_unknown(name, lex.commands[k], shell)):
+            return run
+    return None
+
+
+def _assignment(raw, value, shell, vars_, loc, at=None):
     """(NAME in upper case, the value's literal text or None) of a `NAME=value` word. Upper case, since Windows
     environment names ignore case: git reads a `git_config_count` set from either shell."""
-    text = _literal_word(raw, value, shell, vars_, loc)
+    text = _literal_word(raw, value, shell, vars_, loc, at)
     if text is not None:
         name, _, rhs = text.partition("=")
         return name.rstrip("+").upper(), rhs
     name, _, rhs = value.partition("=")
-    return name.rstrip("+").upper(), _literal_word(raw.partition("=")[2], rhs, shell, vars_, loc)
+    return name.rstrip("+").upper(), _literal_word(raw.partition("=")[2], rhs, shell, vars_, loc, at)
 
 
-def env_command(words, shell, vars_, loc):
+def env_command(words, shell, vars_, loc, at=None):
     """What `env` starts: words are (raw, value) after its name. (index of the command's name or None, {name:
-    value} of the assignments before it)."""
-    i, found = 0, {}
+    value} of the assignments before it, the folder `-C`/`--chdir` names: (raw, value), "?" when the hook
+    cannot read it, None without one); the index is "?" after an option the hook does not model."""
+    i, found, chdir = 0, {}, None
     while i < len(words):
         value = words[i][1]
+        if value in ("-C", "--chdir"):
+            chdir = words[i + 1] if i + 1 < len(words) else "?"
+        elif value.startswith("--chdir=") or (value.startswith("-C") and words[i][0][:2] == "-C"):
+            raw = words[i][0].partition("=")[2] if value.startswith("--") else words[i][0][2:]
+            chdir = (raw, value.partition("=")[2] if value.startswith("--") else value[2:])
         if value in ENV_VALUE_OPTS:
             i += 2
-        elif value.startswith("-"):
+        elif value in ENV_FLAGS or value.startswith(("--unset=", "--chdir=")) or (
+                value[:2] in ("-u", "-C") and len(value) > 2):
             i += 1
+        elif value.startswith("-"):
+            return "?", found, chdir   # an option the hook does not model (`-S`, an abbreviation, a bundle)
         elif "=" in value:
-            name, text = _assignment(words[i][0], value, shell, vars_, loc)
+            name, text = _assignment(words[i][0], value, shell, vars_, loc, at)
             found[name] = text
             i += 1
         else:
-            return i, found
-    return None, found
+            return i, found, chdir
+    return None, found, chdir
+
+
+def _git_locs(where, chdir, shell, vars_, at):
+    """The folders a git command runs in: each candidate location, or what `env -C <dir>` names in each."""
+    if chdir is None:
+        return where.locs()
+    text = None if chdir == "?" else _literal_word(chdir[0], chdir[1], shell, vars_, where.loc, at)
+    if text is None:
+        return [None]
+    return list(dict.fromkeys(_abs(text, loc) for loc in where.locs()))
+
+
+def _env_unreadable():
+    return Finding(
+        "git-unreadable", True,
+        "The hook cannot tell what `env` runs here: it takes an option the hook does not model (`-S`, an "
+        "abbreviation, a bundle of short options), so a `git` it starts would go unchecked. Run git directly, or "
+        "give `env` only `-i`, `-u NAME`, `-C DIR` and `NAME=value`.")
 
 
 def _bash_export(cw, assigned, exported, vars_, loc):
@@ -1632,7 +2057,7 @@ def _bash_export(cw, assigned, exported, vars_, loc):
         return
     for w in cw[1:]:
         if "=" in w.value:
-            name, text = _assignment(w.raw, w.value, "Bash", vars_, loc)
+            name, text = _assignment(w.raw, w.value, "Bash", vars_, loc, cw[0].start)
             exported[name] = text
         else:   # an unset name is exported too: a later plain assignment reaches the environment
             exported.setdefault(w.value.upper(), assigned.get(w.value.upper(), ""))
@@ -1649,12 +2074,18 @@ def _bash_fields(words, literal):
 
 
 def git_findings_bash(lex, cmd="", cwd=None):
-    vars_, where = _literal_vars(cmd, "Bash"), _Location(_msys_to_win(cwd) if cwd else None)
+    vars_, where = _literal_vars(cmd, "Bash", lex), _Location(_msys_to_win(cwd) if cwd else None, lex, "Bash")
     assigned, exported = {}, {}
     for words in where.walk(lex.commands, lex.bodies):
         _, cw = bash_command_words(words)
-        before = dict(_assignment(w.raw, w.value, "Bash", vars_, where.loc)
-                      for w in words[:len(words) - len(cw)] if "=" in w.raw)
+        at, before, seen = words[0].start, {}, dict(vars_)
+        for w in words[:len(words) - len(cw)]:
+            if "=" in w.raw:
+                name, text = _assignment(w.raw, w.value, "Bash", seen, where.loc, at)
+                before[name] = text
+                m = BASH_ASSIGN_WORD.match(w.raw)
+                if m:   # bash expands these left to right: a later one in the same command reads an earlier one
+                    seen[m.group(1)] = (w.value.partition("=")[2], 0)
         if not cw:   # no environment of its own: only what is already exported changes
             assigned.update(before)
             exported.update({k: v for k, v in before.items() if k in exported})
@@ -1662,28 +2093,39 @@ def git_findings_bash(lex, cmd="", cwd=None):
         if cw[0].value in BASH_EXPORTS:
             _bash_export(cw, assigned, exported, vars_, where.loc)
             continue
-        env = dict(exported, **before)
+        env, chdir = dict(exported, **before), None
         if ENV_NAME.match(cw[0].value):
-            at, found = env_command([(w.raw, w.value) for w in cw[1:]], "Bash", vars_, where.loc)
-            if at is None:
+            i, found, chdir = env_command([(w.raw, w.value) for w in cw[1:]], "Bash", vars_, where.loc, at)
+            if i == "?":
+                return [_env_unreadable()]
+            if i is None:
                 continue
             env.update(found)
-            cw = cw[at + 1:]
+            cw = cw[i + 1:]
+        coproc = words[0].raw == "coproc"   # a subshell: its `cd` moves nothing here, its git still runs
+        if _runs_unknown(cw[0].value, words, "Bash") and not coproc:
+            where.lose()
+            continue
         if cw[0].value.lower() not in LOCATION_AND_GIT:
             continue
-        lit = [_literal_word(w.raw, w.value, "Bash", vars_, where.loc) for w in cw[1:]]
-        where.step(cw[0].value, [(w.raw, w.value, w.quoted, l) for w, l in zip(cw[1:], lit)])
+        lit = [_literal_word(w.raw, w.value, "Bash", vars_, where.loc, at) for w in cw[1:]]
+        if chdir is None and not coproc:   # `env -C dir cd x` moves nothing in this shell
+            where.step(cw[0].value, [(w.raw, w.value, w.quoted, l) for w, l in zip(cw[1:], lit)], words)
         if cw[0].value.lower() in ("git", "git.exe"):
             args, lit = _bash_fields(cw[1:], lit)
-            f = rule_git("Bash", args, piped=False, literal=lit, loc=where.loc, env=env)
-            if f:
-                return [f]
+            for loc in _git_locs(where, chdir, "Bash", vars_, at):
+                f = rule_git("Bash", args, piped=False, literal=lit, loc=loc, env=env)
+                if f:
+                    return [f]
+        if coproc:
+            where.lose()   # it runs alongside: what comes after cannot rely on the location
     return []
 
 
 def _ps_env_step(words, env, vars_, loc):
     """`$env:NAME = value` and `${env:NAME} = value`: env[NAME] is its literal text, "" for `$null`, None when
     the hook cannot read it."""
+    at = words[0][3]
     m = PS_ENV_ASSIGN.match(" ".join(w[0] for w in words))
     if m is None:
         return
@@ -1696,33 +2138,43 @@ def _ps_env_step(words, env, vars_, loc):
     elif rhs.lower() == "$null":
         text = ""
     elif "$" in rhs or re.match(r"^[\w.+-]+$", rhs):
-        text = _literal_word(rhs, rhs, "PowerShell", vars_, loc)
+        text = _literal_word(rhs, rhs, "PowerShell", vars_, loc, at)
     env[(m.group(1) or m.group(2)).upper()] = text
 
 
 def git_findings_ps(lex, cmd="", cwd=None):
-    vars_, where, env = _literal_vars(cmd, "PowerShell"), _Location(cwd), {}
-    for words in lex.commands:
+    vars_, where, env = _literal_vars(cmd, "PowerShell", lex), _Location(cwd, lex, "PowerShell"), {}
+    for words in where.walk(lex.commands, []):
         _ps_env_step(words, env, vars_, where.loc)
         k, name = ps_command_name(words)
         if name is None:
             continue
-        rest, seen = words[k + 1:], env
+        rest, seen, at, chdir = words[k + 1:], env, words[0][3], None
         if ENV_NAME.match(name):
-            at, found = env_command([(w[0], w[1]) for w in rest], "PowerShell", vars_, where.loc)
-            if at is None:
+            i, found, chdir = env_command([(w[0], w[1]) for w in rest], "PowerShell", vars_, where.loc, at)
+            if i == "?":
+                return [_env_unreadable()]
+            if i is None:
                 continue
             seen = dict(env, **found)
-            name, rest = rest[at][1], rest[at + 1:]
-        if name.lower() not in LOCATION_AND_GIT:
+            name, rest = rest[i][1], rest[i + 1:]
+        if _runs_unknown(name, words, "PowerShell"):
+            where.lose()
             continue
-        lit = [_literal_word(w[0], w[1], "PowerShell", vars_, where.loc) for w in rest]
-        where.step(name, [(w[0], w[1], w[2], l) for w, l in zip(rest, lit)])
+        if name.lower() not in LOCATION_AND_GIT and _location_key(name) not in LOCATION_NAMES:
+            continue
+        lit = [_literal_word(w[0], w[1], "PowerShell", vars_, where.loc, at) for w in rest]
+        stop = next((j for j, w in enumerate(rest) if w[0] == "--%"), None)
+        if stop is not None:   # stop-parsing: the rest goes to the program raw, `%NAME%` expanded
+            lit[stop + 1:] = [None if "%" in w[0] else w[0] for w in rest[stop + 1:]]
+        if chdir is None:
+            where.step(name, [(w[0], w[1], w[2], l) for w, l in zip(rest, lit)], words)
         if name.lower() in ("git", "git.exe"):
-            f = rule_git("PowerShell", [w[1] for w in rest], piped=words[0][3] in lex.piped,
-                         literal=lit, loc=where.loc, env=seen)
-            if f:
-                return [f]
+            for loc in _git_locs(where, chdir, "PowerShell", vars_, at):
+                f = rule_git("PowerShell", [w[1] for w in rest], piped=words[0][3] in lex.piped,
+                             literal=lit, loc=loc, env=seen)
+                if f:
+                    return [f]
     return []
 
 
@@ -1923,7 +2375,7 @@ PS_MULTI_ASSIGNED = re.compile(r"\$[\w:]+(?:\s*,\s*\$[\w:]+)+\s*=(?!=)")
 PS_OUT_VARIABLE = re.compile(r"-(?:OutVariable|ov|PipelineVariable|pv)(?::|\s+)['\"]?\+?([A-Za-z_]\w*)", re.I)
 # names a command binds without an assignment: function parameters, param(), foreach heads
 PS_BOUND = re.compile(
-    r"(?:function\s+[\w-]+\s*\(([^)]*)\)|param\s*\(([^)]*)\)|foreach\s*\(\s*\$([A-Za-z_]\w*)\s+in\b)",
+    r"(?:function\s+[\w-]+\s*\(([^)]*)\)|param\s*\(([^)]*)\)|foreach\s*\(\s*\$\{?([A-Za-z_]\w*)\}?\s+in\b)",
     re.I)
 PS_BUILTIN_VARS = {
     "_", "null", "true", "false", "args", "pwd", "psscriptroot", "pscommandpath", "input",
@@ -2544,7 +2996,7 @@ def _stages(tool, lex, cmd, cwd):
     """One (start offset, text, lower-case name, argument values, their literal text, location, redirects into a
     file) per command. The name is empty where nothing runs: an assignment, a bare value, a keyword."""
     bash = tool == "Bash"
-    vars_, where = _literal_vars(cmd, tool), _Location(_msys_to_win(cwd) if bash and cwd else cwd)
+    vars_, where = _literal_vars(cmd, tool, lex), _Location(_msys_to_win(cwd) if bash and cwd else cwd, lex, tool)
     # PowerShell runs `( )` and `$( )` in the same process: a location set there stays.
     for words in where.walk(lex.commands, lex.bodies if bash else []):
         if bash:
@@ -2558,9 +3010,9 @@ def _stages(tool, lex, cmd, cwd):
             start, text, writes = words[0][3], " ".join(w[0] for w in words), _ps_writes(words)
             if name is None and words[0][0].startswith("[") and not PS_ASSIGN_TARGET.match(words[0][0]):
                 name = words[0][0]   # a .NET call, `[IO.File]::WriteAllText(...)`
-        literal = [_literal_word(raw, value, tool, vars_, where.loc) for raw, value, _ in parts]
+        literal = [_literal_word(raw, value, tool, vars_, where.loc, start, pathspec=True) for raw, value, _ in parts]
         if name:
-            where.step(name, [part + (text_,) for part, text_ in zip(parts, literal)])
+            where.step(name, [part + (text_,) for part, text_ in zip(parts, literal)], words)
         yield start, text, (name or "").lower(), [part[1] for part in parts], literal, where.loc, writes
 
 

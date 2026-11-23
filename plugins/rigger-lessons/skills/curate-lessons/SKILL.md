@@ -18,7 +18,16 @@ The inbox is the path the lessons SessionStart line names (`$HARNESS_LESSONS_INB
 `lessons-inbox.md` in `$CLAUDE_CONFIG_DIR`, else in `~/.claude`). Every line starting
 `- YYYY-MM-DD` is an entry, also outside `## Entries`.
 
-When `lessons-proposals.md` next to the inbox holds proposals, the subagent reviews those instead of a slice: each block names its entry, target, heading, old and new text and the batch's reason. It re-reads each target (the old text must still occur exactly once) and answers the questions below for each.
+When `lessons-proposals.md` next to the inbox holds proposals, first check them against the current tree:
+
+```
+python "${CLAUDE_PLUGIN_ROOT}/tools/proposal_check.py" <queue> --corpus <global rules file or CLAUDE.md> --archive
+```
+
+The check moves `stale` (target gone, old text not found exactly once), `applied` and `covered`
+blocks to `lessons-archive.md`; their entries stay parked in the inbox, and Step 3 removes the
+entry of an `applied` or `covered` one. Exit 1 means a batch held the lock or the queue changed:
+run it again later. Then the subagent reviews the live proposals instead of a slice: each block names its entry, target, heading, old and new text and the batch's reason. It re-reads each target (the old text must still occur exactly once) and answers the questions below for each.
 
 Otherwise one run reviews one slice, never the whole inbox. Print it, and do not sort by hand:
 

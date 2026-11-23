@@ -124,11 +124,41 @@ CASES = [
     ("Bash", "git commit -F - <<'EOF'\nmsg\nEOF", None),
     ("PowerShell", "git restore --staged a.txt", None),
     ("PowerShell", "git checkout --ours -- a.pot b.mo", None),
-    ("PowerShell", "git checkout main", None),
+    ("PowerShell", "git checkout main", "git-restore-discards"),   # no cwd to look in: `main` may be a file
     ("PowerShell", "git checkout -b feature/x", None),
     ("PowerShell", "rg -n 'git checkout -- x' notes.md", None),
     ("PowerShell", "git checkout -- a.txt # shell-guard: allow", None),
     # git-no-verify: every spelling git 2.53 accepted in the probe (a failing hook did not run)
+    # git's options or subcommand the hook cannot read: it cannot tell what git runs
+    ("PowerShell", "git $x worktree remove wt", "git-unreadable"),
+    ("PowerShell", "git -C D:\\x $s", "git-unreadable"),
+    ("Bash", "git $(cat opts) worktree remove wt", "git-unreadable"),
+    ("PowerShell", "$o = '-q'; git $o status", None),
+    ("PowerShell", "$g = @('-C', 'D:\\x'); git @g checkout README.md", "git-unreadable"),   # a splat
+    ("PowerShell", "git --git-dir=$gd log", "git-unreadable"),
+    ("Bash", "gd='x worktree remove ../wt'; git --git-dir=$gd", "git-unreadable"),   # bash splits it
+    ("Bash", "env -S 'git worktree remove ../wt'", "git-unreadable"),
+    ("Bash", "env --chd .. git worktree remove ../wt", "git-unreadable"),
+    ("Bash", "env -iC .. git worktree remove ../wt", "git-unreadable"),
+    ("Bash", "env --ch=.. git worktree remove ../wt", "git-unreadable"),
+    ("PowerShell", "$v = @('.', '-c', 'core.hooksPath=NUL', 'commit', '-m', 'm'); git -C $v", "git-unreadable"),
+    ("PowerShell", "git -C $r status", None),   # a subcommand after it: what an array slips in gets its words too
+    ("PowerShell", "git -C \"$r\\x\" -- README.md", None),   # one string: no array
+    ("PowerShell", "$v = @('.', 'checkout', '--'); git -C $v README.md", "git-unreadable"),
+    ("PowerShell", "git -C $v --force", "git-unreadable"),
+    ("Bash", "git -C $v --force", "git-unreadable"),
+    ("Bash", "git -C $v/", "git-unreadable"),   # bash splits it: `v='. worktree remove ../wt'`
+    ("PowerShell", "git -C $a,$b", "git-unreadable"),   # a list
+    ("PowerShell", "git -C $r\\x", None),   # one string
+    ("PowerShell", "git -C; git commit -n -m m", "git-no-verify"),   # an option with no value ends the words
+    ("PowerShell", "$x = @('a.b=c', 'checkout', '--'); git -c $x README.md", "git-unreadable"),
+    ("Bash", "coproc git commit --no-verify -m m", "git-no-verify"),
+    ("PowerShell", "env -S 'git commit -n -m m'", "git-unreadable"),
+    ("Bash", "env -S 'ls -l'", "git-unreadable"),   # whatever it starts
+    ("Bash", "G=git; env -S \"$G worktree remove ../wt\"", "git-unreadable"),
+    ("Bash", "env -i -u X A=1 ls", None),
+    ("PowerShell", "& 'C:\\Program Files\\Git\\usr\\bin\\env.exe' --version | Select-Object -First 1", None),
+    ("PowerShell", "git -C $d status", None),   # an option's value is no subcommand: each rule judges its own
     ("PowerShell", "git commit --no-verify -m 'fix: x'", "git-no-verify"),
     ("PowerShell", "git commit -n -m x", "git-no-verify"),
     ("PowerShell", "git commit -nm x", "git-no-verify"),
@@ -396,7 +426,7 @@ CASES = [
     ("Bash", "k=`cat k.txt`; git -c $k=/nonexistent commit -m m", "git-no-verify"),
     ("Bash", "k=\"a$b\"; git -c \"$k=/nonexistent\" commit -m m", "git-no-verify"),
     ("Bash", "k=a$b; git -c \"$k=/nonexistent\" commit -m m", "git-no-verify"),
-    ("Bash", "k=a'b'; git -c \"$k=/nonexistent\" commit -m m", "git-no-verify"),
+    ("Bash", "k=a'b'; git -c \"$k=/nonexistent\" commit -m m", None),   # read as bash joins it: `ab`
     ("Bash", "k='a'$b; git -c \"$k=/nonexistent\" commit -m m", "git-no-verify"),
     ("Bash", "k=(core.hooksPath); git -c \"$k=/nonexistent\" commit -m m", "git-no-verify"),
     ("Bash", "k=user.name; k=$(cat k.txt); git -c \"$k=/nonexistent\" commit -m m", "git-no-verify"),
@@ -410,7 +440,7 @@ CASES = [
     ("Bash", "k=user.name; git -c \"$k=x\" commit -m m", None),
     ("Bash", "k='user.name'; git -c \"$k=x\" commit -m m", None),
     ("Bash", "k=\"user.name\"; git -c \"$k=x\" commit -m m", None),
-    ("Bash", "(k=user.name); git -c \"$k=x\" commit -m m", None),
+    ("Bash", "(k=user.name); git -c \"$k=x\" commit -m m", "git-no-verify"),   # set in the subshell only: unread
     ("Bash", "v=; GIT_CONFIG_PARAMETERS=$v git commit -m m", None),
     ("Bash", "v=''; GIT_CONFIG_PARAMETERS=$v git commit -m m", None),
     ("Bash", "v=\"\"; GIT_CONFIG_PARAMETERS=$v git commit -m m", None),
@@ -421,7 +451,7 @@ CASES = [
     ("Bash", "v=\nGIT_CONFIG_PARAMETERS=$v git commit -m m", None),
     ("Bash", "v=\r\nGIT_CONFIG_PARAMETERS=$v git commit -m m", None),
     ("Bash", "v=&& GIT_CONFIG_PARAMETERS=$v git commit -m m", None),
-    ("Bash", "v=|| GIT_CONFIG_PARAMETERS=$v git commit -m m", None),
+    ("Bash", "v=|| GIT_CONFIG_PARAMETERS=$v git commit -m m", "git-no-verify"),   # before `||`: no certain assignment
     ("Bash", "export GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/x'\"; git commit -m m", "git-no-verify"),
     ("Bash", "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath; git commit -m m", "git-no-verify"),
     ("Bash", "GIT_CONFIG_PARAMETERS=x; export GIT_CONFIG_PARAMETERS; git commit -m m", "git-no-verify"),
@@ -964,6 +994,8 @@ def worktree_cases(root, links):
         links.append(os.path.normpath(os.path.join(base, junction_in, "vendor")))
         make_junction(links[-1], target)
     in_worktree = os.path.join("Worktrees", "proj", "feature", "vendor")
+    sub = os.path.join(repo, "a")   # `..\wt` from here is repo\wt (none); from repo it is root\wt (the junction)
+    os.makedirs(sub)
     # A registered worktree whose folder is gone: git drops the record with rc 0, nothing to empty
     prune = os.path.join(root, "prune")
     subprocess.run(["git", "init", "-q", prune], check=True)
@@ -1037,6 +1069,106 @@ def worktree_cases(root, links):
         ("PowerShell", "Set-Location $d; git worktree remove x", root, U),
         ("PowerShell", "git worktree remove x", None, U),
         ("Bash", "cd \"$DIR\" && git worktree remove --force wt", root, U),
+        # ... a variable whose value is not certain: an assignment that never runs, comes later, sets only a
+        # command's environment, is rebound, sits after a comment mark or `--%`, or names a shell variable
+        ("PowerShell", "if ($false) { $w = '%s\\' }; git worktree remove \"${w}..\\wt\"" % sub, clean, U),
+        ("PowerShell", "git worktree remove \"${w}..\\wt\"; $w = '%s\\'" % sub, clean, U),
+        ("Bash", "w=%s/a/ true; git worktree remove \"${w}../wt\"" % (msys + "/repo"), clean, U),
+        ("Bash", "W=%s; git worktree remove \"$w\"" % q(msys + "/clean"), root, U),   # bash names keep their case
+        ("Bash", "PWD=%s; git worktree remove \"$PWD\"" % q(msys + "/clean"), root, U),
+        ("PowerShell", "$w = %s; Get-Item %s -OutVariable w; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; foreach ($w in %s) { }; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; $script:w = %s; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; iex ('$' + 'w = ' + \"'x'\"); git worktree remove $w" % q(clean), None, U),
+        ("PowerShell", "$w = %s; Clear-Variable *; git worktree remove $w" % q(clean), None, U),
+        ("PowerShell", "Write-Output a<# x #>; $w = %s; git worktree remove $w" % q(clean), None, U),
+        ("PowerShell", "Write-Output --%% x; $w = %s; git worktree remove $w" % q(clean), None, U),
+        ("PowerShell", "$w = %s\rgit worktree remove $w" % q(clean), None, U),
+        ("PowerShell", "$PSHOME = %s; git worktree remove $PSHOME" % q(clean), None, U),   # read-only: it stays
+        ("Bash", "w=%s; eval 'w=x'; git worktree remove \"$w\"" % q(msys + "/clean"), None, U),
+        ("Bash", "w=%s; printf -v \"$(echo w)\" x; git worktree remove \"$w\"" % q(msys + "/clean"), None, U),
+        ("Bash", "w=%s | cat; git worktree remove \"$w\"" % q(msys + "/clean"), None, U),   # a pipeline stage
+        # ... git's options and subcommand read from a variable's literal text
+        ("PowerShell", "$o = '-C'; git $o %s worktree remove repo-wt" % q(repo), None, J),
+        # ... a word bash expands (against the cwd, not `-C`): a glob, a brace list or range, `~user`
+        ("Bash", "git -C %s worktree remove --force repo-w[t]" % q(msys + "/repo"), root, U),
+        ("Bash", "git -C %s worktree remove --force repo-w?" % q(msys + "/repo"), root, U),
+        ("Bash", "git -C %s worktree remove --force repo-wt*" % q(msys + "/repo"), root, U),
+        ("Bash", "git -C %s worktree remove --force {repo-wt,}" % q(msys + "/repo"), root, U),
+        ("Bash", "git -C %s worktree remove --force repo-w{t..t}" % q(msys + "/repo"), root, U),
+        ("Bash", "git -C %s worktree remove --force ~nobody/x" % q(msys + "/repo"), root, U),
+        ("Bash", "w='repo-w*'; git -C %s worktree remove --force $w" % q(msys + "/repo"), root, U),   # in a value
+        # ... a location change that may run more than once, never, or fail
+        ("PowerShell", "foreach ($i in 1, 2) { git worktree remove ..\\wt; cd .. }", sub, U),
+        ("Bash", "for i in 1 2; do git worktree remove ../wt; cd ..; done", sub, U),
+        ("PowerShell", "if ($false) { cd %s }; git worktree remove ..\\wt" % q(sub), repo, U),
+        ("PowerShell", "cd %s; git worktree remove ..\\wt" % q(os.path.join(repo, "nosuch")), repo, J),
+        ("PowerShell", "git status && cd %s; git worktree remove ..\\wt" % q(sub), repo, J),
+        ("PowerShell", "cd %s || git worktree remove ..\\wt" % q(sub), repo, J),
+        ("PowerShell", "git status || cd %s; git worktree remove ..\\wt" % q(sub), repo, J),
+        ("Bash", "cd %s | cat; git worktree remove ../wt" % q(msys + "/repo/a"), repo, J),
+        ("Bash", "cd %s & git worktree remove ../wt" % q(msys + "/repo/a"), repo, J),
+        ("PowerShell", "cd x1; cd x2; cd x3; git worktree remove nosuch", repo, U),   # past 4 candidates: unknown
+        # ... found by the plan review (all allowed on the base)
+        ("PowerShell", "$a = @('worktree', 'remove', '--force', '..\\wt'); git @a", repo, "git-unreadable"),
+        ("Bash", "function f { cd ..; }; f; git worktree remove ../wt", sub, U),
+        ("PowerShell", "$w = %s; Get-Item %s -OutVariable 'w'; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; Get-Item %s -OutVariable +w; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "Microsoft.PowerShell.Management\\Set-Location ..; git worktree remove ..\\wt", sub, J),
+        ("Bash", "builtin cd ..; git worktree remove ../wt", sub, U),
+        ("Bash", "command cd ..; git worktree remove ../wt", sub, U),
+        ("Bash", "eval cd ..; git worktree remove ../wt", sub, U),
+        ("Bash", "env -C .. git worktree remove ../wt", sub, J),
+        ("Bash", "env --chdir=.. git worktree remove ../wt", sub, J),
+        ("Bash", "pushd %s; popd +1; git worktree remove ../wt" % q(msys + "/repo"), sub, U),
+        ("Bash", "pushd %s; pushd +1; git worktree remove ../wt" % q(msys + "/repo"), sub, U),
+        ("Bash", "IFS=X; w=--forceX../wt; git worktree remove $w", repo, U),
+        ("Bash", "REPLY=%s; read < /dev/null; git worktree remove \"$REPLY\"" % q(msys + "/clean"), None, U),
+        ("PowerShell", "$env:W = '..\\wt'; git --% worktree remove %W%", repo, U),
+        ("Bash", "for i in 1 2; do git worktree remove ../wt; eval cd ..; done", sub, U),   # the 2nd pass is at repo
+        ("PowerShell", "iex 'cd ..'; git worktree remove ..\\wt", sub, U),
+        ("PowerShell", ". .\\x.ps1; git worktree remove ..\\wt", sub, U),
+        ("Bash", "env -C \"$d\" git worktree remove ../wt", repo, U),
+        ("Bash", "env -C .. cd ..; git worktree remove ../wt", sub, None),   # `env` cannot run `cd`: it stays
+        ("Bash", "trap 'cd ..' DEBUG; git worktree remove ../wt", sub, U),
+        ("Bash", "coproc cd a; git worktree remove ../wt", repo, U),   # the coprocess moves, this shell stays
+        ("Bash", "coproc git worktree remove --force ../wt", repo, J),
+        # ... found by the branch review: an array or a split word as the whole command, a name written unspelled
+        ("PowerShell", "$v = @('.', 'worktree', 'remove', '--force', '..\\wt'); git -C $v", repo, "git-unreadable"),
+        ("PowerShell", "$v = @('remove', '--force', '..\\wt'); git worktree $v", repo, "git-unreadable"),
+        ("Bash", "v=$(echo . worktree remove --force ../wt); git -C $v", repo, "git-unreadable"),
+        ("Bash", "v=$(echo .git worktree remove --force ../wt); git --git-dir=$v", repo, "git-unreadable"),
+        ("Bash", "v=$(echo remove --force ../wt); git worktree $v", repo, "git-unreadable"),
+        ("PowerShell", "$w = %s; ([ref] $w).Value = %s; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; $PSDefaultParameterValues = @{'Get-Item:OutVariable' = 'w'}; Get-Item %s; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; Set-Item -Path ('Vari' + 'able:w') -Value %s; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; Get-Item %s -OutVariable `w; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = %s; foreach (${w} in %s) { }; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("Bash", "w=%s; declare -n r='w'; r=%s; git worktree remove \"$w\"" % (q(msys + "/clean"), q(msys + "/wt")), None, U),
+        ("Bash", "w=%s; printf -vw '%%s' %s; git worktree remove \"$w\"" % (q(msys + "/clean"), q(msys + "/wt")), None, U),
+        ("Bash", "w=%s; read -aw <<< %s; git worktree remove \"$w\"" % (q(msys + "/clean"), q(msys + "/wt")), None, U),
+        ("Bash", "w=%s; trap 'w=%s' DEBUG; git worktree remove \"$w\"" % (q(msys + "/clean"), msys + "/wt"), None, U),
+        ("PowerShell", "$w = %s; %sgit worktree remove $w" % (q(clean), "$null; " * 401), None, U),   # past the mention cap
+        # ... an assignment that may not run, or that another write may undo (the variable may come from outside)
+        ("Bash", "if false; then w=%s; fi; git worktree remove \"$w\"" % q(msys + "/clean"), None, U),
+        ("Bash", "false && w=%s; git worktree remove \"$w\"" % q(msys + "/clean"), None, U),
+        ("Bash", "(w=%s); git worktree remove \"$w\"" % q(msys + "/clean"), None, U),
+        ("Bash", "(:; w=%s; :); git worktree remove \"$w\"" % q(msys + "/clean"), None, U),
+        ("Bash", "w=; : \"${w:=../wt}\"; git worktree remove $w", repo, U),
+        ("Bash", "w=%s; printf -v \"$(printf '\\x77')\" %s; git worktree remove \"$w\"" % (q(msys + "/clean"), q(msys + "/wt")), None, U),
+        ("Bash", "w=%s; declare \"$(printf '\\x77')=%s\"; git worktree remove \"$w\"" % (q(msys + "/clean"), msys + "/wt"), None, U),
+        ("PowerShell", "$w = %s | ForEach-Object { %s }; git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("PowerShell", "$w = 'repo-w'; $w += 't'; git -C %s worktree remove $w" % q(repo), None, U),
+        ("PowerShell", "$w = %s; f ([ref]$w); git worktree remove $w" % q(clean), None, U),
+        ("PowerShell", "$w = %s; $ExecutionContext.SessionState.PSVariable.Set([string][char]119, %s); git worktree remove $w" % (q(clean), q(wt)), None, U),
+        ("Bash", "if true; then :; fi; w=%s; git worktree remove \"$w\"" % q(msys + "/clean"), None, None),   # after the block
+        ("PowerShell", "git worktree remove \"$PWD\\..\\clean\"", repo, None),   # `$PWD`, never assigned
+        # ... allowed: the value is certain, the change certain or followed through its `&&` chain
+        ("PowerShell", "$w = %s; Get-ChildItem $w | Out-Null; Write-Output 'w tle'; git worktree remove $w" % q(clean),
+         None, None),
+        ("Bash", "w=%s && git worktree remove \"$w\"" % q(msys + "/clean"), None, None),
+        ("PowerShell", "git status && cd %s && git worktree remove clean" % q(root), repo, None),
+        ("PowerShell", "cd %s; git worktree remove ..\\clean" % q(sub), repo, None),
         # ... allowed: no junction, only junctions into the tree itself, not a worktree, other subcommands
         ("PowerShell", "git worktree remove " + q(clean), None, None),
         ("PowerShell", "git worktree remove --force " + q(inner), None, None),
@@ -1106,9 +1238,10 @@ def checkout_cases(root):
         ("Bash", "cd src && git checkout a.py", repo, R),
         ("Bash", "cd src && git checkout README.md", repo, None),
         ("Bash", "(pwd); cd src; git checkout README.md", repo, None),
-        ("Bash", "cd $(cd src && pwd) && git checkout README.md", repo, None),   # unknown stays unknown
-        ("Bash", "d=$(cat f); cd \"$d\"; git checkout README.md", repo, None),
-        ("Bash", "d=$(cat f); git -C \"$d\" checkout README.md", repo, None),
+        # ... a folder the hook cannot follow: each word may be a file there
+        ("Bash", "cd $(cd src && pwd) && git checkout README.md", repo, R),
+        ("Bash", "d=$(cat f); cd \"$d\"; git checkout README.md", repo, R),
+        ("Bash", "d=$(cat f); git -C \"$d\" checkout README.md", repo, R),
         ("Bash", "case x in x) cd src;; esac; git checkout a.py", repo, R),   # a `)` that opens no body
         ("Bash", "f() { cd src; }; (pwd); git checkout a.py", repo, R),   # a `()` that holds no command
         ("PowerShell", "git checkout main", repo, None),
@@ -1126,10 +1259,28 @@ def checkout_cases(root):
         ("PowerShell", "git checkout main >README.md", repo, None),
         ("PowerShell", "git checkout main 2>&1", repo, None),
         ("Bash", "git checkout main > README.md", repo, None),
-        # ... the hook cannot tell: a word it cannot place is left to git, listed in the known gaps
-        ("PowerShell", "git checkout README.md", None, None),
-        ("PowerShell", "cd $d; git checkout README.md", repo, None),
-        ("PowerShell", "git checkout $x", repo, None),
+        # ... the hook cannot tell: a word it cannot place counts as a path
+        ("PowerShell", "git checkout README.md", None, R),
+        ("PowerShell", "cd $d; git checkout README.md", repo, R),
+        ("PowerShell", "git checkout $x", repo, R),
+        ("PowerShell", "$x = 'README' + '.md'; git checkout $x", repo, R),
+        ("PowerShell", "if ($false) { cd src }; git checkout README.md", repo, R),   # a `cd` that never runs
+        ("PowerShell", "$false -and $(cd src); git checkout README.md", repo, R),   # nor does this one
+        ("PowerShell", "'src' | Set-Location; git checkout a.py", repo, R),   # the folder comes down the pipeline
+        ("Bash", "coproc git checkout README.md; wait", repo, R),   # it runs in a subshell, here
+        ("Bash", "cd sr\\\nc | cat; git checkout README.md", repo, R),   # a word the lexer maps apart from the text
+        ("PowerShell", "cd src # go there\ngit checkout README.md", repo, None),   # a comment ends the command
+        ("PowerShell", "cd nosuch; git checkout README.md", repo, R),   # a `cd` that fails: git runs here
+        ("PowerShell", "git status && cd src; git checkout README.md", repo, R),
+        ("Bash", "git status || cd src; git checkout README.md", repo, R),
+        # ... a newline after a whole pipeline ends it: the next line's `cd` is no pipeline stage
+        ("PowerShell", "git status | Out-Null\ncd src\ngit checkout README.md", repo, None),
+        ("Bash", "cd; git checkout README.md", repo, None),   # `cd` alone goes home
+        ("Bash", "for d in a b; do (cd $d && git status); done; git checkout README.md", repo, R),
+        ("Bash", "for d in docs src; do (cd $d && git status); done; git checkout main", repo, None),
+        ("Bash", "{ cd src; } >/dev/null; git checkout README.md", repo, None),   # a group runs once
+        ("PowerShell", "$w = '%s\\'; git checkout \"${w}nosuch\"" % repo, repo, None),
+        ("Bash", "git status | cat\ncd src\ngit checkout README.md", repo, None),
         ("PowerShell", "git checkout README.md # shell-guard: allow", repo, None),
     ]
 
@@ -1498,6 +1649,39 @@ HOLDING_GIT_DRIVER = (
     "runpy.run_path(sys.argv[0], run_name='__main__')\n" % HOLD_SECONDS)
 
 
+# (shell, word, its literal text with `$w` = 'a' assigned before it, or None when unknown): how each shell passes
+# `$w<c>x` to a native program, read in the spike (pwsh 7.7, Git Bash 5.2)
+WORDS = [
+    ("PowerShell", "$w\\x", "a\\x"), ("PowerShell", "$w/x", "a/x"), ("PowerShell", "$w-x", "a-x"),
+    ("PowerShell", "$w=x", None),        # two arguments: `a` and `=x`
+    ("PowerShell", "$w.x", None),        # member access
+    ("PowerShell", "$w[0]", None),
+    ("PowerShell", '"$w=x"', "a=x"), ("PowerShell", '"$w.x"', "a.x"), ("PowerShell", '"${w}..\\x"', "a..\\x"),
+    ("PowerShell", '"$w:x"', None),      # the variable `x` of drive `w`
+    ("Bash", "$w/x", "a/x"), ("Bash", "$w=x", "a=x"), ("Bash", "$w.x", "a.x"), ("Bash", "$w:x", "a:x"),
+    ("Bash", "$w\\x", None),             # bash drops the unquoted backslash: `ax`
+    ("Bash", '"$w\\x"', "a\\x"), ("Bash", '"$w\\\\x"', None),
+    ("Bash", "${w:-x}", None), ("Bash", "$w/*", None),
+]
+
+
+def word_checks():
+    failed = 0
+    for shell, raw, want in WORDS:
+        vars_ = {"w": ("a", 0)}
+        got = shell_guard._literal_word(raw, raw, shell, vars_, None, 10)
+        if got != want:
+            failed += 1
+            print("WORD FAIL  %s %r: want=%r got=%r" % (shell, raw, want, got))
+    # a checkout word the hook cannot place: the reason says so and names the commands that need no guess
+    got = deny_message("git checkout $x", HERE)
+    if not got or "cannot tell whether `$x` names a file" not in got or "git switch <branch>" not in got:
+        failed += 1
+        print("WORD FAIL  the unknown checkout word's reason: got=%r" % got)
+    print("word checks: %d/%d pass" % (len(WORDS) + 1 - failed, len(WORDS) + 1))
+    return failed, len(WORDS) + 1
+
+
 def budget_checks(root):
     """The whole-hook budget: several removes in one command, a scandir that never returns, a hanging
     `git worktree list`, a git whose child holds the pipes, a walk that raises. Wall times are measured here;
@@ -1660,7 +1844,7 @@ def race_check():
 
 
 # The narrow hook runs check_git only: the same expectations for every git case above.
-GIT_RULES = {"ps-git-commit-stdin", "git-restore-discards", "git-no-verify", "git-worktree-junction"}
+GIT_RULES = {"ps-git-commit-stdin", "git-restore-discards", "git-no-verify", "git-unreadable", "git-worktree-junction"}
 
 
 def run_installed(flag, tool, cmd, cwd=None, drop=(), extra=None):
@@ -1783,7 +1967,7 @@ def run_all(root, links):
         print("CHECKOUT FAIL  a failed commit lookup: want=git-restore-discards got=%s" % got)
     total = len(CASES) + len(git_cases) + len(NARROW_CASES) + 2 * len(wt_cases) + 2 * len(co_cases) + 1
     for section in (lambda: walk_checks(root, links), lambda: link_kind_checks(root, links),
-                    lambda: budget_checks(root), race_check, lambda: launcher_checks(root)):
+                    lambda: budget_checks(root), race_check, lambda: launcher_checks(root), word_checks):
         section_failed, section_total = section()
         failed += section_failed
         total += section_total
