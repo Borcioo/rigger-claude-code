@@ -34,7 +34,8 @@ ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects"))
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = 300
 LOAD_MAX = 4
-_UNSAFE = ("Cc", "Cf", "Zl", "Zp")
+# Control, format, line and paragraph separators, lone surrogates, private use and unassigned code points.
+_UNSAFE = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn")
 
 Path_ = Tuple[str, ...]
 
@@ -171,7 +172,7 @@ def _validate(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
             continue
         good = _is_int(value) if kind is int else isinstance(value, kind)
         if key == "expects" and good:
-            good = all(isinstance(item, str) for item in value)
+            good = all(isinstance(item, str) and not _line_problem(item) for item in value)
         if not good:
             what = {int: "a number", dict: "an object", list: "a list of names", str: "a string"}[kind]
             notices.append("rigger: config %s key %s must be %s; ignored" % (where, key, what))

@@ -164,15 +164,21 @@ class ResolveTests(unittest.TestCase):
             "requires-newline": {"before": "a", "load": ["x:y"], "requires": ["plugin:a\nb"]},
             "id\nline":{"before": "a", "load": ["x:y"]},
             "id|pipe": {"before": "a", "load": ["x:y"]},
+            "surrogate-before": {"before": "a\ud800b", "load": ["x:y"]},
+            "surrogate-load": {"before": "a", "load": ["x:\udfff"]},
+            "private-use": {"before": "a\ue000b", "load": ["x:y"]},
+            "unassigned": {"before": "a\U000e0080b", "load": ["x:y"]},
+            "id\ud800surrogate": {"before": "a", "load": ["x:y"]},
         }
         for row_id, row in rows.items():
-            with self.subTest(row_id):
+            with self.subTest(row_id.encode("unicode_escape").decode("ascii")):
                 got = resolve(l4={"schema": 1, "triggers": {row_id: row}})
                 self.assertNotIn(row_id, got.effective["triggers"])
                 self.assertEqual(len(got.notices), 1, got.notices)
                 self.assertIn(PATHS[4], got.notices[0])
-                self.assertIn(row_id.split("\n")[0], got.notices[0])
+                self.assertIn(row_id.split("\n")[0].split("\ud800")[0], got.notices[0])
                 self.assertNotIn("\n", got.notices[0])
+                got.notices[0].encode("utf-8")
         longest = resolve(l4={"schema": 1, "triggers": {"ok": {"before": "a" * 300, "load": ["a:1", "a:2", "a:3", "a:4"]}}})
         self.assertEqual(longest.notices, [])
         self.assertIn("ok", longest.effective["triggers"])
@@ -186,6 +192,34 @@ class ResolveTests(unittest.TestCase):
         for notice in got.notices:
             self.assertNotIn("\n", notice)
             self.assertNotIn(" ", notice)
+
+    def test_surrogate_in_a_key_or_expects_is_escaped_or_refused(self):
+        got = resolve(l4={"schema": 1, "k\ud800": 1, "expects": ["ok", "x\ud800", "a\nb"]})
+        self.assertEqual(len(got.notices), 2, got.notices)
+        self.assertNotIn("expects", got.effective)
+        for notice in got.notices:
+            self.assertNotIn("\ud800", notice)
+            notice.encode("utf-8")
+
+    def test_surrogate_rows_never_reach_table_or_snapshot(self):
+        import render
+        import snapshot
+
+        project = {
+            "schema": 1,
+            "k\ud800": 1,
+            "triggers": {"p.a": {"before": "a\ud800b", "load": ["x:y"]}, "p\ud800": {"before": "a", "load": ["x:y"]},
+                         "p.c": {"before": "c", "load": ["x:\ud800"]}, "p.ok": {"before": "ok", "load": ["x:y"]}},
+        }
+        got = resolve(l4=project)
+        rows = render.collect_rows([], got.effective)
+        self.assertEqual([row.id for row in rows], ["rigger-core.testing", "rigger-core.debugging", "p.ok"])
+        self.assertIn(b"| ok | `x:y` |", render.table(rows, SPEC_SLOTS))
+        tmp = Path(tempfile.mkdtemp(prefix="config snapshot "))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        data = {key: [] for key in snapshot.SNAPSHOT_KEYS}
+        data.update({"format": snapshot.SNAPSHOT_FORMAT, "config": got.effective, "notices": got.notices})
+        self.assertIsNotNone(snapshot.write_snapshot(tmp, "s1", data))
 
     def test_slots_above_level_one_are_recorded_not_applied(self):
         l3 = {

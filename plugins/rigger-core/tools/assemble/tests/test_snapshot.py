@@ -59,6 +59,10 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("zażółć".encode("utf-8"), raw)
         self.assertEqual(json.loads(raw.decode("utf-8")), data)
 
+    def test_unencodable_data_writes_nothing(self):
+        self.assertIsNone(snapshot.write_snapshot(self.config, "s1", full_data(notices=["a\ud800"])))
+        self.assertEqual([path for path in self.tmp.rglob("*") if path.is_file()], [])
+
     def test_old_format_reads_as_missing(self):
         self.state.mkdir(parents=True)
         no_parts = full_data()

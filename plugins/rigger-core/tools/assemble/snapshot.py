@@ -32,7 +32,10 @@ def write_snapshot(config_dir: Path, session_id: str, data: dict) -> Optional[Pa
     path = snapshot_path(config_dir, session_id)
     if path is None:
         return None
-    body = (json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
+    try:
+        body = (json.dumps(data, ensure_ascii=False, sort_keys=True, indent=1) + "\n").encode("utf-8")
+    except (TypeError, ValueError):  # UnicodeEncodeError (a lone surrogate) is a ValueError
+        return None
     temp = path.with_name("%s.%d.tmp" % (path.name, os.getpid()))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
