@@ -1029,7 +1029,8 @@ BYPASS_ROWS = [
     ("Bash", "am", "git am -n {patch}", "skips"),
     ("Bash", "am", "git am -3n {patch}", "skips"),
     ("Bash", "am", "git am -p1 -n {patch}", "skips"),
-    ("Bash", "am", "git am -p -n {patch}", "runs"),
+    # `-n` is -p's value, never --no-verify: git before 2.56 runs the hook, 2.56 refuses a non-number
+    ("Bash", "am", "git am -p -n {patch}", "never-skips"),
     ("Bash", "am", "git am --no-verify --v {patch}", "runs"),
     ("Bash", "am", "git am --directory --no-verify {patch}", "runs"),
     ("Bash", "push", "git push --no-verify origin main", "skips"),
@@ -1272,7 +1273,8 @@ def hook_bypass_checks(runs):
         ran += 1
         seen = {"skips": code == 0 and moved and not logged, "runs": code == 0 and logged,
                 "ignored": code == 0 and logged, "refused": code != 0 and not logged,
-                "no-commit": code == 0 and not moved and not logged}[effect]
+                "no-commit": code == 0 and not moved and not logged,
+                "never-skips": (code == 0 and logged) or (code != 0 and not moved and not logged)}[effect]
         got = next((f.rule for f in shell_guard.check_git(tool, text, repo) if f.deny), None)
         want = "git-no-verify" if effect in ("skips", "ignored") else None
         if not seen or got != want:
