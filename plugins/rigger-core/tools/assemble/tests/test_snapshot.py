@@ -37,12 +37,22 @@ class SnapshotTests(unittest.TestCase):
         return sorted(str(p.relative_to(path)) for p in path.rglob("*"))
 
     def test_unsafe_session_id_writes_nothing(self):
-        for session_id in ("", "../x", "a\\b", "a/b", "x" * 129, "abc\n", "a b", "..", "a.b"):
-            with self.subTest(session_id=session_id):
+        for session_id in ("", "../x", "a\\b", "a/b", "x" * 129, "abc\n", "a b", "..", "a.b", None, 5, "ż",
+                           "１"):
+            with self.subTest(session_id=repr(session_id)):
                 self.assertIsNone(snapshot.snapshot_path(self.config, session_id))
                 self.assertIsNone(snapshot.write_snapshot(self.config, session_id, full_data()))
                 self.assertIsNone(snapshot.read_snapshot(self.config, session_id))
                 self.assertEqual(self.files_under(self.tmp), ["config dir"])
+
+    def test_unsafe_session_id_reads_nothing_outside_state(self):
+        planted = self.config / "rigger" / "x.resolved.json"
+        planted.parent.mkdir(parents=True)
+        planted.write_bytes(json.dumps(full_data()).encode("utf-8"))
+        self.assertIsNone(snapshot.read_snapshot(self.config, "../x"))
+        (self.state).mkdir()
+        (self.state / "x.resolved.json").write_bytes(json.dumps(full_data()).encode("utf-8"))
+        self.assertEqual(snapshot.read_snapshot(self.config, "x"), full_data())
 
     def test_safe_session_id_path(self):
         path = snapshot.snapshot_path(self.config, "Ab_9-" + "x" * 123)
