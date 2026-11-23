@@ -4,7 +4,7 @@
 # leave an older rigger-core in the cache, and the session would then start with no rules at all.
 #
 # It reads <config dir>/plugins/installed_plugins.json and checks only when this plugin runs from one
-# of its installPath folders (a cache install). A directory marketplace runs hooks from its source
+# of rigger-rules' installPath folders (a cache install), compared after pwd -P on both. A directory marketplace runs hooks from its source
 # while installPath is a stale snapshot, so there a current core would read as old: no check. Every
 # installPath whose last or second-to-last path element is rigger-core counts as a core; the line
 # prints when at least one exists and none holds tools/assemble/part.sh. A missing or unreadable
@@ -14,22 +14,15 @@ here=${0%/*}
 [ "$here" != "$0" ] || here=.
 own=$(cd "$here/.." 2>/dev/null && pwd -P) || exit 0
 
-# A Windows drive-letter path written with backslashes reaches sh with forward slashes.
-posix() {
-  case $1 in
-    [A-Za-z]:\\*) printf '%s\n' "$1" | tr '\\' '/' ;;
-    *) printf '%s\n' "$1" ;;
-  esac
-}
-
 config=${CLAUDE_CONFIG_DIR:-}
 [ -n "$config" ] || config=${HOME:-}/.claude
-config=$(posix "$config")
 list=$config/plugins/installed_plugins.json
 [ -f "$list" ] || exit 0
 
-# Every "installPath" string value, one per line, with the JSON escapes \\ \/ \" undone. A value
-# holding any other escape is skipped. The file may be indented or on one line.
+# One line per Rigger installPath, "core <path>" or "rules <path>", by its last or second-to-last
+# path element: the other plugins cost no process here. The JSON escapes \\ \/ \" are undone (a value
+# holding any other escape is skipped) and a drive-letter path gets forward slashes. The file may be
+# indented or on one line.
 paths=$(awk '
   { text = text $0 "\n" }
   END {
@@ -53,7 +46,12 @@ paths=$(awk '
         }
         value = value c
       }
-      if (closed && value != "") print value
+      if (!closed || value == "") continue
+      if (value ~ /^[A-Za-z]:\\/) gsub(/\\/, "/", value)
+      sub(/\/+$/, "", value)
+      count = split(value, parts, "/")
+      if (parts[count] == "rigger-core" || (count > 1 && parts[count - 1] == "rigger-core")) print "core " value
+      else if (parts[count] == "rigger-rules" || (count > 1 && parts[count - 1] == "rigger-rules")) print "rules " value
     }
   }
 ' "$list" 2>/dev/null) || exit 0
@@ -61,18 +59,17 @@ paths=$(awk '
 ours=no
 cores=0
 current=no
-while IFS= read -r path; do
-  [ -n "$path" ] || continue
-  path=$(posix "$path")
-  path=${path%/}
-  last=${path##*/}
-  parent=${path%/*}
-  if [ "$last" = rigger-core ] || [ "${parent##*/}" = rigger-core ]; then
-    cores=$((cores + 1))
-    [ ! -f "$path/tools/assemble/part.sh" ] || current=yes
-  fi
-  real=$(cd "$path" 2>/dev/null && pwd -P) || continue
-  [ "$real" != "$own" ] || ours=yes
+while read -r kind path; do
+  case $kind in
+    core)
+      cores=$((cores + 1))
+      [ ! -f "$path/tools/assemble/part.sh" ] || current=yes
+      ;;
+    rules)
+      real=$(cd "$path" 2>/dev/null && pwd -P) || continue
+      [ "$real" != "$own" ] || ours=yes
+      ;;
+  esac
 done <<EOF
 $paths
 EOF

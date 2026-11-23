@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -119,6 +120,19 @@ class CoreCheckTests(unittest.TestCase):
             with self.subTest(row=name):
                 self.listing(entries, minified=options.get("minified", False))
                 self.assertEqual(self.run_check(options.get("root")), expected)
+
+    def test_many_other_plugins_stay_fast(self):
+        # A spawn per listed plugin cost 6.3 s for 100 entries under Git Bash; only Rigger's entries may cost one.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        entries = {"rigger-rules@rigger": self.rules, "rigger-core@rigger": old}
+        for index in range(100):
+            other = self.cache / "other" / ("plugin-%d" % index) / "1.0.0"
+            other.mkdir(parents=True)
+            entries["plugin-%d@other" % index] = other
+        self.listing(entries, form="native")
+        started = time.monotonic()
+        self.assertEqual(self.run_check(), LINE)
+        self.assertLess(time.monotonic() - started, 2.0)
 
     def test_one_current_core_entry_is_enough(self):
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
