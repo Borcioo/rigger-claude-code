@@ -299,7 +299,7 @@ class HookFileTests(unittest.TestCase):
         """At 10 s a busy Windows machine timed out and the action went unchecked."""
         path = ROOT / "plugins" / "rigger-core" / "hooks" / "hooks.json"
         found = [handler for event, _group, handler in hook_handlers(path) if event == "PreToolUse"]
-        self.assertEqual(len(found), 2)
+        self.assertEqual(len(found), 4)
         for handler in found:
             self.assertEqual(handler["timeout"], 20)
 
@@ -428,7 +428,8 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 9)
+        self.assertEqual(len(names), moved + 11)
+        self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
         self.assertEqual(names.count("stop_shadow.py"), 1)

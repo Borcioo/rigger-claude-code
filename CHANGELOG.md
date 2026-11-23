@@ -5,6 +5,16 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Added
+
+- `rigger-core:testing` skill (how to test: level and boundary, doubles, red-run procedure, flakiness,
+  agent pitfalls); the Tests rule keeps only what must hold, the rules text shrinks and its size
+  ceiling follows. Eval `testing-skill-loads` with a negative control.
+- `docs/research/testing-practices.md`, a sourced reference on testing practices.
+- Weak-test guard (`rigger-core`, PreToolUse on `git commit`): denies a commit that removes or skips
+  tests, folds them away or weakens assertions unless the message states a `Test-change: <why>`.
+  It starts no editor and no lazy fetch before the command is approved.
+
 ### Changed
 
 - The two `rigger-core` PreToolUse hooks (side-session guard) get 20 s before Claude Code skips them

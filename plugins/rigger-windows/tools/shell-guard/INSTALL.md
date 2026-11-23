@@ -16,9 +16,10 @@ Herd and Composer paths come from `%USERPROFILE%` and `%APPDATA%`.
 **Cost:** each handler that runs spawns Python: median 64 ms per call (20 runs of the `--pwsh-all`
 handler below on `Get-Date`, Store Python 3.11). A deny reason is one or two sentences.
 
-For PowerShell, a handler's `if` does not filter on the command text: every PowerShell handler
-spawns on every PowerShell call. For Bash, `if` does filter. So PowerShell gets one handler that runs
-all the installed rules, and Bash keeps one `if`-filtered handler per pattern.
+A handler's `if` filters on the command text in both shells (proved on CLI 2.1.323 and 2.1.325:
+`PowerShell(*commit*)` starts on `git -C . commit` and not on `Get-Date`). PowerShell gets one
+handler without `if` that runs all the installed rules, and Bash keeps one `if`-filtered handler per
+pattern.
 
 ## To install: the narrow hooks
 
