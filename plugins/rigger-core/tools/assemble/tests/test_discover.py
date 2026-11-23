@@ -226,6 +226,9 @@ class DiscoverTests(unittest.TestCase):
         def settings_broken(layout):
             write_json(layout.project / ".claude" / "settings.local.json", b"{")
 
+        def settings_deep(layout):
+            write_json(layout.project / ".claude" / "settings.json", b"[" * 100000 + b"]" * 100000)
+
         def known_broken(layout):
             write_json(layout.config / "plugins" / "known_marketplaces.json", b"[")
 
@@ -245,6 +248,7 @@ class DiscoverTests(unittest.TestCase):
             ("enabledPlugins value yes", enabled_yes, True),
             ("settings a JSON string", settings_string, True),
             ("settings not JSON", settings_broken, True),
+            ("settings nested 100000", settings_deep, True),
             ("known marketplaces not JSON", known_broken, True),
             ("known marketplaces a list", known_list, True),
             ("marketplace listing not JSON", listing_broken, True),

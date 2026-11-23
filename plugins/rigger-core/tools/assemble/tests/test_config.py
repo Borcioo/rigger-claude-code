@@ -89,6 +89,22 @@ class LoadLevelTests(unittest.TestCase):
                 self.assertEqual(len(notices), 1)
                 self.assertIn("ignored", notices[0])
 
+    def test_deep_nesting_is_one_notice(self):
+        rows = [
+            ("objects 1200", ('{"schema":1,"review":' + '{"a":' * 1200 + "1" + "}" * 1200 + "}").encode("utf-8")),
+            ("lists 100000", b"[" * 100000 + b"]" * 100000),
+            ("objects 33", ('{"schema":1,"review":' + '{"a":' * 32 + "1" + "}" * 32 + "}").encode("utf-8")),
+        ]
+        for label, body in rows:
+            with self.subTest(label):
+                data, notices = config.load_level(self.write(body), 4)
+                self.assertEqual(data, {})
+                self.assertEqual(len(notices), 1, notices)
+                self.assertIn("nested deeper than", notices[0])
+        body = ('{"schema":1,"review":' + '{"a":' * 31 + "1" + "}" * 31 + "}").encode("utf-8")
+        data, notices = config.load_level(self.write(body), 4)
+        self.assertEqual((data["schema"], notices), (1, []))
+
     def test_valid_file_with_bom(self):
         body = b"\xef\xbb\xbf" + json.dumps({"schema": 1, "expects": ["x"]}).encode("utf-8")
         self.assertEqual(config.load_level(self.write(body), 4), ({"schema": 1, "expects": ["x"]}, []))
@@ -101,6 +117,18 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual((got.inactive, got.notices), ({}, []))
         self.assertEqual(got.sources[("slots", "testing", "target")], "L1:" + PATHS[1])
         self.assertEqual(got.sources[("triggers", "rigger-core.testing", "load")], "L1:" + PATHS[1])
+
+    def test_deep_level_passed_to_resolve_is_one_notice(self):
+        deep = 1
+        for _ in range(1200):
+            deep = {"a": deep}
+        for kwargs in ({"l3": {"schema": 1, "review": deep}}, {"l2": [("company-a", {"review": deep})]}):
+            with self.subTest(list(kwargs)[0]):
+                got = resolve(**kwargs)
+                self.assertEqual(got.effective, level_one())
+                self.assertEqual(len(got.notices), 1, got.notices)
+                self.assertIn("nested deeper than", got.notices[0])
+                self.assertEqual(got.inactive, {})
 
     def test_inputs_are_not_mutated(self):
         l1, l4 = level_one(), {"schema": 1, "triggers": {"rigger-core.debugging": None}}

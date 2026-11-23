@@ -18,6 +18,7 @@ LAYERS = ("general", "company")
 AUDIENCES = ("main", "subagent", "both")
 OS_NAMES = ("windows", "macos", "linux")
 SUBAGENT_RULES = ("none", "all")
+MAX_DEPTH = 32
 
 
 class ManifestError(Exception):
@@ -62,15 +63,47 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+class _TooDeep:
+    """Stands for JSON the parser itself refused as too deep (RecursionError)."""
+
+
+TOO_DEEP = _TooDeep()
+
+
+def parsed_problem(value) -> Optional[str]:
+    """Why parsed JSON is refused before anything walks it recursively, or None.
+
+    Walks without recursion: a value nested deeper than MAX_DEPTH would make every later
+    recursive walk (merge, leaves) raise RecursionError.
+    """
+    if value is TOO_DEEP:
+        return "nested deeper than %d levels" % MAX_DEPTH
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, (dict, list)):
+            if depth > MAX_DEPTH:
+                return "nested deeper than %d levels" % MAX_DEPTH
+            children = item.values() if isinstance(item, dict) else item
+            stack.extend((child, depth + 1) for child in children)
+    return None
+
+
 def _read_json(path: Path, what: str):
     try:
         data = path.read_bytes()
     except OSError as error:
         raise ManifestError("%s unreadable: %s" % (what, error.strerror or error))
     try:
-        return json.loads(data.decode("utf-8-sig"))
+        parsed = json.loads(data.decode("utf-8-sig"))
+    except RecursionError:
+        parsed = TOO_DEEP
     except (UnicodeDecodeError, ValueError) as error:
         raise ManifestError("%s not valid JSON: %s" % (what, error))
+    problem = parsed_problem(parsed)
+    if problem:
+        raise ManifestError("%s %s" % (what, problem))
+    return parsed
 
 
 def _requires(value, what: str) -> Tuple[str, ...]:

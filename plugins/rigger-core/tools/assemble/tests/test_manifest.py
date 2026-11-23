@@ -83,6 +83,9 @@ class ManifestTests(unittest.TestCase):
             ),
             ("invalid json", None, b"{not json", "rigger", None, "not valid JSON"),
             ("top-level list", None, b"[]", "rigger", None, "must be an object"),
+            ("nested 40", None, b'{"schema": 1, "provides": ' + b'{"a": ' * 40 + b"1" + b"}" * 41, "rigger", None,
+             "nested deeper than"),
+            ("nested 100000", None, b"[" * 100000 + b"]" * 100000, "rigger", None, "nested deeper than"),
         ]
         for label, data, raw, marketplace, plugin_name, fragment in rows:
             with self.subTest(label):

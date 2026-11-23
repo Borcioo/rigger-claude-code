@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 from config import _shown
-from manifest import CORE, MANIFEST, Module, ManifestError, load_manifest
+from manifest import CORE, MANIFEST, Module, ManifestError, load_manifest, parsed_problem, TOO_DEEP
 
 MODULE_DIRS = "RIGGER_MODULE_DIRS"
 MODULE_DIRS_FILE = ".rigger-module-dirs"
@@ -53,9 +53,15 @@ def _read_json(path: Path):
     except OSError as error:
         raise _Unreadable(error.strerror or str(error))
     try:
-        return json.loads(raw.decode("utf-8-sig"))
+        parsed = json.loads(raw.decode("utf-8-sig"))
+    except RecursionError:
+        parsed = TOO_DEEP
     except (UnicodeDecodeError, ValueError) as error:
         raise _Unreadable("not valid JSON: %s" % error)
+    problem = parsed_problem(parsed)
+    if problem:
+        raise _Unreadable(problem)
+    return parsed
 
 
 def root_text(root: Path) -> str:

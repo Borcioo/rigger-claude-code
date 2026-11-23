@@ -71,8 +71,13 @@ def load_level(path: Path, level: int) -> Tuple[dict, List[str]]:
         return {}, ["rigger: config %s ignored: %s" % (_shown(path, 300), _shown(error.strerror or error))]
     try:
         data = json.loads(raw.decode("utf-8-sig"))
+    except RecursionError:
+        data = manifest.TOO_DEEP
     except (UnicodeDecodeError, ValueError) as error:
         return {}, ["rigger: config %s ignored: not valid JSON (%s)" % (_shown(path, 300), _shown(error))]
+    problem = manifest.parsed_problem(data)
+    if problem:
+        return {}, ["rigger: config %s ignored: %s" % (_shown(path, 300), problem)]
     if not isinstance(data, dict):
         return {}, ["rigger: config %s ignored: not a JSON object" % _shown(path, 300)]
     schema = data.get("schema")
@@ -191,6 +196,10 @@ def resolve(l1: dict, l2: List[Tuple[str, dict]], l3: dict, l4: dict, paths: Dic
     applied = []  # type: List[Tuple[str, dict]]  (source, what this level changes), lowest first
 
     def take(level: int, data: dict, where: str, source: str) -> dict:
+        problem = manifest.parsed_problem(data)
+        if problem:
+            notices.append("rigger: config %s ignored: %s" % (where, problem))
+            return {}
         clean, found = _validate(data, level, where)
         notices.extend(found)
         if level == 1:
