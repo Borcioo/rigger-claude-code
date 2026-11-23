@@ -48,8 +48,6 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
 
 - Derive each expected value from the requirement or a worked example, never by running the code
   and copying its output: such a test encodes the current bug.
-- Tests check the requirement; they do not define it. Never special-case or hard-code to make one
-  pass; a test you believe is wrong is reported, not edited around.
 - A bug fix's test is red on the base commit (run it in a worktree at base): no hand mutation
   needed.
 
@@ -88,7 +86,11 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
   mutates in place, runs and restores (usage in its header); never restore a mutation with
   `git checkout`.
 - Python: a mutant that keeps the file's size and mtime second can load a stale `.pyc`; run each
-  mutant with `-X pycache_prefix=<dir per mutation>` and read the failing case.
+  mutant with `-X pycache_prefix=<dir per mutation>` (`-I` ignores `PYTHONPYCACHEPREFIX`) and read
+  the failing case.
+- A test that claims a runtime or shell (Windows PowerShell 5.1, a Python version) spawns it, and
+  the invocation that runs the code under test prints its version; a separate probe call stays
+  green when the code hard-codes another one. Red-run it by hard-coding the other one there.
 - Report per low-risk test one line: test id → mutation → failing assertion line.
 
 ## Checks that can report nothing
@@ -108,7 +110,15 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
 - A port or rewrite is proved by running original and copy on the same input and listing every
   difference, the guards its callers supplied included.
 - Input read from outside gets one test per wrong shape (a list where a dict is expected, a number
-  where a list is expected), each proved by its mutant.
+  where a list is expected; a string iterates harmlessly and kills no `isinstance(…, list)` mutant), each proved by its mutant.
+- An exclusion glob prints the count of what it excluded as its control: `rg -g '!<glob>'` with an
+  absolute search path excludes nothing (globs match the path as given), so run it from the root
+  with `.` as the path.
+- A regex run on user- or model-supplied text gets a backtracking probe: 40 repeats of each token of
+  every repeated group, under a time bound. Where alternatives can match the same text two ways,
+  split into words and walk them in code; rerun the probe after each fix.
+- A read-only or permission check on POSIX reads the mode bits (`st_mode & 0o222`), not only
+  `os.access(W_OK)`, which root always passes; its test also runs as root.
 
 ## Fixtures and real output
 
@@ -146,6 +156,4 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
 
 - Hard-coded expected values or special cases that make one test pass.
 - Deleted or loosened assertions, `skip`/`only`/`xfail`, regenerated snapshots without a cause found.
-- A new test function where a row in an existing table would do; duplicated assertions.
-- Mocks added where the real object or a fake was cheap.
 - "All tests pass" without the command and its output.

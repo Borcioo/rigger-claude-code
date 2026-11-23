@@ -25,6 +25,7 @@ With a finding, the commit passes only when a `Test-change: <reason>` line (or `
 takes it) with at least REASON_MIN characters stands in the command text (up to a quote), the `-F`/`--file`
 file, a file a `cat`/`Get-Content` before `git commit -F -` reads, the message `-C`/`-c` reuses, or HEAD's
 message on `--amend`. Otherwise the hook denies it and lists the findings. `--dry-run` is no commit.
+`-F -` has no other source: a message fed to stdin any other way is judged by the command text alone.
 
 The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs). The
 commit is the first simple command whose program is git and whose subcommand is `commit`; `cd`,
@@ -37,7 +38,8 @@ that copy is diffed. The hook runs before the command is approved, so git runs w
 `log` with `--no-show-signature`, the replay with every filter driver of its folder switched off, and a
 reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked.
 
-Fails open: no commit, `cd` without a folder, `git mv`, an interactive add, staging outside the repository,
+Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
+folder, `git mv`, an interactive add, staging outside the repository,
 no repository (a folder named by a variable or `~` is read literally and fails here), a git error, 8 s of
 git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
 Loosening an assertion in place (`toBe(3)` to `toBeTruthy()`), a test replaced by a vacuous one, data
@@ -570,7 +572,7 @@ def _read(path):
         with open(path, encoding="utf-8", errors="replace") as handle:
             return handle.read(1 << 20)
     except OSError:
-        return ""
+        return None
 
 
 def _git_env(extra=None):
@@ -635,7 +637,10 @@ def _stated(commit, command):
     if commit.message_file == "-":
         return any(has_reason(_read(path)) for path in commit.message_sources)
     if commit.message_file:
-        return has_reason(_read(os.path.join(commit.folder, commit.message_file)))
+        text = _read(os.path.join(commit.folder, commit.message_file))
+        if text is None:
+            raise RuntimeError("message file unreadable")   # the same command may still write it: fail open
+        return has_reason(text)
     ref = commit.reuse or ("HEAD" if commit.amend and not commit.new_message else None)
     if ref and not ref.startswith("-"):
         return has_reason(_git(["log", "-1", "--no-show-signature", "--format=%B", ref, "--"],

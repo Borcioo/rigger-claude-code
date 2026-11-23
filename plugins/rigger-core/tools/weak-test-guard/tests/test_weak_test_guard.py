@@ -486,6 +486,14 @@ class ReasonTests(unittest.TestCase):
         (repo.root / "plain.txt").write_text("fix: x\n", encoding="utf-8")
         self.assertIsNotNone(reason_of(run_hook("git commit --file=plain.txt", repo.root)))
 
+    def test_an_unreadable_message_file_fails_open(self):
+        # The hook runs before the command, which may still write the file (`python msg.py > m.txt && git commit -F m.txt`).
+        repo = self.weakened()
+        (repo.root / "folder").mkdir()
+        for command in ("python msg.py > m.txt && git commit -F m.txt", "git commit --file=folder"):
+            with self.subTest(command=command):
+                self.assertIsNone(reason_of(run_hook(command, repo.root)))
+
     def test_a_reason_in_a_trailer_option_counts(self):
         repo = self.weakened()
         self.assertIsNone(reason_of(run_hook('git commit -m "fix" --trailer "%s"' % REASON, repo.root)))
