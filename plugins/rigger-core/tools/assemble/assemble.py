@@ -692,7 +692,8 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
                     if before is not None and before[0] == layer:
                         findings.append("duplicate rule id %s in %s and %s" % (section.id, before[1], module.name))
                     elif before is None and layer == "company" and (
-                            _stem(rule.file) in general_stems or _empty_body(section.text)):
+                            _stem(rule.file) in general_stems
+                            or (section.heading is not None and _empty_body(section.text))):
                         line = "orphan override %s in %s: no lower section has that id" % (section.id, where)
                         nearest = _closest(section.id, general_stems.get(_stem(rule.file), []))
                         findings.append(line + ("; closest general id %s" % nearest if nearest else ""))

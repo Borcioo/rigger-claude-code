@@ -725,6 +725,14 @@ class CheckTests(unittest.TestCase):
         found = lay.assemble()
         self.assertEqual(found.sections[-1]["id"], "policy.policy")
         self.assertIn(b"company policy", self.text_of(found))
+        # I5: a preamble is no heading-only section, so a new stem with one stays clean.
+        for name, text in (("one-line preamble", "Company intro line.\n## Policy\n\np\n"),
+                           ("leading blank line", "\n## Policy\n\np\n")):
+            with self.subTest(name):
+                shutil.rmtree(str(acme), ignore_errors=True)
+                acme = lay.module("acme", {"rules/policy.md": (text, "both")}, layer="company")
+                code, out, err = self.check(lay.core, good, acme)
+                self.assertEqual(code, 0, out + err)
 
     def text_of(self, found):
         return b"".join(block[1] for block in found.blocks)
