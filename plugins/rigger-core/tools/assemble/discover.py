@@ -102,6 +102,18 @@ def _relative_source(listing: Optional[dict], name: str) -> Optional[str]:
     return None
 
 
+def _stale_root(listing: Optional[dict], name: str) -> bool:
+    """A readable listing that leaves this plugin on its lagging installPath: unlisted, or a refused folder.
+
+    A plugin listed with a source object lives elsewhere (a git repository), so installPath is its folder.
+    """
+    if listing is None or _relative_source(listing, name) is not None:
+        return False
+    plugins = listing.get("plugins")
+    entries = [i for i in plugins if isinstance(i, dict) and i.get("name") == name] if isinstance(plugins, list) else []
+    return not entries or isinstance(entries[0].get("source"), str)
+
+
 def _directory_source(marketplaces: dict, market: str) -> Optional[str]:
     known = marketplaces.get(market) if isinstance(marketplaces, dict) else None
     source = known.get("source") if isinstance(known, dict) else None
@@ -263,11 +275,18 @@ def discover(config_dir: Path, project_dir: Path, environ: Mapping[str, str], se
             notices.append("rigger: marketplace %s has no readable %s; plugin roots taken from installPath"
                            % (_shown(market), LISTING.as_posix()))
         root = module_root(entry, known, key)
+        if not root.is_absolute():  # it would resolve against the hook's cwd, the project
+            notices.append("rigger: plugin %s installPath %s is not an absolute path; skipped"
+                           % (_shown(key), _shown(root, 300)))
+            continue
         if not root.is_dir():
             notices.append("rigger: plugin %s root %s is not a directory; skipped" % (_shown(key), _shown(root, 300)))
             continue
         if not (root / MANIFEST).is_file():
             continue
+        if folder is not None and market not in unlisted and _stale_root(_listing(folder), name):
+            notices.append("rigger: plugin %s has no usable source in marketplace %s's listing; root taken "
+                           "from installPath" % (_shown(key), _shown(market)))
         module = _load(root, market, "installed", name, notices)
         if module is not None:
             chosen[name] = module

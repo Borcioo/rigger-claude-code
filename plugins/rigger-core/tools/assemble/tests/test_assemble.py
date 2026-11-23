@@ -390,6 +390,17 @@ class SelectionTests(Base):
         self.assertNotIn(b"keep a state file", sub)  # main-only section
         self.assertIn(b"keep a state file", self.layout.render())
 
+    def test_render_from_the_snapshot_keeps_the_agent_skip(self):
+        # RV3 F5: --render --subagent with a live session id shows what that agent's hook prints.
+        self.layout.rules_module()
+        startup = self.layout.hook_input(session_id="r5", source="startup")
+        self.layout.part(1, stdin=startup)
+        self.assertTrue((self.layout.config / "rigger" / "state" / "r5.resolved.json").is_file())
+        for agent in ("Explore", "rigger-core:implementer"):
+            self.assertEqual(self.layout.render("--subagent", "--agent-type", agent, "--session-id", "r5"), b"", agent)
+        self.assertIn(b"run the tests",
+                      self.layout.render("--subagent", "--agent-type", "rigger-core:worker", "--session-id", "r5"))
+
 
 class OutputTests(Base):
     def test_subagent_json_is_valid_and_decodes_to_text(self):
@@ -673,6 +684,32 @@ class ConfigTests(Base):
         self.assertIn("claude plugin install nope", notices[0])
         self.assertNotIn("rigger-wp", notices[0])
 
+    def test_a_flood_of_notices_is_cut_and_the_rules_still_print(self):
+        # RV2 M4: 80 broken project rows give over 9,000 bytes of notices; they must not take every notice out.
+        self.layout.rules_module()
+        rows = {"p.row%02d" % n: {"before": "a\nb", "load": ["x:y"]} for n in range(80)}
+        write_json(self.layout.project / ".claude" / "rigger.json", {"schema": 1, "triggers": rows})
+        self.assertEqual(len(self.layout.assemble().notices), 80)
+        parts = [self.layout.part(i) for i in range(1, 7)]
+        joined = b"".join(parts)
+        shown = [line for line in joined.splitlines() if line.startswith(b"rigger: config ")]
+        self.assertGreater(len(shown), 0)
+        self.assertLessEqual(sum(len(line) + 1 for line in shown), 2000)
+        self.assertTrue(parts[0].startswith(shown[0] + b"\n"))
+        self.assertIn(b"rigger: %d more notices not shown; assemble.py --render prints them all\n"
+                      % (80 - len(shown)), parts[0])
+        self.assertNotIn(b"_notices", joined)
+        self.assertIn(b"run the tests", joined)
+        self.assertEqual(self.layout.render().count(b"rigger: config "), 80)
+
+    def test_a_first_block_too_big_for_any_part_leaves_the_rest_in_part_one(self):
+        # RV2b N1: part 1's reserved room for a late line must not count as content.
+        self.layout.rules_module()
+        write(self.layout.core / "rules" / "state-file.md", "## State file\n\n" + "s" * 9500 + "\n")
+        parts = [self.layout.part(i) for i in range(1, 7)]
+        self.assertIn(b"run the tests", parts[0])
+        self.assertTrue(b"".join(parts).endswith(b"rigger: rules left out over the hook cap: state-file.state-file\n"))
+
     def test_notices_open_part_one_only(self):
         self.layout.rules_module()
         self.layout.personal("tests.md", "## Tests\n\nmy tests\n")
@@ -876,6 +913,19 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(fields[:3], ["CHECK", "rules-assembly", "OK"])
         self.assertRegex(fields[3], r"^modules 2, sections 5$")
         self.assertEqual(len(fields), 5)
+
+    def test_each_expects_row_gets_its_own_fix(self):
+        # RV3 F3: two names that a shortened row name shows alike keep their own FIX line.
+        names = ["a" * 85 + "x", "a" * 85 + "y"]
+        write_json(self.layout.project / ".claude" / "rigger.json", {"schema": 1, "expects": names})
+        code, out, _ = self.layout.cli("--doctor", CLAUDE_PROJECT_DIR=str(self.layout.project))
+        self.assertEqual(code, 0)
+        lines = out.decode("utf-8").splitlines() + [""]
+        pairs = [(lines[i].split("\t")[1], lines[i + 1]) for i, line in enumerate(lines)
+                 if line.startswith("CHECK\texpects ")]
+        self.assertEqual(len(pairs), 2)
+        for (row, fix), name in zip(pairs, names):
+            self.assertEqual(fix, "FIX\t%s\tclaude plugin install %s" % (row, name))
 
 
 if __name__ == "__main__":

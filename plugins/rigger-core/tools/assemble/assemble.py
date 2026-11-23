@@ -58,6 +58,8 @@ EXPECTS = ("rigger: this project expects {name}, which is not installed and enab
 SNAPSHOT_MISSING = "rigger: snapshot missing; rules read again"
 SNAPSHOT_NOT_WRITTEN = "rigger: snapshot not written; compaction will read the rules again"
 CRASH = "rigger: rules not assembled: {kind}: {text} (" + DOCTOR + ")"
+NOTICES_CAP = 2000  # bytes of notices a session or subagent gets; --render prints them all (M4)
+MORE_NOTICES = "rigger: {count} more notices not shown; assemble.py --render prints them all"
 LEFT_OUT = "rules_extra: left out over the hook cap: {names}"
 CANNOT_READ = "rules_extra: cannot read {name}"
 _CONTROL = bytes(range(0, 9)) + bytes(range(11, 32))  # rules_extra.sh: tr -d '\000-\010\013-\037'
@@ -473,13 +475,26 @@ def part_bodies(found: Assembly, subagent: bool, count: Optional[int] = None) ->
         return [b""] * count
     blocks = list(found.blocks)
     if found.notices:
-        blocks.insert(0, ("", "".join(line + "\n" for line in found.notices).encode("utf-8", "replace"), "_notices"))
+        blocks.insert(0, ("", _notice_text(found.notices), "_notices"))
     if subagent:
         return pack(blocks, PART_CAP, count, _json_body)[0]
     # Room in part 1 for the longest line only part 1 may add after packing (M1).
     reserve = max(len(SNAPSHOT_MISSING), len(SNAPSHOT_NOT_WRITTEN)) + 1
-    bodies, _ = pack([("", b"\0" * reserve, "_reserve")] + blocks, PART_CAP, count, _identity)
-    return [bodies[0][reserve:]] + bodies[1:]
+    return pack(blocks, PART_CAP, count, _identity, PART_CAP - reserve)[0]
+
+
+def _notice_text(notices: List[str]) -> bytes:
+    """The notices a hook part prints: those that fit in NOTICES_CAP bytes, then one line counting the rest."""
+    lines = [(line + "\n").encode("utf-8", "replace") for line in notices]
+    kept, size = [], 0
+    for line in lines:
+        if size + len(line) > NOTICES_CAP:
+            break
+        kept.append(line)
+        size += len(line)
+    if len(kept) < len(lines):
+        kept.append((MORE_NOTICES.format(count=len(lines) - len(kept)) + "\n").encode("utf-8"))
+    return b"".join(kept)
 
 
 def whole_text(found: Assembly) -> bytes:
@@ -586,13 +601,21 @@ def _session_part(inputs: Inputs, hook: dict, index: int) -> bytes:
     return body
 
 
+def _stored_skip(data: Optional[dict]) -> Optional[Set[str]]:
+    """The agent types a snapshot says get no rules, built-ins included; None when it holds no usable list."""
+    skip = data.get("skip") if isinstance(data, dict) else None
+    if not isinstance(skip, list) or not all(isinstance(s, str) for s in skip):
+        return None
+    return set(skip) | set(BUILT_IN_SKIPS)
+
+
 def _subagent_part(inputs: Inputs, hook: dict, index: int) -> bytes:
     agent = _text(hook, "agent_type")
     stored = snapshot.read_snapshot(inputs.config_dir, _text(hook, "session_id") or "")
     bodies = _stored_parts(stored, "subagent", SUBAGENT_PARTS)
-    skip = stored.get("skip") if isinstance(stored, dict) else None
-    if bodies is not None and isinstance(skip, list) and all(isinstance(s, str) for s in skip):
-        if agent is not None and agent in set(skip) | set(BUILT_IN_SKIPS):
+    skip = _stored_skip(stored)
+    if bodies is not None and skip is not None:
+        if agent in skip:
             return b""
     else:
         bodies = part_bodies(assemble(inputs, "subagent", agent), True)
@@ -618,13 +641,15 @@ def _render(argv: List[str], environ: Mapping[str, str]) -> bytes:
     if source is not None and source not in SOURCES:
         return b""
     audience = "subagent" if subagent else "main"
+    agent = _option_value(argv, "--agent-type")
     if source == "compact" or subagent:
         count = SUBAGENT_PARTS if subagent else SESSION_PARTS
-        stored = _stored_parts(snapshot.read_snapshot(inputs.config_dir, session), audience, count)
-        if stored is not None:
-            return b"".join(stored)
-    return whole_text(assemble(inputs, audience, _option_value(argv, "--agent-type"),
-                               mark_personal="--mark-personal" in argv))
+        data = snapshot.read_snapshot(inputs.config_dir, session)
+        stored = _stored_parts(data, audience, count)
+        skip = _stored_skip(data) if subagent else set()
+        if stored is not None and skip is not None:
+            return b"" if agent in skip else b"".join(stored)  # as _subagent_part decides
+    return whole_text(assemble(inputs, audience, agent, mark_personal="--mark-personal" in argv))
 
 
 def _distance(a: str, b: str) -> int:
@@ -759,7 +784,7 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
             if line in found.notices and line not in own:
                 own.add(line)
                 rows.append(("rule-override " + _shown(section["id"]), "INFO", line[len("rigger: "):]))
-    fixes = {}  # type: Dict[str, str]
+    fixes = {}  # type: Dict[int, str]  by position in rows: two long names can show as one row name
     expects = found.resolved.effective.get("expects") if found.resolved is not None else None
     for name in dict.fromkeys(expects if isinstance(expects, list) else ()):
         if name not in found.discovery.enabled:
@@ -767,7 +792,7 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
             row = "expects " + _shown(name)
             rows.append((row, "MISSING", "not installed and enabled"))
             if isinstance(name, str) and _FIX_NAME.fullmatch(name):
-                fixes[row] = "claude plugin install " + name
+                fixes[len(rows) - 1] = "claude plugin install " + name
     inactive = found.resolved.inactive if found.resolved is not None else {}
     for path, source in sorted(inactive.items()):
         key = _shown(".".join(path))
@@ -779,10 +804,10 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
     else:
         head = ("rules-assembly", "OK", "modules %d, sections %d" % (modules, len(found.sections)))
     lines = []
-    for name, status, detail in [head] + rows:
+    for position, (name, status, detail) in enumerate([head] + rows, -1):
         lines.append("CHECK\t%s\t%s\t%s\t%s\n" % (name, status, detail.replace("\t", " "), how))
-        if name in fixes:
-            lines.append("FIX\t%s\t%s\n" % (name, fixes[name]))
+        if position in fixes:
+            lines.append("FIX\t%s\t%s\n" % (name, fixes[position]))
     return "".join(lines).encode("utf-8", "replace")
 
 

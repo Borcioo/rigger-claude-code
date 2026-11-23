@@ -36,14 +36,18 @@ def _piece(position: int, block: Block, pieces: List[_Piece]) -> _Piece:
 
 
 def pack(
-    blocks: List[Block], cap: int, count: int, encode: Callable[[bytes], bytes]
+    blocks: List[Block], cap: int, count: int, encode: Callable[[bytes], bytes], first_cap: Optional[int] = None
 ) -> Tuple[List[bytes], List[str]]:
     """Return `count` part bodies (b"" when unused) and the ids of the blocks left out, in order.
 
-    When anything is left out, the last part ends with OVERFLOW_LINE; blocks at the end of the last
-    part make room for that line when they must.
+    `first_cap` keeps room in part 1 for a line added after packing. When anything is left out, the
+    last part ends with OVERFLOW_LINE; blocks at the end of the last part make room for that line
+    when they must.
     """
     built = [[] for _ in range(count)]  # type: List[List[_Piece]]
+    caps = [cap] * count
+    if count and first_cap is not None:
+        caps[0] = first_cap
     index = 0
     left_out = []  # type: List[int]
 
@@ -51,11 +55,11 @@ def pack(
         placed = False
         while index < count:
             piece = _piece(position, block, built[index])
-            if len(encode(_body(built[index], piece[2]))) <= cap:
+            if len(encode(_body(built[index], piece[2]))) <= caps[index]:
                 built[index].append(piece)
                 placed = True
                 break
-            if not built[index]:
+            if not built[index] and len(encode(piece[2])) > cap:
                 break  # larger than an empty part: it can never fit
             index += 1
         if not placed:
@@ -70,7 +74,7 @@ def pack(
     while True:
         ids = [blocks[i][2] for i in sorted(left_out)]
         line = (OVERFLOW_LINE.format(ids=", ".join(ids)) + "\n").encode("utf-8")
-        if len(encode(_body(last, line))) <= cap or not last:
+        if len(encode(_body(last, line))) <= caps[-1] or not last:
             break
         left_out.append(last.pop()[0])
     return [_body(pieces) for pieces in built[:-1]] + [_body(last, line)], ids

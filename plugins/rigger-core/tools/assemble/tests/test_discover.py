@@ -129,7 +129,9 @@ class DiscoverTests(unittest.TestCase):
         self.layout.plugin("superpowers", manifest=False)
         self.layout.installed["rigger-core@" + MARKET] = [{"scope": "user", "installPath": str(self.layout.core)}]
         self.layout.enable("user", rigger_rules=True, superpowers=True, rigger_core=True)
-        self.layout.environ[discover.MODULE_DIRS] = os.pathsep.join([str(self.layout.core), str(rules)])
+        # Each dirs entry is the same folder spelled another way (F6): a string compare would see two copies.
+        detour = [str(root / ".claude-plugin" / "..") for root in (self.layout.core, rules)]
+        self.layout.environ[discover.MODULE_DIRS] = os.pathsep.join(detour)
         found = self.layout.run()
         self.assertEqual(found.notices, [])
         self.assertEqual(self.names(found), ["rigger-core", "rigger-rules"])
@@ -212,6 +214,27 @@ class DiscoverTests(unittest.TestCase):
             layout.installed["rigger-talk@" + MARKET][0]["installPath"] = str(layout.tmp / "gone")
             layout.enable("user", rigger_wp=True, rigger_talk=True)
 
+        def install_path_empty(layout):
+            layout.plugin("rigger-talk")
+            layout.installed["rigger-talk@" + MARKET][0]["installPath"] = ""
+            layout.enable("user", rigger_wp=True, rigger_talk=True)
+
+        def install_path_relative(layout):
+            layout.plugin("rigger-talk")
+            layout.known = {}
+            layout.installed["rigger-talk@" + MARKET][0]["installPath"] = "rigger-talk"
+            make_plugin(layout.project / "rigger-talk", "rigger-talk")  # a hook's cwd is the project
+            self.addCleanup(os.chdir, os.getcwd())
+            os.chdir(str(layout.project))
+            layout.enable("user", rigger_wp=True, rigger_talk=True)
+
+        def enabled_one(layout):
+            layout.plugin("rigger-talk")
+            write_json(layout.project / ".claude" / "settings.json", {"enabledPlugins": {"rigger-talk@rigger": 1}})
+
+        def dirs_file_not_utf8(layout):
+            (layout.core / discover.MODULE_DIRS_FILE).write_bytes(b"\xff\xfe not text\n")
+
         def enabled_list(layout):
             write_json(layout.project / ".claude" / "settings.json", {"enabledPlugins": ["rigger-talk@rigger"]})
 
@@ -247,6 +270,10 @@ class DiscoverTests(unittest.TestCase):
             ("installPath missing", no_install_path, True),
             ("entries not a list", entries_object, True),
             ("installPath gone", install_path_gone, True),
+            ("installPath empty", install_path_empty, True),
+            ("installPath relative", install_path_relative, True),
+            ("enabledPlugins value 1", enabled_one, True),
+            ("module dirs file not UTF-8", dirs_file_not_utf8, True),
             ("enabledPlugins a list", enabled_list, True),
             ("enabledPlugins value yes", enabled_yes, True),
             ("settings a JSON string", settings_string, True),
@@ -320,6 +347,38 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual(rules.triggers[0].id, "rigger-rules.fresh")
         self.assertEqual(rules.marketplace, MARKET)
         self.assertEqual(found.notices, [])
+
+    def test_unusable_listing_entry_falls_back_to_install_path_with_notice(self):
+        # F7: a readable directory-marketplace listing that does not give this plugin a usable folder.
+        def missing(layout):
+            layout.listed[:] = [item for item in layout.listed if item["name"] != "rigger-wp"]
+
+        def dotdot(layout):
+            layout.listed[0]["source"] = "../elsewhere/rigger-wp"
+
+        def absolute(layout):
+            layout.listed[0]["source"] = str(layout.market / "plugins" / "rigger-wp")
+
+        def remote(layout):  # a plugin of this listing that lives elsewhere: installPath is its folder
+            layout.listed[0]["source"] = {"source": "github", "repo": "example/rigger-wp"}
+
+        for label, change, noticed in (("not listed", missing, True), ("source with dotdot", dotdot, True),
+                                       ("absolute source", absolute, True), ("source object", remote, False)):
+            with self.subTest(label):
+                tmp = self.tmp / label.replace(" ", "-")
+                tmp.mkdir()
+                layout = Layout(tmp)
+                layout.plugin("rigger-wp")
+                layout.enable("user", rigger_wp=True)
+                change(layout)
+                found = layout.run()
+                wp = [module for module in found.modules if module.name == "rigger-wp"][0]
+                self.assertTrue(same(wp.root, Path(layout.installed["rigger-wp@" + MARKET][0]["installPath"])))
+                if noticed:
+                    self.assertEqual(found.notices, ["rigger: plugin rigger-wp@rigger has no usable source in "
+                                                     "marketplace rigger's listing; root taken from installPath"])
+                else:
+                    self.assertEqual(found.notices, [])
 
     def test_module_root_string_form(self):
         # A Windows-shaped stored path, built from parts; the drive letter keeps the case it was typed in.

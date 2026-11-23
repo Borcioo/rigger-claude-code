@@ -414,6 +414,26 @@ class HookFileTests(unittest.TestCase):
                     checked += 1
         self.assertGreaterEqual(checked, 11)
 
+    def test_a_missing_core_check_neither_blocks_nor_prints(self):
+        # RV5 M1: a half-written cache without hooks/core_check.sh: sh exits 127, never 2, and stdout stays empty.
+        checked = []
+        for path in hook_files():
+            plugin = path.parent.parent
+            for event, _, handler in hook_handlers(path):
+                if "core_check.sh" not in handler["command"]:
+                    continue
+                with self.subTest(plugin=plugin.name):
+                    base = Path(tempfile.mkdtemp(prefix="hook root "))
+                    self.addCleanup(shutil.rmtree, base, True)
+                    (base / "plugin root" / "hooks").mkdir(parents=True)
+                    proc = self.run_hook(handler["command"], base / "plugin root", base / "data", b"{}")
+                    self.assertNotEqual(proc.returncode, 2, proc.stderr)
+                    self.assertEqual(proc.stdout, b"")
+                    self.assertTrue(proc.stderr, "the command never ran")
+                    checked.append(plugin.name)
+        self.assertEqual(sorted(checked), ["rigger-lessons", "rigger-rules", "rigger-talk", "rigger-windows",
+                                           "rigger-wp"])
+
     def test_pretooluse_commands_still_deny_with_their_exit_zero(self):
         event = json.dumps(
             {"tool_name": "Bash", "tool_input": {"command": "git commit --no-verify -m x"}, "cwd": str(ROOT)}
