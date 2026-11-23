@@ -80,6 +80,7 @@ class SnapshotTests(unittest.TestCase):
         rows = [
             ("format 0", json.dumps(full_data(format=0))),
             ("format true", json.dumps(full_data(format=True))),
+            ("format 1.0", json.dumps(full_data(format=1.0))),
             ("no parts", json.dumps(no_parts)),
             ("a list", "[]"),
             ("not json", "{"),

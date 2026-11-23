@@ -62,7 +62,7 @@ def read_snapshot(config_dir: Path, session_id: str) -> Optional[dict]:
     if not isinstance(data, dict) or any(key not in data for key in SNAPSHOT_KEYS):
         return None
     fmt = data["format"]
-    if isinstance(fmt, bool) or fmt != SNAPSHOT_FORMAT:
+    if not isinstance(fmt, int) or isinstance(fmt, bool) or fmt != SNAPSHOT_FORMAT:
         return None
     return data
 
