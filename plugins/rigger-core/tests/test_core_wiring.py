@@ -136,8 +136,16 @@ class StateFileRuleTests(Base):
 
     def rule_path(self, home, config):
         """The state file the injected rule names, for this home and config dir."""
-        text = subprocess.run([SH, (CORE / "rules" / "rules_start.sh").as_posix(), "state-file.md"], capture_output=True,
-                              stdin=subprocess.DEVNULL, timeout=30, env=clean_env(CLAUDE_PLUGIN_ROOT=CORE.as_posix()))
+        scratch = self.tmp / "rule"
+        scratch.mkdir(exist_ok=True)
+        event = json.dumps({"cwd": str(scratch), "hook_event_name": "SessionStart", "source": "startup"}).encode("utf-8")
+        # HOME alone: a Store Python derives its own path from USERPROFILE.
+        env = clean_env(CLAUDE_PLUGIN_ROOT=CORE.as_posix(), CLAUDE_CONFIG_DIR=str(scratch / "config"),
+                        HOME=str(scratch), RIGGER_MODULE_DIRS="",
+                        PATH=os.pathsep.join((str(Path(SH).parent), os.environ["PATH"])))
+        text = subprocess.run([SH, (CORE / "tools" / "assemble" / "part.sh").as_posix(), "1"], capture_output=True,
+                              input=event, timeout=30, env=env)
+        self.assertEqual((text.returncode, text.stderr), (0, b""))
         named = re.findall(r"`([^`\n]*/state/<CLAUDE_CODE_SESSION_ID>\.md)`", text.stdout.decode("utf-8"))
         self.assertEqual(len(named), 1, named)
         path = named[0].replace("<CLAUDE_CODE_SESSION_ID>", SID)

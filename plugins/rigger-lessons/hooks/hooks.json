@@ -9,27 +9,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "startup|clear|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" lessons.md",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" --subagent lessons-subagent.md",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PreToolUse": [

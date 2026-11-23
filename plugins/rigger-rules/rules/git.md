@@ -1,7 +1,7 @@
-## Git (procedure and naming: `rigger-core:git-workflow`)
+## Git (procedure and naming: {{skill:rigger-core:git-workflow}})
 
 - Never commit on the default branch or force-push it, and nothing reaches it without my OK; the
-  procedure is in `rigger-core:git-workflow`: a main session loads it before the first git write; a
+  procedure is in {{skill:rigger-core:git-workflow}}: a main session loads it before the first git write; a
   subagent gets its name in the brief.
 - Every change that ends in a commit is made in its own worktree where the app's Worktree location
   setting puts it, else under the worktree root the SessionStart line names, else in

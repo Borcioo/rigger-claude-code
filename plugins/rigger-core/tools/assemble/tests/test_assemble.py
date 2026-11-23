@@ -298,6 +298,17 @@ class PersonalTests(Base):
         self.assertNotIn(b'"' * 3997, sub)
         self.assertIn(b"rules_extra: left out over the hook cap: q.md\n", sub)
 
+    def test_personal_files_print_in_byte_order_and_main_files_stay_in_the_session(self):
+        # Moved from rigger-rules' test_rules_extra.py: what rules_extra.sh printed is what the session gets.
+        self.layout.rules_module()
+        for name, text in (("b.md", "b\n"), ("a.md", "a\n"), ("Z.md", "Z\n"), ("10.md", "ten\n"), ("9.md", "nine\n"),
+                           ("note.txt", "not markdown\n"), ("c.md.bak", "backup\n"), ("a-main.md", "a main\n"),
+                           ("main.md", "plain main\n"), ("my rules.md", "spaced\n"), ("a b-main.md", "spaced main\n")):
+            self.layout.personal(name, text)
+        self.assertTrue(self.layout.render().endswith(
+            b"ten\nnine\nZ\nspaced main\na main\na\nb\nplain main\nspaced\n"))
+        self.assertTrue(self.layout.render("--subagent").endswith(b"ten\nnine\nZ\na\nb\nplain main\nspaced\n"))
+
     def test_personal_filter(self):
         self.layout.rules_module()
         self.layout.personal("f.md", b"## F\r\nx\x01y\tz\r\n\n\n")

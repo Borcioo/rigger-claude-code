@@ -24,7 +24,22 @@
       {
         "matcher": "startup|clear|compact",
         "hooks": [
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" state-file.md", "timeout": 10 }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 1", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 2", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 3", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 4", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 5", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 6", "timeout": 10 }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 1 --subagent", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 2 --subagent", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 3 --subagent", "timeout": 10 },
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 4 --subagent", "timeout": 10 }
         ]
       }
     ],

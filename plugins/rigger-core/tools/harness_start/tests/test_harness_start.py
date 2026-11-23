@@ -3,6 +3,7 @@
 import codecs
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -517,8 +518,9 @@ class HarnessStartTests(unittest.TestCase):
         plugin = Path(__file__).resolve().parents[4] / "rigger-rules"
         shipped = {}
         for path in sorted((plugin / "rules").glob("*.md")):
-            lines = [line.rstrip("\r\n").strip(" \t") for line in path.read_text(encoding="utf-8").split("\n")
-                     if line.startswith("## ")]
+            # A person's CLAUDE.md holds a heading as the session prints it: a skill placeholder as its backticked name.
+            lines = [re.sub(r"\{\{skill:([^{}\s]+)\}\}", r"`\1`", line.rstrip("\r\n").strip(" \t"))
+                     for line in path.read_text(encoding="utf-8").split("\n") if line.startswith("## ")]
             if path.name != "00-scope.md":  # the one preamble file, which has no heading by design
                 self.assertTrue(lines, "%s lost its `## ` heading" % path.name)
             if lines:

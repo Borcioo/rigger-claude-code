@@ -27,7 +27,11 @@ import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-windows")
-PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
+PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules",)
+# Plugins whose rules rigger-core's part handlers print and that keep no hook of their own.
+PLUGINS_WITHOUT_HOOKS = ("rigger-talk", "rigger-wp")
+# A hooks folder without hooks.json holds only scripts that ship one more release and no hook runs.
+RETIRED_HOOK_SCRIPTS = {"rigger-talk": ["talk_start.sh"]}
 
 
 def load_json(path):
@@ -187,7 +191,9 @@ FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-windows")
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"
-RULES_SCRIPTS = ("rules_start.sh", "rules_extra.sh", "talk_start.sh")
+RULES_SCRIPTS = ("rules_start.sh", "rules_extra.sh", "talk_start.sh", "part.sh")
+SESSION_PARTS = 6
+SUBAGENT_PARTS = 4
 
 
 def is_function_hooks(path):
@@ -291,6 +297,10 @@ class HookFileTests(unittest.TestCase):
         for folder in folders:
             with self.subTest(folder=folder.relative_to(ROOT).as_posix()):
                 path = folder / "hooks.json"
+                retired = RETIRED_HOOK_SCRIPTS.get(folder.parent.name)
+                if retired is not None:
+                    self.assertEqual(sorted(item.name for item in folder.iterdir()), retired)
+                    continue
                 self.assertTrue(path.is_file(), path)
                 if is_function_hooks(path):
                     modules = load_json(path)["modules"]
@@ -311,6 +321,9 @@ class HookFileTests(unittest.TestCase):
         for name in PLUGINS_WITH_HOOKS:
             with self.subTest(plugin=name):
                 self.assertTrue((ROOT / "plugins" / name / "hooks" / "hooks.json").is_file())
+        for name in PLUGINS_WITHOUT_HOOKS:
+            with self.subTest(plugin=name):
+                self.assertFalse((ROOT / "plugins" / name / "hooks" / "hooks.json").exists())
 
     def test_commands_use_the_plugin_root_and_call_existing_files(self):
         files = hook_files()
@@ -505,6 +518,16 @@ class DuplicateHookTests(unittest.TestCase):
         self.assertEqual(names.count("report_shadow.py"), 1)
         self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
+
+    def test_rules_print_only_through_the_core_part_handlers(self):
+        found = self.plugin_handlers()
+        parts = [(item.source, item.event, item.identity[2]) for item in found if item.identity[1] == "part.sh"]
+        self.assertEqual(parts, [("plugin rigger-core", "SessionStart", (str(i),)) for i in range(1, SESSION_PARTS + 1)]
+                         + [("plugin rigger-core", "SubagentStart", (str(i), "--subagent"))
+                            for i in range(1, SUBAGENT_PARTS + 1)])
+        for name in ("rules_start.sh", "rules_extra.sh", "talk_start.sh"):
+            with self.subTest(script=name):
+                self.assertEqual([item.source for item in found if item.identity[1] == name], [])
 
     def test_all_moved_rows_are_named_on_a_hand_made_config(self):
         self.assertEqual(len(self.check(HAND_MADE_HOOKS)), len(self.rows("rigger-core", "rigger-windows")))

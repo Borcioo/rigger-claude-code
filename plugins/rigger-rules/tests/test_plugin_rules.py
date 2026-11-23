@@ -1,9 +1,12 @@
-"""The rules of rigger-core, rigger-windows, and rigger-wp: wiring and what each hook prints."""
+"""The rules every module prints: the rigger-core part handlers that carry them, and what they say."""
 
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,12 +16,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_rules_hooks as common  # noqa: E402
 
 PLUGINS = common.REPO / "plugins"
+CORE = PLUGINS / "rigger-core"
+sys.path.insert(0, str(CORE / "tools" / "assemble"))
+
+import assemble  # noqa: E402
+
 MATCHER = common.MATCHER
-SESSION_FILES = {
-    "rigger-core": ["state-file.md"],
-    "rigger-windows": ["windows.md", "windows-skills.md"],
-    "rigger-wp": ["wp-skills.md"],
-}
+SESSION_PARTS = 6
+SUBAGENT_PARTS = 4
 SKILL_TABLES = {
     "rigger-windows": "windows-skills.md",
     "rigger-wp": "wp-skills.md",
@@ -27,12 +32,15 @@ WINDOWS = PLUGINS / "rigger-windows"
 ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
-# Every session loads these files: they may be rewritten, never grown. Lower the ceiling when they shrink.
-RULES_CEILING_BYTES = 27681
+# Every session loads these sections: they may be rewritten, never grown. Lower the ceiling when they shrink.
+# The sum is the rendered general layer with module options at their defaults (D20).
+RULES_CEILING_BYTES = 27708
 RULES_MIN_FILES = 19
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"
 ROW_RE = re.compile(r"\| .+ \| `([a-z-]+):([a-z-]+)` \|")
+SID = "5b1f0c1e-7d3a-4c55-9a2e-0f6d1c2b3a49"
+FILL = 8400  # one fill section per part: two never share the 9,000-byte cap
 
 
 def load_hooks(plugin):
@@ -40,8 +48,17 @@ def load_hooks(plugin):
         return json.load(handle)["hooks"]
 
 
-def rules_command(name):
-    return 'sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh" ' + name
+def load_manifest(root):
+    with open(Path(root) / "rigger-module.json", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def module_dirs(root=PLUGINS):
+    return [path.parent for path in sorted(Path(root).glob("*/rigger-module.json"))]
+
+
+def part_command(index, subagent=False):
+    return 'sh "${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh" %d%s' % (index, " --subagent" if subagent else "")
 
 
 def fires(group, source):
@@ -54,143 +71,240 @@ def session_handlers(plugin, source):
     return [handler for group in load_hooks(plugin)["SessionStart"] if fires(group, source) for handler in group["hooks"]]
 
 
-def rules_handlers(plugin, source):
-    return [handler for handler in session_handlers(plugin, source) if "rules_start.sh" in handler["command"]]
+def without_root_lines(data):
+    return b"".join(line for line in data.splitlines(True) if not line.startswith(b"Plugin root: "))
 
 
-def rules_text(plugin, name):
-    return (PLUGINS / plugin / "rules" / name).read_bytes()
-
-
-def root_line(plugin):
-    return ("Plugin root: %s\n" % (PLUGINS / plugin).as_posix()).encode("utf-8")
-
-
-def windows_subagent_command():
-    return load_hooks("rigger-windows")["SubagentStart"][0]["hooks"][0]["command"]
+def root_line(root):
+    return ("Plugin root: %s\n" % Path(root).as_posix()).encode("utf-8")
 
 
 def heading_lines(text):
     return [line.strip(" \t\r") for line in text.split("\n") if line.startswith("## ")]
 
 
-class WiringTests(unittest.TestCase):
-    def test_every_rules_file_of_a_plugin_is_listed(self):
-        for plugin, names in SESSION_FILES.items():
-            with self.subTest(plugin=plugin):
-                self.assertEqual(sorted(names), sorted(path.name for path in (PLUGINS / plugin / "rules").glob("*.md")))
+class Assembled:
+    """The repository's modules assembled in-process with an empty config dir: options at their defaults."""
 
-    def test_one_session_group_with_one_handler_per_file(self):
-        for plugin, names in SESSION_FILES.items():
-            with self.subTest(plugin=plugin):
-                groups = [group for group in load_hooks(plugin)["SessionStart"]
-                          if any("rules_start.sh" in handler["command"] for handler in group["hooks"])]
-                self.assertEqual(len(groups), 1)
-                self.assertEqual(groups[0]["matcher"], MATCHER)
-                self.assertEqual(groups[0]["hooks"], [
-                    {"type": "command", "command": rules_command(name), "timeout": 10} for name in names
-                ])
+    def __init__(self, root=PLUGINS, **environ):
+        self.root = Path(root)
+        tmp = Path(tempfile.mkdtemp(prefix="plugin-rules-"))
+        try:
+            (tmp / "config").mkdir()
+            (tmp / "project").mkdir()
+            env = {"CLAUDE_CONFIG_DIR": str(tmp / "config"),
+                   "RIGGER_MODULE_DIRS": os.pathsep.join(str(path) for path in module_dirs(self.root))}
+            env.update(environ)
+            inputs = assemble.Inputs(config_dir=tmp / "config", project_dir=tmp / "project", environ=env,
+                                     self_root=self.root / "rigger-core")
+            self.main = assemble.assemble(inputs, "main")
+            self.subagent = assemble.assemble(inputs, "subagent", "general-purpose")
+        finally:
+            shutil.rmtree(str(tmp), True)
+
+    def text(self, plugin, name, audience="main"):
+        """The rendered text of one rules file, as the given audience gets it."""
+        found = self.main if audience == "main" else self.subagent
+        return b"".join(block[1] for block, section in zip(found.blocks, found.sections)
+                        if section["module"] == plugin and section["file"] == "rules/" + name)
+
+    def whole(self, audience="main"):
+        return assemble.whole_text(self.main if audience == "main" else self.subagent)
+
+
+_ASSEMBLED = []
+
+
+def assembled():
+    if not _ASSEMBLED:
+        _ASSEMBLED.append(Assembled())
+    return _ASSEMBLED[0]
+
+
+def rules_text(plugin, name, audience="main"):
+    return assembled().text(plugin, name, audience)
+
+
+class HookRun(unittest.TestCase):
+    """Runs rigger-core's real part commands through sh, as Claude Code does, with a temp config dir."""
+
+    def setUp(self):
+        self.sh = common.find_sh()
+        self.assertIsNotNone(self.sh, "no POSIX sh found (Windows needs Git for Windows)")
+        self.tmp = Path(tempfile.mkdtemp(prefix="plugin-rules-hooks-"))
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        self.config = self.tmp / "config"
+        self.config.mkdir()
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+
+    def run_parts(self, event, dirs, stdin, **extra):
+        group = load_hooks("rigger-core")[event]
+        commands = [handler["command"] for g in group for handler in g["hooks"] if "part.sh" in handler["command"]]
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
+        # HOME alone: a Store Python derives its own path from USERPROFILE.
+        env.update({"HOME": str(self.home), "CLAUDE_CONFIG_DIR": str(self.config),
+                    "CLAUDE_PLUGIN_ROOT": CORE.as_posix(), "CLAUDE_PLUGIN_DATA": (self.tmp / "data").as_posix(),
+                    "RIGGER_MODULE_DIRS": os.pathsep.join(str(path) for path in dirs)})
+        env["PATH"] = os.pathsep.join([str(Path(self.sh).parent), env.get("PATH", "")])
+        env.update(extra)
+        outputs = []
+        for command in commands:
+            proc = subprocess.run([self.sh, "-c", command], input=stdin, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, env=env, cwd=str(self.tmp), timeout=60)
+            self.assertEqual((proc.returncode, proc.stderr), (0, b""), command)
+            self.assertNotIn(b"\r", proc.stdout)
+            outputs.append(proc.stdout)
+        return outputs
+
+    def session(self, dirs, source="startup", **extra):
+        stdin = json.dumps({"session_id": SID, "cwd": str(self.tmp), "hook_event_name": "SessionStart",
+                            "source": source}).encode("utf-8")
+        return self.run_parts("SessionStart", dirs, stdin, **extra)
+
+    def subagent(self, dirs, agent="general-purpose", **extra):
+        stdin = json.dumps({"session_id": SID, "cwd": str(self.tmp), "hook_event_name": "SubagentStart",
+                            "agent_type": agent}).encode("utf-8")
+        return self.run_parts("SubagentStart", dirs, stdin, **extra)
+
+    def context(self, out):
+        if out == b"":
+            return b""
+        data = json.loads(out.decode("utf-8"))
+        self.assertEqual(data["hookSpecificOutput"]["hookEventName"], "SubagentStart")
+        return data["hookSpecificOutput"]["additionalContext"].encode("utf-8")
+
+
+class WiringTests(HookRun):
+    def test_every_rules_file_of_a_module_is_in_its_manifest(self):
+        dirs = module_dirs()
+        self.assertEqual(len(dirs), 7)
+        files = 0
+        for root in dirs:
+            with self.subTest(module=root.name):
+                listed = sorted(entry["file"] for entry in load_manifest(root)["rules"])
+                self.assertEqual(listed, sorted("rules/" + path.name for path in (root / "rules").glob("*.md")))
+                files += len(listed)
+        self.assertGreaterEqual(files, RULES_MIN_FILES)
+
+    def test_core_runs_six_session_parts_and_four_subagent_parts(self):
+        hooks = load_hooks("rigger-core")
+        groups = [group for group in hooks["SessionStart"] if any("part.sh" in h["command"] for h in group["hooks"])]
+        self.assertEqual(groups, [{"matcher": MATCHER, "hooks": [
+            {"type": "command", "command": part_command(i), "timeout": 10} for i in range(1, SESSION_PARTS + 1)]}])
+        self.assertEqual(hooks["SubagentStart"], [{"hooks": [
+            {"type": "command", "command": part_command(i, True), "timeout": 10}
+            for i in range(1, SUBAGENT_PARTS + 1)]}])
 
     def test_core_groups_stay_independent(self):
         harness_start = ('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" --notice -S '
                          '"${CLAUDE_PLUGIN_ROOT}/tools/harness_start/harness_start.py" || true')
         compact_guard = ('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S '
                          '"${CLAUDE_PLUGIN_ROOT}/tools/context-guard/compact_guard.py" start || true')
-        state_file = rules_command("state-file.md")
+        parts = [part_command(i) for i in range(1, SESSION_PARTS + 1)]
         for source, commands in (
-            ("startup", [harness_start, state_file]),
-            ("compact", [compact_guard, state_file]),
-            ("clear", [state_file]),
+            ("startup", [harness_start] + parts),
+            ("compact", [compact_guard] + parts),
+            ("clear", parts),
             ("resume", []),
         ):
             with self.subTest(source=source):
                 self.assertEqual([h["command"] for h in session_handlers("rigger-core", source)], commands)
 
-    def test_subagent_handlers_carry_the_skill_tables(self):
-        self.assertNotIn("SubagentStart", load_hooks("rigger-core"))
-        expected = {"rigger-windows": ["windows.md", "windows-skills.md"],
-                    "rigger-wp": ["wp-skills.md"]}
-        for plugin, names in expected.items():
-            with self.subTest(plugin=plugin):
-                self.assertEqual(load_hooks(plugin)["SubagentStart"], [{"hooks": [
-                    {"type": "command", "command": rules_command("--subagent " + name), "timeout": 10}
-                    for name in names
-                ]}])
+    def fill_module(self, name, count, audience):
+        """A module whose every section fills a part of its own."""
+        root = self.tmp / "modules" / name
+        rules = []
+        for index in range(1, count + 1):
+            path = root / "rules" / ("%s%d.md" % (name, index))
+            common.write_bytes(path, "## %s %d\n%s\n" % (name, index, "x" * FILL))
+            rules.append({"file": "rules/" + path.name, "audience": audience})
+        common.write_bytes(root / ".claude-plugin" / "plugin.json", json.dumps({"name": name}))
+        common.write_bytes(root / "rigger-module.json", json.dumps(
+            {"schema": 1, "name": name, "layer": "general", "fills": None, "rules": rules, "triggers": []}))
+        return root
+
+    def test_every_part_the_assembler_fills_has_a_handler(self):
+        # Core's state file takes part 1, so five main fills reach part 6; four subagent fills reach part 4.
+        dirs = [self.fill_module("mainfill", SESSION_PARTS - 1, "main"),
+                self.fill_module("subfill", SUBAGENT_PARTS, "subagent")]
+        session = self.session(dirs)
+        self.assertEqual(len(session), SESSION_PARTS)
+        self.assertNotIn(b"", session)
+        joined = b"".join(session)
+        self.assertNotIn(b"left out over the hook cap", joined)
+        self.assertEqual(joined.count(b"x" * FILL), SESSION_PARTS - 1)
+        subagent = [self.context(out) for out in self.subagent(dirs)]
+        self.assertEqual(len(subagent), SUBAGENT_PARTS)
+        self.assertNotIn(b"", subagent)
+        joined = b"".join(subagent)
+        self.assertNotIn(b"left out over the hook cap", joined)
+        self.assertEqual(joined.count(b"x" * FILL), SUBAGENT_PARTS)
 
 
-class SessionStartTests(common.Base):
-    def test_each_source_prints_each_file_and_its_root_line_once(self):
-        for plugin, names in SESSION_FILES.items():
-            for source in ("startup", "clear", "compact"):
-                with self.subTest(plugin=plugin, source=source):
-                    root = PLUGINS / plugin
-                    out = b"".join(self.run_command(h["command"], root=root) for h in rules_handlers(plugin, source))
-                    self.assertEqual(out, b"".join(root_line(plugin) + rules_text(plugin, name) for name in names))
+class SessionStartTests(HookRun):
+    def expected_headings(self, audience):
+        found = []
+        for root in module_dirs():
+            for entry in load_manifest(root)["rules"]:
+                if entry["audience"] in ("both", audience):
+                    text = assembled().text(root.name, entry["file"][len("rules/"):], audience).decode("utf-8")
+                    found.extend(heading_lines(text))
+        self.assertGreaterEqual(len(found), 17)  # 18 main-session files; 00-scope.md is a preamble, no heading
+        return found
+
+    def test_each_source_prints_each_section_once_after_its_root_line(self):
+        dirs = module_dirs()
+        whole = without_root_lines(assembled().whole())
+        for source in ("startup", "clear", "compact"):
+            with self.subTest(source=source):
+                joined = b"".join(self.session(dirs, source))
+                self.assertEqual(without_root_lines(joined), whole)
+                lines = joined.decode("utf-8").split("\n")
+                for heading in self.expected_headings("main"):
+                    self.assertEqual(lines.count(heading), 1, heading)
+                for root in dirs:
+                    if root.name != "rigger-panel":
+                        self.assertIn(root_line(root), joined)
 
     def test_resume_prints_nothing(self):
-        for plugin in SESSION_FILES:
-            with self.subTest(plugin=plugin):
-                self.assertEqual(rules_handlers(plugin, "resume"), [])
+        self.assertEqual(self.session(module_dirs(), "resume"), [b""] * SESSION_PARTS)
 
 
-class SubagentStartTests(common.Base):
+class SubagentStartTests(HookRun):
     def test_a_worker_gets_the_root_line_and_the_shell_line(self):
         for agent in WORKERS:
             with self.subTest(agent=agent):
-                stdin = json.dumps({"agent_type": agent}).encode("utf-8")
-                out = self.run_command(windows_subagent_command(), root=WINDOWS, stdin=stdin)
-                text = self.context(out)
-                expected = root_line("rigger-windows") + rules_text("rigger-windows", "windows.md")
-                self.assertEqual(text, expected.decode("utf-8"))
-                self.assertEqual(text.split("\n")[1], ROOT_NAME_LINE)
+                text = b"".join(self.context(out) for out in self.subagent(module_dirs(), agent)).decode("utf-8")
+                self.assertIn(root_line(WINDOWS).decode("utf-8") + ROOT_NAME_LINE + "\n", text)
                 self.assertIn(SHELL_LINE, text)
-                self.assertNotIn("| Before | Skill |", text)
+                self.assertEqual(without_root_lines(text.encode("utf-8")),
+                                 without_root_lines(assembled().whole("subagent")))
 
     def test_a_worker_gets_each_skill_table(self):
-        stdin = json.dumps({"agent_type": WORKERS[0]}).encode("utf-8")
+        text = assembled().whole("subagent").decode("utf-8")
         for plugin, name in SKILL_TABLES.items():
             with self.subTest(plugin=plugin):
-                out = self.run_command(rules_command("--subagent " + name), root=PLUGINS / plugin, stdin=stdin)
-                self.assertIn(TABLE_HEADER, self.context(out))
+                self.assertIn(TABLE_HEADER, rules_text(plugin, name, "subagent").decode("utf-8"))
+                self.assertIn(rules_text(plugin, name, "subagent").decode("utf-8"), text)
 
     def test_skipped_agents_get_nothing(self):
         for agent in common.SKIPPED_AGENTS:
             with self.subTest(agent=agent):
-                stdin = json.dumps({"agent_type": agent}).encode("utf-8")
-                self.assertEqual(self.run_command(windows_subagent_command(), root=WINDOWS, stdin=stdin), b"")
+                self.assertEqual(self.subagent(module_dirs(), agent), [b""] * SUBAGENT_PARTS)
 
 
-class DropTests(common.Base):
-    def test_a_basename_silences_only_its_own_handler(self):
-        for plugin, names in SESSION_FILES.items():
-            for name in names:
-                for handler in rules_handlers(plugin, "startup"):
-                    with self.subTest(file=name, command=handler["command"]):
-                        out = self.run_command(handler["command"], root=PLUGINS / plugin, HARNESS_RULES_DROP=name)
-                        printed = handler["command"].rsplit(" ", 1)[1]
-                        expected = b"" if printed == name else root_line(plugin) + rules_text(plugin, printed)
-                        self.assertEqual(out, expected)
-
-    def test_a_heading_removes_its_section_and_keeps_what_is_above_it(self):
-        for plugin, names in SESSION_FILES.items():
-            for handler, name in zip(rules_handlers(plugin, "startup"), names):
-                text = rules_text(plugin, name).decode("utf-8")
-                headings = heading_lines(text)
-                with self.subTest(file=name):
-                    self.assertEqual(len(headings), 1)
-                    out = self.run_command(handler["command"], root=PLUGINS / plugin, HARNESS_RULES_DROP=headings[0])
-                    above = text[: text.index(headings[0])]
-                    self.assertEqual(out, root_line(plugin) + above.encode("utf-8"))
+class DropTests(unittest.TestCase):
+    def test_a_basename_drops_only_its_own_file(self):
+        found = Assembled(HARNESS_RULES_DROP="windows.md")
+        self.assertEqual(found.text("rigger-windows", "windows.md"), b"")
+        self.assertEqual(found.text("rigger-windows", "windows-skills.md"), rules_text("rigger-windows", "windows-skills.md"))
 
     def test_root_name_stays_when_the_shell_heading_is_dropped(self):
-        text = rules_text("rigger-windows", "windows.md").decode("utf-8")
-        out = self.run_command(windows_subagent_command(), root=WINDOWS, stdin=b"{}",
-                               HARNESS_RULES_DROP=heading_lines(text)[0])
-        self.assertEqual(self.context(out).split("\n")[1:], [ROOT_NAME_LINE, "", ""])
-
-    def test_a_basename_silences_the_subagent_handler(self):
-        out = self.run_command(windows_subagent_command(), root=WINDOWS, stdin=b"{}", HARNESS_RULES_DROP="windows.md")
-        self.assertEqual(out, b"")
+        heading = heading_lines(rules_text("rigger-windows", "windows.md").decode("utf-8"))[0]
+        text = Assembled(HARNESS_RULES_DROP=heading).whole("subagent").decode("utf-8")
+        self.assertNotIn(heading + "\n", text)
+        self.assertIn(root_line(WINDOWS).decode("utf-8") + ROOT_NAME_LINE + "\n\n", text)
 
 
 class SkillTableTests(unittest.TestCase):
@@ -209,6 +323,13 @@ class SkillTableTests(unittest.TestCase):
 
     def test_the_core_table_keeps_the_header_the_others_repeat(self):
         self.assertIn(TABLE_HEADER, rules_text("rigger-rules", "skills.md").decode("utf-8"))
+
+    def test_every_table_is_a_placeholder_in_its_rules_file(self):
+        for plugin, name in dict(SKILL_TABLES, **{"rigger-rules": "skills.md"}).items():
+            with self.subTest(plugin=plugin):
+                raw = (PLUGINS / plugin / "rules" / name).read_text(encoding="utf-8")
+                self.assertNotIn("| Before | Skill |", raw)
+                self.assertEqual(len(re.findall(r"^\{\{triggers:[^{}\s]+\}\}$", raw, re.M)), 1)
 
 
 class CrossPluginWordingTests(unittest.TestCase):
@@ -257,13 +378,17 @@ class StateFileTests(unittest.TestCase):
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
         self.assertNotIn("coordinator", "\n".join(lines))
         self.assertEqual(lines[-2:], ["  from the state file.", ""])
+        self.assertEqual(rules_text("rigger-core", "state-file.md", "subagent"), b"")
 
 
 class PlanStopTests(unittest.TestCase):
     """The stop values the plan-active guard in side_session_guard.py accepts, named in the plans rule."""
 
+    def plans(self):
+        return " ".join(rules_text("rigger-rules", "plans-main.md").decode("utf-8").split())
+
     def test_the_plan_rule_writes_plan_and_lists_every_stop_value(self):
-        text = " ".join(rules_text("rigger-rules", "plans-main.md").decode("utf-8").split())
+        text = self.plans()
         self.assertIn("Write `plan: <plan path>` into the state file frontmatter", text)
         self.assertIn("the plan is my OK up to merges into the integration branch", text)
         self.assertIn("set `stop:` to `main` (any merge into the default branch)", text)
@@ -278,9 +403,14 @@ class PlanStopTests(unittest.TestCase):
     def test_the_rule_names_exactly_the_stop_values_the_guard_accepts(self):
         guard = (PLUGINS / "rigger-core" / "tools" / "side-session-guard" / "side_session_guard.py").read_text(encoding="utf-8")
         accepted = set(re.findall(r'"([a-z-]+)"', re.search(r"STOPS = frozenset\(\((.+?)\)\)", guard, re.S).group(1)))
-        text = " ".join(rules_text("rigger-rules", "plans-main.md").decode("utf-8").split())
-        named = set(re.findall(r"`([a-z-]+)`", re.search(r"set `stop:` to (.+?), then ask", text).group(1)))
+        named = set(re.findall(r"`([a-z-]+)`", re.search(r"set `stop:` to (.+?), then ask", self.plans()).group(1)))
         self.assertEqual(accepted, named | {"done"})
+
+    def test_the_brainstorming_route_comes_from_the_process_slots(self):
+        self.assertIn("(with superpowers installed: `superpowers:brainstorming`, then `superpowers:writing-plans`)",
+                      self.plans())
+        raw = (PLUGINS / "rigger-rules" / "rules" / "plans-main.md").read_text(encoding="utf-8")
+        self.assertIn("{{slot:process.brainstorm}}, then {{slot:process.plans}}", raw)
 
     def test_the_state_file_rule_names_the_plan_and_stop_keys(self):
         text = " ".join(rules_text("rigger-core", "state-file.md").decode("utf-8").split())
@@ -309,9 +439,14 @@ class TestingSkillTriggerTests(unittest.TestCase):
 class RulesSizeTests(unittest.TestCase):
     def test_rules_text_stays_under_the_ceiling(self):
         root = Path(os.environ.get("RIGGER_RULES_ROOT") or PLUGINS)
-        files = sorted(root.glob("*/rules/*.md"))
+        found = Assembled(root)
+        self.assertEqual(found.main.notices + found.subagent.notices, [], "rules assembled from %s" % root)
+        main_ids = {section["id"] for section in found.main.sections}
+        blocks = list(found.main.blocks) + [block for block, section in zip(found.subagent.blocks, found.subagent.sections)
+                                            if section["id"] not in main_ids]
+        files = {(s["module"], s["file"]) for s in found.main.sections + found.subagent.sections}
         self.assertGreaterEqual(len(files), RULES_MIN_FILES, "rules files read from %s" % root)
-        self.assertLessEqual(sum(path.stat().st_size for path in files), RULES_CEILING_BYTES)
+        self.assertLessEqual(sum(len(block[1]) for block in blocks), RULES_CEILING_BYTES)
 
 
 if __name__ == "__main__":

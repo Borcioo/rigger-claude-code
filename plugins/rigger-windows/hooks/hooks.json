@@ -1,22 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|clear|compact",
-        "hooks": [
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" windows.md", "timeout": 10 },
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" windows-skills.md", "timeout": 10 }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" --subagent windows.md", "timeout": 10 },
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" --subagent windows-skills.md", "timeout": 10 }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "PowerShell",

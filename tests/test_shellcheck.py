@@ -56,6 +56,7 @@ class ShellcheckTest(unittest.TestCase):
         names, code, output = lint(ROOT)
         self.assertIn("plugins/rigger-core/bin/py.sh", names)
         self.assertIn("plugins/rigger-rules/rules/rules_start.sh", names)
+        self.assertIn("plugins/rigger-core/tools/assemble/part.sh", names)
         self.assertEqual((code, output), (0, ""))
 
     def test_a_clean_file_passes_the_same_call(self):
