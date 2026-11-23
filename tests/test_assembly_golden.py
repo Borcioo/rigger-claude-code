@@ -102,7 +102,14 @@ SCENARIOS = scenario_list()
 OVERRIDE = Scenario("override_startup", rules_d="override", mark_personal=False)
 OVERRIDE_SUB = replace(OVERRIDE, id="override_sub", event="SubagentStart", source=None, agent="general-purpose")
 LONE_ROOT = Scenario("lone_root_startup", drop="## Talking to me")
-NAMED = [OVERRIDE, OVERRIDE_SUB, LONE_ROOT]
+# Spec section 8.2: a rules.d override inherits the audience of the section it replaces (0.4.0 printed it to both).
+LESSONS_MINE = b"## Lessons (mine)\n- my lessons words\n"
+STATE_MINE = b"## State file for long sessions (mine)\n- my state words\n"
+AUD_SUB = Scenario("aud_sub_startup", rules_d="aud_sub", mark_personal=False)
+AUD_SUB_SUB = replace(AUD_SUB, id="aud_sub_sub", event="SubagentStart", source=None, agent="general-purpose")
+AUD_MAIN = Scenario("aud_main_startup", rules_d="aud_main", mark_personal=False)
+AUD_MAIN_SUB = replace(AUD_MAIN, id="aud_main_sub", event="SubagentStart", source=None, agent="general-purpose")
+NAMED = [OVERRIDE, OVERRIDE_SUB, LONE_ROOT, AUD_SUB, AUD_SUB_SUB, AUD_MAIN, AUD_MAIN_SUB]
 
 
 def write(path: Path, data: bytes) -> None:
@@ -178,6 +185,10 @@ class Fixture:
             hostile_rules_d(folder / "rigger" / "rules.d")
         elif scenario.rules_d == "override":
             write(folder / "rigger" / "rules.d" / "tests.md", MINE)
+        elif scenario.rules_d == "aud_sub":
+            write(folder / "rigger" / "rules.d" / "lessons-subagent.md", LESSONS_MINE)
+        elif scenario.rules_d == "aud_main":
+            write(folder / "rigger" / "rules.d" / "state-file.md", STATE_MINE)
         elif scenario.rules_d == "main_budget":
             write(folder / "rigger" / "rules.d" / "b-main.md", b"## Main budget\n" + b"m" * 5985 + b"\n")
             write(folder / "rigger" / "rules.d" / "c.md", b"## After main\n" + b"c" * 3986 + b"\n")
@@ -413,6 +424,37 @@ class GoldenTest(unittest.TestCase):
                 self.assertTrue(joined.startswith(OVERRIDE_NOTICE), joined[:200])
                 self.assertEqual(gb.normalize_render(joined, names), (old_roots, expected))
 
+    def check_narrowing(self, scenarios, words, notice, reaches, owner):
+        """0.4.0 printed the rules.d `words` to both audiences; the assembler prints them to `reaches` only, under
+        the replaced section's module `owner`, and the other audience gets the override `notice` instead."""
+        for scenario in scenarios:
+            _, old = gb.normalize(FIXTURE.baselines[scenario.baseline_key()], scenario.subagent)
+            self.assertTrue(any(words in v for _, v in old.get("personal", [])),
+                            "%s: 0.4.0 printed no %r" % (scenario.id, words))
+        for scenario in scenarios:
+            rendered, joined, _, _ = FIXTURE.run_new(scenario)
+            audience = "subagent" if scenario.subagent else "session"
+            for name, out in (("--render", rendered), ("hook parts", joined)):
+                where = "%s, %s" % (scenario.id, name)
+                if audience == reaches:
+                    _, new = gb.normalize_render(out, FIXTURE.root_names(scenario))
+                    self.assertTrue(any(words in v for _, v in new.get(owner, [])), where)
+                else:
+                    self.assertNotIn(words, out, where)
+                    self.assertIn(notice, out, where)
+
+    def test_override_of_a_subagent_only_section_reaches_subagents_only(self):
+        """rules.d/lessons-subagent.md replaces rigger-lessons' subagent-only section: the session gets the notice."""
+        self.check_narrowing((AUD_SUB, AUD_SUB_SUB), b"my lessons words",
+                             b"rigger: rules.d/lessons-subagent.md replaces rule lessons-subagent.lessons\n",
+                             "subagent", "rigger-lessons")
+
+    def test_override_of_a_main_only_section_reaches_the_session_only(self):
+        """rules.d/state-file.md replaces rigger-core's main-only section: subagents get the notice."""
+        self.check_narrowing((AUD_MAIN, AUD_MAIN_SUB), b"my state words",
+                             b"rigger: rules.d/state-file.md replaces rule state-file.state-file-for-long-sessions\n",
+                             "session", "rigger-core")
+
     def test_lone_root_line_is_the_only_root_difference(self):
         """D1: a handler whose every section is dropped prints a lone root line today; the assembler prints none."""
         old_roots, old = gb.normalize(FIXTURE.baselines[LONE_ROOT.baseline_key()], False)
@@ -440,7 +482,7 @@ for _scenario in SCENARIOS:
 
 
 if __name__ == "__main__":
-    print("# scenarios %d, named tests 3" % len(SCENARIOS))
+    print("# scenarios %d, named tests 5" % len(SCENARIOS))
     sys.stdout.flush()
     started = time.time()
     try:
