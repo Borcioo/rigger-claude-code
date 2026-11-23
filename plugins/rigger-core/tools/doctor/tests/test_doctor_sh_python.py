@@ -65,7 +65,7 @@ class DoctorShTests(DoctorShCase):
         self.write_sh(self.stubs / "brew", "exit 0\n")
         result = self.run_doctor("Darwin")
         self.assertRow(result, "python", "MISSING")
-        self.assertEqual(result.fixes["python"], ["xcode-select --install"])
+        self.assertEqual(result.fixes["python"], ["xcode-select --install", "brew install python"])
 
     def test_python_missing_on_darwin_with_brew(self):
         self.skip_if_system_python_candidates()

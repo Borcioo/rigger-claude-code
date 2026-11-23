@@ -36,6 +36,9 @@ WINGET_PYTHON = (
     "winget install --id Python.Python.3.12 -e --source winget --accept-source-agreements --accept-package-agreements"
 )
 NEVER_RUN = "claude-was-run"
+# The stub interpreter's answer to doctor.sh's assembler run, as sh text.
+ASSEMBLER_OK = r"printf 'CHECK\trules-assembly\tOK\tstub\tassemble.py --doctor\n'; exit 0"
+REPO_PLUGINS = PLUGIN.parent
 # printf escapes for the stubs, as raw strings (scripts/sweep.py reads a doubled backslash as a UNC path).
 SH_LF = r"\n"
 SH_CRLF = r"\r\n"
@@ -219,9 +222,12 @@ class DoctorShCase(unittest.TestCase):
             body = "printf 'xcode-select: error: unable to get active developer directory\\n' >&2\nexit 2\n"
         self.write_sh(self.stubs / "xcode-select", body)
 
-    def stub_python(self, name, version="3.12.1", stderr_version=False, store_alias=False, crlf=False, directory=None):
-        """Answers --version, py.sh's probe (-c: prints its path, exits 1 below 3.9) and doctor's query through
-        py.sh (-I -X utf8 -c: prints its path and version). store_alias: the Windows Store alias without Python.
+    def stub_python(self, name, version="3.12.1", stderr_version=False, store_alias=False, crlf=False, directory=None,
+                    assembler=ASSEMBLER_OK):
+        """Answers --version, py.sh's probe (-c: prints its path, exits 1 below 3.9), doctor's query through
+        py.sh (-I -X utf8 -c: prints its path and version) and doctor's assembler run through py.sh
+        (-I -X utf8 -S assemble.py --doctor: runs the sh text `assembler`, by default one rules-assembly OK row; the
+        real assembler is tested with a real interpreter). store_alias: the Windows Store alias without Python.
         crlf ends the --version and query lines with CRLF; the probe line keeps LF, because off Windows py.sh
         itself cannot exec a path read with a CR, and that is py.sh's case, not doctor.sh's."""
         path = (directory or self.stubs) / name
@@ -237,7 +243,7 @@ class DoctorShCase(unittest.TestCase):
             "case $1 in\n"
             "  --version) printf 'Python {version}{eol}' {redirect}; exit 0 ;;\n"
             "  -c) printf '%s\\n' \"$self\"; exit {probe_code} ;;\n"
-            "  -I) printf '%s {version}{eol}' \"$self\"; exit 0 ;;\n"
+            "  -I) [ \"$4\" != -S ] || {{ {assembler}; }}; printf '%s {version}{eol}' \"$self\"; exit 0 ;;\n"
             "esac\n"
             "exit 64\n"
         ).format(
@@ -246,6 +252,7 @@ class DoctorShCase(unittest.TestCase):
             eol=eol,
             redirect=">&2" if stderr_version else "",
             probe_code=probe_code,
+            assembler=assembler,
         )
         return self.write_sh(path, body)
 
@@ -345,6 +352,18 @@ class DoctorShCase(unittest.TestCase):
             self.assertEqual(result.errors, [], "lines outside the output contract")
         self.assertFalse((self.tmp / NEVER_RUN).exists(), "doctor.sh ran claude")
         return result
+
+    def real_python_path(self):
+        """PATH entries with the stubs, this test's own interpreter and the tools, for a run of the real assembler."""
+        if os.name == "nt":
+            folder = str(Path(sys.executable).parent)
+        else:
+            folder = self.tmp / "real"
+            folder.mkdir(exist_ok=True)
+            if not (folder / "python3").exists():
+                (folder / "python3").symlink_to(sys.executable)
+            folder = str(folder)
+        return [str(self.stubs), folder, self.tools]
 
     def assertRow(self, result, name, status, detail=None):
         self.assertIn(name, result.checks, result.stdout)

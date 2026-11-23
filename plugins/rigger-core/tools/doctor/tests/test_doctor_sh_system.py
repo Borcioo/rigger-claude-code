@@ -31,7 +31,7 @@ class DoctorShTests(DoctorShCase):
             result.order,
             ["os", "claude-version", "hook-shell", "git", "python", "marketplace"]
             + ["plugin " + name for name in REQUIRED]
-            + ["superpowers", "autoCompactWindow", "worktree-root"],
+            + ["superpowers", "autoCompactWindow", "worktree-root", "rules-assembly"],
         )
         self.assertEqual({row[0] for row in result.checks.values()}, {"OK"}, result.stdout)
         self.assertEqual(result.fixes, {})
@@ -45,7 +45,7 @@ class DoctorShTests(DoctorShCase):
             result.order,
             ["os", "claude-version", "python", "marketplace"]
             + ["plugin " + name for name in REQUIRED + ("rigger-windows",)]
-            + ["superpowers", "autoCompactWindow", "powershell-tool", "worktree-root"],
+            + ["superpowers", "autoCompactWindow", "powershell-tool", "worktree-root", "rules-assembly"],
         )
         self.assertEqual({row[0] for row in result.checks.values()}, {"OK"}, result.stdout)
 
