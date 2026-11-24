@@ -6,8 +6,8 @@
 implementer and mapper output is checked against machine contracts; a command can fill the reviewer
 slot; and the three skill-trigger tables become one that drops rows of absent plugins.
 
-**Status:** revision 2 after the plan review of 2026-11-24, written on `1f1e204` (release 0.5.0,
-which holds phase 1). The coordinator's rulings are under "Rulings on the plan's questions".
+**Status:** approved 2026-11-24 after an independent plan review and re-check (revision 2), written
+on `1f1e204` (release 0.5.0, which holds phase 1). The coordinator's rulings are under "Rulings on the plan's questions".
 
 **Architecture:** New logic lands in new files. `plugins/rigger-core/tools/assemble/slots.py`
 resolves and validates slots from the four config levels and applies the trust filter.
