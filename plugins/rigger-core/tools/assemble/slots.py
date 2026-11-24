@@ -430,7 +430,9 @@ def _row_from(item) -> Optional[Row]:
         return None
     if filled and kind == "command" and _argv_problem(target):
         return None
-    if filled and kind in ("agent", "skill", "hook") and not isinstance(target, str):
+    if filled and kind in ("agent", "skill") and not isinstance(target, str):
+        return None
+    if kind == "hook" and target is not None and not isinstance(target, str):  # None: a null removed the expected filler
         return None
     if model is not None and not isinstance(model, str):
         return None

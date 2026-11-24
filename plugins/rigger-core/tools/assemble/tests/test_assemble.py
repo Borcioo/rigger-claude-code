@@ -1015,6 +1015,43 @@ class SlotWiringTests(Base):
         self.assertEqual(slots.from_snapshot(data["slots"]), (self.layout.assemble().slot_rows,
                                                               frozenset(["process.tdd"])))
 
+    def test_a_personal_null_on_a_filled_hook_slot_reads_back_from_the_snapshot(self):
+        # The module's hook still runs after a null: the row stays filled with no expected filler, and the
+        # snapshot slot_run.py reads must accept it.
+        root = self.layout.module("mod-a", {"rules/a.md": ("## A\n\na words\n", "both")})
+        self.layout.manifest_set(root, fills="lessons")
+        self.layout.rules_module()
+        write_json(self.config_file(), {"schema": 1, "slots": {"lessons": None}})
+        started = self.layout.part(1, stdin=self.startup("hn1"))
+        self.assertIn(b"| lessons | hook | mod-a (failure mode: undeclared) | \xe2\x80\x94 | personal |\n", started)
+        data = json.loads((self.layout.config / "rigger" / "state" / "hn1.resolved.json").read_bytes())
+        import slots
+        back = slots.from_snapshot(data["slots"])
+        self.assertIsNotNone(back)
+        lessons = [r for r in back[0] if r.path == "lessons"][0]
+        self.assertEqual((lessons.kind, lessons.target, lessons.fillers, lessons.filled, lessons.source),
+                         ("hook", None, ("mod-a",), True, "personal"))
+        self.assertEqual(back[0], self.layout.assemble().slot_rows)
+
+    def test_an_untrusted_project_command_is_nowhere_in_the_snapshot(self):
+        # Fail closed: what the trust filter dropped is not stored, in the slot table or in config.effective.
+        self.layout.rules_module()
+        marker = "UNTRUSTEDMARK"
+        write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {
+            "kind": "command", "target": ["rv-" + marker, "{out}"], "model": "model-" + marker}}})
+        self.layout.part(1, stdin=self.startup("ut1"))
+        path = self.layout.config / "rigger" / "state" / "ut1.resolved.json"
+        raw = path.read_bytes()
+        self.assertNotIn(marker.encode("ascii"), raw)
+        data = json.loads(raw)
+        self.assertEqual(data["config"]["effective"]["slots"]["reviewer"],
+                         {"kind": "agent", "target": "rigger-core:reviewer"})
+        self.assertEqual([(p, s) for p, s in data["config"]["sources"] if p[0] == "slots" and s.startswith("L4:")], [])
+        # Control: once trusted, the same command is in effect and the snapshot holds it.
+        write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["reviewer"]}})
+        self.layout.part(1, stdin=self.startup("ut2"))
+        self.assertIn(marker.encode("ascii"), (self.layout.config / "rigger" / "state" / "ut2.resolved.json").read_bytes())
+
     def test_compact_without_a_snapshot_applies_the_trust_filter_again(self):
         self.layout.rules_module()
         write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",

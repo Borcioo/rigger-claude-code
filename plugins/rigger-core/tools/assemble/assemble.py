@@ -573,8 +573,10 @@ def _snapshot_data(inputs: Inputs) -> Tuple[dict, List[bytes]]:
                   "subagent": [b.decode("utf-8", "surrogateescape") for b in part_bodies(sub, True)]},
         "modules": [{"name": m.name, "root": root_text(m.root), "origin": m.origin, "marketplace": m.marketplace,
                      "version": _version(m.root)} for m in modules],
-        "config": {"effective": resolved.effective,
-                   "sources": [[list(path), source] for path, source in sorted(resolved.sources.items())]},
+        # Slots as resolved, never the plain merge: a value the trust filter dropped is not stored (fail closed).
+        "config": {"effective": dict(resolved.effective, slots=slots.slot_targets(main.slot_rows)),
+                   "sources": [[list(path), source] for path, source in sorted(resolved.sources.items())
+                               if path[0] != "slots"]},
         "sections": main.sections,
         "rows": [{"id": r.id, "before": r.before, "load": list(r.load), "section": r.section,
                   "requires": list(r.requires)} for r in main.rows],

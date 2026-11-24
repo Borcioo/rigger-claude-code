@@ -692,6 +692,21 @@ class TargetsAndSnapshotTests(SlotsTestCase):
             with self.subTest(value=value["rows"][0]):
                 self.assertIsNotNone(slots.from_snapshot(value))
 
+    def test_snapshot_hook_row_targets(self):
+        # A null on a hook slot removes only the expected filler: the module's hook still runs, so the row is
+        # filled with no target, and the snapshot must read back. A target of another shape stays refused.
+        for target in (None, "rigger-lessons"):
+            with self.subTest(target=target):
+                rows = [row("lessons", "hook", target, None, "personal", ("mod-a",), None)]
+                data = json.loads(json.dumps(slots.as_snapshot(rows, frozenset())))
+                self.assertEqual(slots.from_snapshot(data), (rows, frozenset()))
+        for target in (["rigger-lessons"], 5, {"name": "x"}):
+            with self.subTest(target=target):
+                rows = [row("lessons", "hook", "rigger-lessons", None, "personal", ("mod-a",), None)]
+                data = json.loads(json.dumps(slots.as_snapshot(rows, frozenset())))
+                data["rows"][0]["target"] = target
+                self.assertIsNone(slots.from_snapshot(data))
+
 
 if __name__ == "__main__":
     unittest.main()
