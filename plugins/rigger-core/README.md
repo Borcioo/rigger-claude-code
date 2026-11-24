@@ -148,7 +148,10 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   for side sessions.
 - `tools/slot-run/slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]`: runs a
   command slot as the session's snapshot holds it, with no shell, from the repository root, without
-  `CLAUDE_*`, `HARNESS_*`, `GIT_*` and `RIGGER_MODULE_DIRS`. It stops the whole process tree past
+  `CLAUDE_*`, `HARNESS_*`, `GIT_*` and `RIGGER_MODULE_DIRS`. The command's `PATH` keeps only absolute
+  entries outside the repository and the working directory (a virtualenv or `node_modules/.bin` inside
+  the repository is dropped), and on Windows `NoDefaultCurrentDirectoryInExePath=1` is set, so a
+  program the command starts by bare name is never one the repository holds. It stops the whole process tree past
   900 s or 1,000,000 bytes of console output, when a process the command started still holds the
   console 5 s after the command exits (`child process left running`), and after every run. It then
   checks the output file with `slot_check.py`. The last line is `slot-run: ok <slot> <n> findings` or

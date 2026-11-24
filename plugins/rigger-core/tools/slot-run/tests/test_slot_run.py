@@ -396,6 +396,157 @@ class EnvironmentTests(SlotRunCase):
         self.assertIn("PATH", names)
 
 
+def make_link(link, target):
+    """A junction on Windows, a symlink on POSIX: `link` leads to the folder `target`."""
+    if NT:
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(str(target), str(link))
+    return link
+
+
+NODE_REVIEWER = (
+    "const r = require('child_process').spawnSync('git', ['--version']);\n"
+    "require('fs').writeFileSync(process.argv[2], JSON.stringify(r.error ? {error: String(r.error.code)}\n"
+    "    : {rc: r.status, stdout: String(r.stdout)}));\n")
+
+
+class ChildLookupTests(SlotRunCase):
+    """I1: a program the command starts by bare name is never one the repository or the working directory holds."""
+
+    def setUp(self):
+        super().setUp()
+        git = shutil.which("git")
+        self.assertTrue(git and os.path.isabs(git))
+        system = os.path.join(os.environ["SYSTEMROOT"], "System32") if NT else "/usr/bin"
+        self.base_path = [os.path.dirname(git), system]
+        self.elsewhere = self.tmp / "elsewhere"
+        # The fixture's git_in runs bare git from the repository: never call it once the plant is there.
+        self.marker = self.plant(self.repo)
+        self.plant(self.elsewhere)
+
+    def plant(self, folder):
+        """A `git` in `folder` that a run can tell apart from the real one by its --version output."""
+        folder.mkdir(parents=True, exist_ok=True)
+        if NT:  # a copy of python.exe: `git --version` prints "Python 3..."
+            shutil.copy2(sys.executable, str(folder / "git.exe"))
+            for dll in Path(os.path.dirname(sys.executable)).glob("*.dll"):
+                shutil.copy2(str(dll), str(folder / dll.name))
+            return "Python"
+        plant = folder / "git"
+        plant.write_bytes(b"#!/bin/sh\necho planted\n")
+        os.chmod(str(plant), 0o755)
+        return "planted"
+
+    def helper_result(self):
+        with open(self.record + ".helper", "rb") as handle:
+            return json.loads(handle.read().decode("utf-8"))
+
+    def control(self, argv):
+        """Known answer: the same reviewer started from the repository root with only strip_env runs the plant."""
+        env = slot_run.strip_env(os.environ)
+        env["PATH"] = os.pathsep.join(([] if NT else ["."]) + self.base_path)
+        self.assertNotIn(SETTING.upper(), [name.upper() for name in env])
+        proc = REAL_RUN(argv, cwd=str(self.repo), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn(self.marker, self.helper_result().get("stdout", ""))
+        os.remove(self.record + ".helper")
+
+    def rows(self):
+        link = make_link(self.tmp / "repo-link", self.repo)
+        with_repo = ["--session", SESSION, "--base", self.base, "--head", self.head, "--repo", str(self.repo)]
+        return [  # (row, PATH entries, the folder slot_run starts from, its arguments)
+            ("the inherited PATH", self.base_path, None, None),
+            ("a dot entry first", ["."] + self.base_path, None, None),
+            ("an empty entry first", [""] + self.base_path, None, None),
+            ("the repository root first", [str(self.repo)] + self.base_path, None, None),
+            ("a link into the repository first", [str(link)] + self.base_path, None, None),
+            ("the working directory first, with --repo", [str(self.elsewhere)] + self.base_path, self.elsewhere,
+             with_repo),
+        ]
+
+    def run_rows(self, expected_last):
+        for row, entries, cwd, args in self.rows():
+            with self.subTest(row=row):
+                with mock.patch.dict(os.environ, {"PATH": os.pathsep.join(entries)}):
+                    code, lines = self.run_slot(args, cwd=cwd)
+                self.assertEqual(lines[-1], expected_last, lines)
+                result = self.helper_result()
+                os.remove(self.record + ".helper")
+                self.assertTrue(result.get("stdout", "").startswith("git version"), result)
+
+    def test_a_python_reviewer_never_starts_the_planted_git(self):
+        scope = self.tmp / "scope.txt"
+        scope.write_bytes(b"")
+        self.control([sys.executable, FAKE, "helper", "--record", self.record, "--helper", "git",
+                      "--out", str(self.tmp / "out.json"), "--scope", str(scope), "--base", self.base])
+        self.write_snapshot([command_row(self.command("helper", "--helper", "git"))])
+        self.run_rows("slot-run: ok reviewer 1 findings")
+
+    def test_a_node_reviewer_never_starts_the_planted_git(self):
+        node = shutil.which("node")
+        if node is None or (NT and not node.lower().endswith(".exe")):
+            self.skipTest("no node program on PATH")
+        version = REAL_RUN([node, "--version"], stdout=subprocess.PIPE, timeout=60).stdout.decode("ascii").strip()
+        sys.stderr.write("node %s %s ... " % (node, version))
+        script = self.tmp / "reviewer.js"
+        script.write_bytes(NODE_REVIEWER.encode("utf-8"))
+        argv = [node, str(script), self.record + ".helper", "{out}"]  # the script writes no {out} file
+        self.control(argv)
+        self.write_snapshot([command_row(argv)])
+        self.run_rows("slot-run: refused: the command wrote no output file")
+
+
+class ChildEnvTests(SlotRunCase):
+    def test_child_path_keeps_only_absolute_entries_outside_the_repository_and_the_cwd(self):
+        outside = str(self.tmp / "outbin")
+        cwd = self.tmp / "elsewhere"
+        cwd.mkdir()
+        link = make_link(self.tmp / "link", self.repo)
+        rows = [
+            ("an empty entry", ""),
+            ("a dot entry", "."),
+            ("a relative entry", "bin"),
+            ("a relative entry that leaves the cwd", os.path.join("..", "outbin")),
+            ("the repository root", str(self.repo)),
+            ("a folder inside the repository", str(self.repo / "bin")),
+            ("the working directory", str(cwd)),
+            ("a folder inside the working directory", str(cwd / "bin")),
+            ("a link into the repository", str(link)),
+        ]
+        names = ["PATH", "Path"] if NT else ["PATH"]  # Windows reads the name in any case
+        for row, entry in rows:
+            for name in names:
+                with self.subTest(row=row, name=name):
+                    env = slot_run.child_env({name: os.pathsep.join([entry, outside, entry]), "OTHER": "1"},
+                                             self.repo, str(cwd))
+                    self.assertEqual({key: value for key, value in env.items() if key.upper() == "PATH"},
+                                     {name: outside})
+                    self.assertEqual(env["OTHER"], "1")
+
+    def test_a_path_with_every_entry_dropped_is_removed(self):
+        """An empty PATH would make a POSIX exec search the working directory; with none, it takes the default."""
+        env = slot_run.child_env({"PATH": os.pathsep.join(["", ".", str(self.repo)]), "OTHER": "1"},
+                                 self.repo, str(self.repo))
+        self.assertEqual([key for key in env if key.upper() == "PATH"], [])
+        self.assertEqual(env["OTHER"], "1")
+
+    def test_strip_env_applies_to_the_child(self):
+        env = slot_run.child_env({"CLAUDE_X": "1", "git_dir": "1", "RIGGER_MODULE_DIRS": "1", "OTHER": "1"},
+                                 self.repo, str(self.repo))
+        self.assertEqual(sorted(key for key in env if key.upper() != SETTING.upper()), ["OTHER"])
+
+    @unittest.skipUnless(NT, "the setting is read by the Windows program lookup only")
+    def test_windows_child_never_searches_its_working_directory(self):
+        for given in ({}, {SETTING.upper(): ""}, {SETTING.lower(): "0", SETTING: "x"}):
+            with self.subTest(given=given):
+                env = slot_run.child_env(dict(given, OTHER="1"), self.repo, str(self.repo))
+                self.assertEqual({key: value for key, value in env.items() if key.upper() == SETTING.upper()},
+                                 {SETTING: "1"})
+
+
 class BoundTests(SlotRunCase):
     def test_timeout_kills_the_tree_and_refuses(self):
         """Review Focus 3: a command that never exits and leaves a grandchild."""

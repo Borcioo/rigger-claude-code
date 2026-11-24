@@ -8,7 +8,9 @@ bad-status, nonzero (a valid file, then exit 3), no-out, big-out (a valid file p
 flood (console output without end), flood-exit (a valid file, then <n> console bytes and exit 0, with
 `--bytes n`), flood-err (the same as flood, on stderr), orphan (a valid file, then a grandchild that sleeps 30 s
 holding the console, and this process exits 0), detached (the same, but the grandchild's console goes to the
-null device), hang (starts a grandchild, then both sleep). A grandchild writes its pid to <record>.child.pid.
+null device), hang (starts a grandchild, then both sleep), helper (starts `<name> --version` by the bare name
+`--helper name`, writes its exit code and stdout, or the error, as JSON to <record>.helper, then one finding).
+A grandchild writes its pid to <record>.child.pid.
 """
 import json
 import os
@@ -103,6 +105,16 @@ def main():
         deadline = time.time() + 30
         while not os.path.exists(record + ".child.pid") and time.time() < deadline:
             time.sleep(0.05)
+    elif mode == "helper":
+        try:
+            ran = subprocess.run([option("--helper"), "--version"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, timeout=60)
+            result = {"rc": ran.returncode, "stdout": ran.stdout.decode("utf-8", "replace")}
+        except OSError as exc:
+            result = {"error": str(exc)}
+        with open(record + ".helper", "w", encoding="utf-8") as handle:
+            json.dump(result, handle)
+        write_out(document(ONE_FINDING))
     elif mode == "flood-exit":
         write_out(document(ONE_FINDING))
         flood(int(option("--bytes")))

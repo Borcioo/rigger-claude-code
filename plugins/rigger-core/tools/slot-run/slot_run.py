@@ -15,7 +15,9 @@ A batch file is refused: it always runs through cmd.exe, which re-parses its arg
 an `.exe` or `.com` file runs.
 
 The command runs from the repository root, with every CLAUDE_*, HARNESS_* and GIT_* variable and
-RIGGER_MODULE_DIRS removed, stdin closed, and stdout and stderr on one pipe that a thread reads and counts:
+RIGGER_MODULE_DIRS removed, PATH cut to the entries that lookup searches and, on Windows,
+NoDefaultCurrentDirectoryInExePath set, so a program the command starts by bare name is never the
+repository's; stdin closed, and stdout and stderr on one pipe that a thread reads and counts:
 past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
 has exited but a process it started still holds the console after EXIT_GRACE seconds, and after every run. The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
@@ -61,6 +63,7 @@ PROGRAM_EXTS = (".exe", ".com")
 BATCH_EXTS = review_scope.BATCH_EXTS
 STRIPPED_PREFIXES = ("CLAUDE_", "HARNESS_", "GIT_")
 STRIPPED_NAMES = ("RIGGER_MODULE_DIRS",)
+NO_CWD_SETTING = "NoDefaultCurrentDirectoryInExePath"  # Windows: a bare name is not looked up in the cwd
 SHOWN = 300
 USAGE = "usage: slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]"
 
@@ -79,6 +82,24 @@ def strip_env(environ: Mapping[str, str]) -> Dict[str, str]:
     """`environ` without CLAUDE_*, HARNESS_*, GIT_* and RIGGER_MODULE_DIRS, names compared in upper case."""
     return {name: value for name, value in environ.items()
             if not name.upper().startswith(STRIPPED_PREFIXES) and name.upper() not in STRIPPED_NAMES}
+
+
+def child_env(environ: Mapping[str, str], repo: Path, cwd: str) -> Dict[str, str]:
+    """The command's environment: `strip_env(environ)` with PATH cut to the entries `review_scope.searchable`
+    keeps (no PATH at all when none is left: an empty one would search the working directory on POSIX), and on
+    Windows NO_CWD_SETTING set, so what the command starts by bare name is never a file of the repository."""
+    env = strip_env(environ)
+    for name in [name for name in env if name.upper() == "PATH"]:
+        kept = [entry for entry in env[name].split(os.pathsep) if review_scope.searchable(entry, repo, cwd)]
+        if kept:
+            env[name] = os.pathsep.join(kept)
+        else:
+            del env[name]
+    if NT:
+        for name in [name for name in env if name.upper() == NO_CWD_SETTING.upper()]:
+            del env[name]
+        env[NO_CWD_SETTING] = "1"
+    return env
 
 
 def fill(argv: List[str], values: Dict[str, str]) -> List[str]:
@@ -397,7 +418,7 @@ def _main(argv: List[str], emit) -> int:
     values = {"base": base_id, "head": head_id, "out": out_path, "scope": scope_path}
     command = [program] + fill(row.target[1:], values)
     try:
-        reason, code = _run(command, root, strip_env(os.environ), os.path.join(work, "console.txt"))
+        reason, code = _run(command, root, child_env(os.environ, root, os.getcwd()), os.path.join(work, "console.txt"))
     except OSError as exc:
         raise Refusal("the command could not start: %s" % _shown(exc))
     if reason is not None:
