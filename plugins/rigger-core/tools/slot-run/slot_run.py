@@ -289,7 +289,8 @@ def _enter_job(job, pid: int) -> bool:
 
 def _run(argv: List[str], root: Path, env: Dict[str, str], console_path: str):
     """Run `argv`; the reason it was stopped (None when it ran to its end) and its exit code. Whatever the
-    outcome, no process of the command's tree is left when this returns."""
+    outcome, no process of the command's tree is left when this returns, except on POSIX a process that left
+    the process group with setsid (a known limit)."""
     tree = _Tree(argv, root, env)
     try:
         return _watch(tree, console_path)
