@@ -592,6 +592,18 @@ class Contracts(ShadowCase):
                 self.assertEqual(self.contract(WORKER_REPORT, "acme:builder"), ("", "none"))
                 self.assertEqual(self.contract(WORKER_REPORT, AGENT_TYPE), ("worker", "ok"))
 
+    def test_an_agent_named_by_two_slots_gets_none(self):
+        # ambiguous: no slot and no verdict is claimed, whichever slot comes first
+        for first, second in (("worker", "reviewer"), ("reviewer", "worker")):
+            with self.subTest(order=(first, second)):
+                self.put_snapshot({"rows": [slot_row(first, "acme:both"), slot_row(second, "acme:both")],
+                                   "trusted": []})
+                self.assertEqual(self.contract(WORKER_REPORT, "acme:both"), ("", "none"))
+        # control: one filled agent slot (an unfilled row with the same target does not count) gets its verdict
+        self.put_snapshot({"rows": [slot_row("worker", "acme:both"), slot_row("reviewer", "acme:both", filled=False)],
+                           "trusted": []})
+        self.assertEqual(self.contract(WORKER_REPORT, "acme:both"), ("worker", "ok"))
+
     def test_another_sessions_snapshot_is_not_read(self):
         table = {"rows": [slot_row("worker", "acme:builder")], "trusted": []}
         self.put_snapshot(table, session="another-session")
