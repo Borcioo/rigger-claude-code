@@ -17,7 +17,9 @@ claude plugin install rigger-windows@rigger
 
 ## Rules
 
-rigger-core prints this plugin's rules on startup, clear and compact (the files `rigger-module.json` lists): the meaning of `<rigger-windows root>` (the folder this plugin is installed in), the default shell (PowerShell) and the skill triggers. Subagents get the same two files, except the built-in Explore and Plan agents and rigger-core's implementer and mapper, which get nothing.
+rigger-core prints this plugin's rules on startup, clear and compact (`rules/windows.md`, which `rigger-module.json` lists): the meaning of `<rigger-windows root>` (the folder this plugin is installed in) and the default shell (PowerShell). Its three skill rows (`triggers` in `rigger-module.json`) appear in rigger-core's one Skill triggers table. Subagents get the same, except the built-in Explore and Plan agents and rigger-core's implementer and mapper, which get nothing.
+
+This plugin fills the `shell-guard` slot (`fills` in `rigger-module.json`) and declares that it fails open: when the guard cannot finish its analysis, the command is allowed. A deny reason starts `shell-guard [<rule id>]: `. `tools/shell-guard/lessons_guard.py` is the slot's rule checker, which the rigger-lessons lint loads.
 
 ## Hooks that read your session
 

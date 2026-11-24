@@ -3,6 +3,136 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
+## [Unreleased]
+
+### Migration
+
+- Update every Rigger plugin in one go, as for 0.5.0, then run `/rigger-core:doctor`.
+- **A trigger table copied into `rules.d`** (text taken from the old `skills.md`) moves to `triggers`
+  in `<config dir>/rigger/config.json`. Doctor prints one `rules-d-table rules.d/<file>` row per such
+  file, ending with the JSON of its rows: a row whose `before` equals a shipped row keeps that row's
+  id, every other row gets `personal.<file stem>-<n>`. Merge the JSON into `triggers`, then delete the
+  table from the `rules.d` file.
+- **Two section ids changed:** `windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind`
+  is gone (its rows are in `skills.skill-triggers`), and
+  `wp-skills.wordpress-skill-loaded-before-the-first-step-of-its-kind` is now
+  `wp-skills.wordpress-site-copies`. A `rules.d` section or a `HARNESS_RULES_DROP` entry with an old
+  id now matches nothing.
+- **`## Slots` (`slots.slots`) cannot be overridden:** a `rules.d` section with that id is a duplicate,
+  and the session gets `rigger: rule id slots.slots in … ; kept …` with the table unchanged.
+- **A command slot's program** is found on `PATH` outside the repository and is never a `.cmd` or
+  `.bat` file: name an npm tool as `node <script>` and a tool inside the repository (a virtual
+  environment in the working tree, say) as `<interpreter outside the repository> <script>`. The
+  refusals read `slot-run: refused: <name> is a batch file; name the program it starts (for an npm tool: node <script>)`,
+  `slot-run: refused: <name> not found on PATH (entries inside the repository are not searched)` and
+  `slot-run: refused: <name> resolves inside the repository`; the last two apply to the working
+  directory as well.
+- **A shell-guard deny now starts `shell-guard [<rule>]:`**, not `shell-guard:`. Update anything that
+  matches on the old start.
+- **A trusted project command is printed:** a session in which a project's command fills a slot gets
+  `rigger: slot <slot> runs the project's command <argv> … (<n> bytes, sha256:<12 hex digits>) (trusted in <config file>)`,
+  the argv as one line of ASCII JSON cut to 200 characters, at `startup`, `clear` and `compact`. A
+  changed command gives a changed hash.
+- **`run_tests.py --changed-modules` is a local pre-check:** a pull request and a release still need
+  the full gate.
+
+### Changed
+
+- **One `## Skill triggers` table instead of three**, printed by rigger-core (`skills.md` moved there
+  from rigger-rules and keeps the id `skills.skill-triggers`), to the session and to subagents. A
+  setup without rigger-rules gets it too. Row order: rigger-core's, rigger-windows', rigger-wp's, the
+  slot rows (plans, testing, debugging), then config rows.
+- **Rows of plugins that are not enabled are dropped:** a `load` entry whose plugin is not enabled,
+  or whose slot is empty, leaves the row, and a row with no entry left disappears. Without
+  superpowers the testing row reads `rigger-core:testing` alone. A `RIGGER_MODULE_DIRS` entry that
+  holds only `.claude-plugin/plugin.json` counts as an enabled plugin, with no notice.
+- `## Windows skills, loaded before the first step of their kind` is gone. rigger-wp's section is
+  `## WordPress site copies` and keeps only its sentence about site copies.
+- **New `## Slots` section** in the main session, after rigger-core's rules: one row per slot
+  (`Slot`, `Kind`, `Target`, `Model`, `From`: `default`, `company:<module>`, `personal` or
+  `project`). An empty slot shows `—`; a hook slot lists its fillers and their failure mode
+  (`rigger-windows (fails open)`), and fillers that declare both `open` and `closed` read
+  `failure mode: closed (fillers disagree)`. When a slot is a command, one line follows for the Bash
+  tool: `sh '<core root>/bin/py.sh' '<core root>/tools/slot-run/slot_run.py' <slot> --session <id> --base <base revision>`.
+  The default set measures 717 bytes on Windows (cap 1,200).
+- **`slots` (personal, project and company config) and `trust` (personal config) take effect.** A
+  slot entry that does not validate falls back level by level, with
+  `rigger: slot <slot> from <file> ignored: <reason>; using <level>` (or `; the slot is empty`). A
+  default whose plugin is not enabled leaves its slot empty without a notice (doctor lists it). A
+  `null` for one slot empties it (a hook slot stays filled while its plugin's hooks run); a `null` for `slots` or `slots.process` is ignored with a notice. A
+  project file may not set `kind` or `target` of a slot whose merged entry is a command unless the
+  personal file lists that slot in `trust.project_commands`. A hook slot is filled by every enabled
+  plugin whose manifest says `fills: <slot>`; two fillers, or an expected filler set in config that is
+  not enabled, give one notice line each. `review`, `shell_guard`, `company` and `leak_guard` are
+  still listed by doctor as `config-inactive`.
+- A rules part above 1 that fails prints `Rigger rules part <i> of <K> not loaded: <reason> (run /rigger-core:doctor)`.
+- The five `core_check.sh` handlers run on `startup|clear|compact`: a line printed at startup is gone
+  after a compaction unless a `compact` handler prints it again (spike Q1).
+- **Trigger-row caps:** at most 50 trigger rows per config file or company module; the rest are
+  ignored with `rigger: config <file> holds <n> trigger rows; the last <m> ignored (at most 50 per file)`.
+  `rigger-defaults.json` is exempt. A `load` entry holds at most 200 characters, in a manifest and in
+  a config file; a longer one makes its row invalid (`load entry over 200 characters`). When the
+  merged table would not fit one hook part, config rows leave it, project rows first, then personal,
+  then company, each from its last row up; a dropped override brings back the row it replaced, and one
+  line names the count and the files. Module rows always stay.
+- Rules text names slots, not fixed agents: `orchestrating-subagents`, the `worker` agent,
+  `/rigger-core:coordinate` and the implementer brief point at the `## Slots` and Skill triggers
+  tables, and the `reviewer` agent ends its reply with the `rigger.reviewer/1` JSON in a fenced
+  `json` block. In module rules text, a sentence that names an empty slot (`{{slot:<path>}}`) is left
+  out; `rules.d` text keeps placeholders as written.
+- The resolved snapshot is format 2 and holds the slot rows and the trusted list; a snapshot of
+  format 1 reads as missing.
+
+### Added
+
+- `tools/slot-run/slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]` runs a
+  command slot from the session's snapshot only, with no shell, from the repository root, with
+  `CLAUDE_*`, `HARNESS_*`, `GIT_*` and `RIGGER_MODULE_DIRS` removed and stdin closed. Bounds: 900 s,
+  1,000,000 bytes of console output (kept in `console.txt`) and a 5,000,000-byte output file. A
+  command that exits while a process it started still holds the console after 5 s is refused with
+  `child process left running`, and every run ends by stopping the whole process tree. The output is
+  checked with `slot_check.py`; the last line is `slot-run: ok <slot> <n> findings` or
+  `slot-run: refused: <reason>`. An untrusted project command, a missing snapshot and a slot that is
+  not a command are refused.
+- `tools/slot-check/slot_check.py <slot> <file>` checks a filler's reply against its slot's contract
+  (reviewer, worker, implementer, mapper, shell-guard, lessons) and prints `slot-check: ok <slot>` or
+  `slot-check: refused: <rule id>: <reason>`. The reviewer contract `rigger.reviewer/1` is a JSON
+  object, alone or in the reply's last fenced `json` block: status, findings with a quote anchored at
+  the head commit, coverage equal to `review_scope.py`'s list, skip reasons and shortcuts. Unknown
+  keys are ignored.
+- `tools/review-scope/review_scope.py --base REV [--head REV] [--repo DIR]`: the one list of files a
+  review covers (`git diff --no-renames` between two commit ids), each `review` or `skip: deleted`.
+  Git is found on absolute `PATH` entries outside the repository and the working directory and runs
+  without any `GIT_*` variable.
+- Contract fixtures in `tests/contract/<slot>/` of the filling plugin, run by
+  `tests/test_module_contracts.py`, with the default fillers.
+- Manifest fields `fills`, `failure_mode` (`open` or `closed`), `provides` (`shell-guard.rule_checker`)
+  and `tests.contract`. rigger-windows fills `shell-guard` (fails open), rigger-lessons `lessons`.
+- `/rigger-core:doctor` rows: `slot <path>` (OK with its target, WARN for two fillers with FIX
+  `claude plugin disable <name>`, MISSING for an expected filler that is not enabled, INFO for an empty
+  slot and why), `slot-checker shell-guard` (the filler's rule checker), `slot-order <id>` (WARN: a
+  config row loads `process.tdd` without `testing` before it) and `rules-d-table rules.d/<file>`.
+- `assemble.py --check` also fails on a slot default that does not validate, a second trigger table,
+  a `{{slot:<path>}}` whose default plugin is absent, and a row that loads `process.tdd` without
+  `testing` before it.
+- The report shadow's rows gain `slot` and `contract` (`ok`, `refused:<rule id>`, `none`, `unread`,
+  `error`: the slot's contract checked on the reply's shape only), and `--summary` lines end with
+  `contract-ok N contract-refused N`.
+- rigger-lessons `proposal_check.py --rules-text <file>` reads rendered rules text
+  (`assemble.py --render`); `curate-lessons` passes it. The background batch still reads raw text.
+- `run_tests.py --changed-modules [--base REV]`: runs the tests of the changed plugins, of the plugins
+  that depend on them and four repository-wide files, then the sweep; a shared file exits 2.
+- Spikes Q1–Q4 (`docs/superpowers/spikes/phase-2/`):
+  - Q1: a startup line does not survive `/compact` unless reprinted, so `core_check.sh` runs on
+    `compact`.
+  - Q2: `SubagentStop` carries the parent's session id and the whole reply, so the shadow reads the
+    parent's snapshot and the event text, never the transcript, for its contract verdict.
+  - Q3: a command the model starts in the Bash tool sees `CLAUDE_CONFIG_DIR` and the session id, and
+    the `sh` line arrives whole there, so the `## Slots` line names the Bash tool and carries the id.
+  - Q4: the operating system's lookup can run a program planted in the repository, a `.cmd` shim
+    re-parses `&`, and a polled output file does not bound output on Windows, so `slot_run.py` has its
+    own lookup, refuses batch files and counts console bytes on a pipe.
+
 ## [0.5.0] - 2026-11-24
 
 ### Migration

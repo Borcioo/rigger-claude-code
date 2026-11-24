@@ -2,9 +2,10 @@
 
 Engineering rules for Claude Code, injected into every session and subagent: scope of changes,
 tests that can fail, recurring defect classes, plans, git through worktrees and pull requests,
-verifying in the real environment, and which skill to load before which step. It depends on
-`rigger-core`, whose skills and agents the rules name; the `superpowers:` rows of `skills.md` apply
-when the superpowers plugin is installed.
+verifying in the real environment. It depends on `rigger-core`, whose skills and agents the rules
+name. The Skill triggers table (which skill to load before which step) is rigger-core's
+`rules/skills.md`, printed with or without this plugin; its superpowers entries drop out when
+superpowers is not enabled.
 
 The rules speak to the model: "me" and "my OK" mean you, the person running the session.
 
@@ -19,7 +20,7 @@ hooks:
 | Event | Matcher | What it prints |
 |---|---|---|
 | `SessionStart` | `startup\|clear\|compact` | `hooks/worktree_root.sh`: `Worktree root: <path>` when `HARNESS_WORKTREE_ROOT` is set, nothing otherwise |
-| `SessionStart` | `startup\|clear` | `hooks/core_check.sh rigger-rules`: one line when the installed rigger-core is too old to print the rules (rigger-core's README) |
+| `SessionStart` | `startup\|clear\|compact` | `hooks/core_check.sh rigger-rules`: one line when the installed rigger-core is too old to print the rules (rigger-core's README) |
 
 Subagents get nothing for `Explore`, `Plan`, `rigger-core:implementer` and `rigger-core:mapper`,
 which run without `CLAUDE.md`. `resume` prints nothing because the resumed transcript already holds
@@ -55,6 +56,11 @@ of every Rigger plugin:
 
 Write files as UTF-8. `rigger-lessons` writes the lessons you promote to global rules into this
 folder as `lessons.md`. Start a new session (or `/clear`) after changing a file.
+
+Skill-trigger rows go in `triggers` of `<config dir>/rigger/config.json` (rigger-core's README), not
+in a `rules.d` table: a `| Before | Skill |` table there is printed as text, next to the real one.
+`/rigger-core:doctor` lists such a file as a `rules-d-table` row with the JSON to move. A `rules.d`
+section cannot replace `## Slots`.
 
 ## HARNESS_RULES_DROP
 

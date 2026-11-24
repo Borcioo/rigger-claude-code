@@ -159,7 +159,9 @@ This design makes Rigger a small fixed core plus modules:
   Windows, `:` elsewhere), each holding `rigger-module.json`. The stub tests, the evals
   (`scripts/eval_stage.py` copies) and developers set it next to `--plugin-dir`.
   - **Discovery is installed and enabled plugins plus `RIGGER_MODULE_DIRS`.**
-  - An entry that is not a directory, or holds no manifest, prints one notice line and is skipped.
+  - An entry that is not a directory, or holds neither a manifest nor `.claude-plugin/plugin.json`,
+    prints one notice line and is skipped. An entry with a `plugin.json` and no manifest counts as an
+    enabled plugin (its `plugin.json` name), with no notice.
   - A name present both installed and in `RIGGER_MODULE_DIRS` is taken from `RIGGER_MODULE_DIRS`,
     the same way `--plugin-dir` takes precedence for that session, and a notice names it.
   - The variable is read like every other input: once, at `startup` or `clear`.
@@ -350,7 +352,10 @@ merge(base, over):
 4. Apply the trust filter (§7.4) to slots set at L4.
 5. Validate slots (§10): a slot whose effective entry fails validation falls back to the highest
    lower level whose entry validates, with one notice line. If none validates, the slot is empty
-   and the line says so.
+   and the line says so. A level-1 default whose plugin is not enabled leaves its slot empty with
+   no notice (doctor lists it as INFO); a fallback from a level above 1 keeps its one notice. A
+   `null` for one slot empties it, except a hook slot, which stays filled by its plugins' hooks. A
+   `null` for `slots` or for the `process` group above level 1 is ignored with a notice.
 6. Record, for every leaf key, the level and file it came from (the panel shows this).
 ```
 
@@ -366,9 +371,16 @@ A project file arrives with a `git clone`. It may:
 - set `model`;
 - list `expects`.
 
-It may not set `kind: command` for a slot unless the person's level-3 file lists that slot under
-`trust.project_commands`. Without that, the L4 value is dropped with the line
+It may not set `kind` or `target` of a slot whose entry merged with the L4 value is a command
+unless the person's level-3 file lists that slot under `trust.project_commands`: fields merge one by
+one, so a `target` alone would rewrite a level-3 argv. Without that, the whole L4 value for that slot
+is dropped, `model` included, with the line
 `rigger: .claude/rigger.json may not set a command for slot <slot>; add it to trust.project_commands in <config dir>/rigger/config.json to allow it`.
+An L4 `null` and an L4 `model` alone are allowed.
+
+A project command in effect prints, at `startup`, `clear` and `compact`,
+`rigger: slot <slot> runs the project's command <argv> … (<n> bytes, sha256:<12 hex digits>) (trusted in <config file>)`:
+the argv as one line of ASCII JSON cut to 200 characters, the size and hash of the whole line.
 
 Command targets are argv lists, run without a shell (§10.3).
 
@@ -592,14 +604,16 @@ Rules text names no skill or agent. It names a slot or a trigger row instead:
 | Placeholder | Renders as | Example use |
 |---|---|---|
 | `{{slot:testing}}` | `` `rigger-core:testing` `` (the slot target in backticks) | `tests.md` |
-| `{{slot:process.brainstorm}}` | `` `superpowers:brainstorming` `` | `plans-main.md:3-4` |
+| `{{slot:process.brainstorm}}` | `` `superpowers:brainstorming` `` | none in the repository: `plans-main.md` names the Skill triggers table instead, and `--check` reports a `{{slot:…}}` whose default plugin is outside the checked modules |
 | `{{skill:<plugin>:<skill>}}` | `` `<plugin>:<skill>` `` when that plugin is enabled, else the row or sentence's `requires` drops it | `git.md:1` |
 | `{{tool:<plugin>:<path>}}` | `<installPath>/<path>` | `tests.md:13`, `defects.md:37` (safe-edit) |
-| `{{triggers:<section id>}}` | the trigger rows of that section (§9.3) | `skills.md`, `windows-skills.md`, `wp-skills.md` |
+| `{{triggers:<section id>}}` | the one merged trigger table, whatever the id (§9.3); a second such placeholder renders nothing, with a notice, and is a `--check` finding | rigger-core's `skills.md` |
 | `{{var:<name>}}` | a module option (§9.6) | `talk.md:3,5,14` |
 
 `--var` and `{{NAME}}` stay supported for one release, then go away. An unknown placeholder prints
-as written and the check fails.
+as written and the check fails. In module rules text, a sentence that holds a `{{slot:<path>}}` of
+an empty slot is left out, and a block left with no sentence goes whole; `rules.d` text is not
+rendered and keeps placeholders as written.
 
 ### 9.3 Trigger-table assembly
 
@@ -626,7 +640,16 @@ render: one table "| Before | Skill |", entries joined with ", then " in load or
   and `SkillTableTests` (`test_plugin_rules.py:196`) keeps passing unchanged.
 - **Phase 2** merges them into one `## Skill triggers` table and drops rows whose skill's plugin is
   not enabled. That replaces the sentence "the `superpowers:` rows apply when the superpowers
-  plugin is installed" (`skills.md:3-4`) with code.
+  plugin is installed" (`skills.md:3-4`) with code. The table is rigger-core's
+  (`rigger-core/rules/skills.md`, moved from rigger-rules, id `skills.skill-triggers`), so a setup
+  without rigger-rules still gets every row. rigger-windows' table section goes, and rigger-wp's
+  section keeps its site-copy sentence under `## WordPress site copies`. A row's `section` is
+  ignored but stays valid. Order: module rows in module order, then config rows.
+- **Fit:** the merged table must fit one hook part. When it would not, config rows leave it, L4
+  first, then L3, then L2, each level from its last row up; a dropped override brings back the row
+  it replaced, and one line after the table names the count and the files. Module and level-1 rows
+  always stay. A config file or company module holds at most 50 rows, and a `load` entry at most 200
+  characters.
 
 ### 9.4 The resolved snapshot ("read once")
 
@@ -706,12 +729,14 @@ kind, target, model, source level. The orchestrator text points to it:
 Config cannot move a hook from one plugin to another: hooks are static `hooks.json`. So a `hook`
 slot (shell-guard, lessons) is filled by whichever enabled plugin declares `fills: <slot>`:
 
-- **Config:** the slot entry is only an expectation. Core reports when the expected plugin is not
-  enabled, and doctor names the install command.
-- **Two fillers enabled:** both run, because Claude Code runs both. Core reports
+- **Config:** the slot entry is only an expectation. When it is set above level 1 and the expected
+  plugin is not enabled, the session gets one notice, and doctor names the install command. A
+  level-1 default that is not enabled gives no notice.
+- **Two fillers enabled:** both run, because Claude Code runs both. The assembler prints
   `rigger: slot shell-guard is filled by A and B; disable one with claude plugin disable <name>`
-  at every startup until one is disabled. `harness_start.py` already warns about handlers that run
-  twice, and the check is added there.
+  as a notice at `startup`, `clear` and `compact` until one is disabled; `harness_start.py` is not
+  changed. When the fillers declare both `open` and `closed`, the stricter mode wins and the row
+  reads `failure mode: closed (fillers disagree)`.
 - **No filler:** the slot is empty. Rows and rules with `requires: ["slot:<slot>"]` drop.
 - **Turning lessons off: my reading of decision 2.** It means disabling the rigger-lessons plugin in
   Claude Code. The `lessons` slot is then empty, and every rule sentence that names the inbox is
@@ -723,14 +748,29 @@ It moves with it in phase 3.
 
 ### 10.3 Command-kind slots
 
-`rigger-core/tools/slot-run/slot_run.py <slot> [--base REV] [--out FILE]` runs a command slot:
+`rigger-core/tools/slot-run/slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]`
+runs a command slot. There is no `--out`: the tool picks the output file. The session id comes on
+the command line because a shell tool process may not know which session started it, and `--base`
+is required, with no default. The `## Slots` line that shows the call is one line for the Bash tool,
+`sh '<core root>/bin/py.sh' '<core root>/tools/slot-run/slot_run.py' <slot> --session <id> --base <base revision>`;
+the PowerShell tool finds no `sh` to run it.
 
-- **How it runs:** the argv comes from the snapshot, placeholders are filled, and it runs with no
-  shell, its cwd set to the repo root.
-- **Limits:** a timeout from the slot's contract, output size capped, environment stripped of
-  `CLAUDE_*` and `HARNESS_*` the way `run_tests.py` strips them.
+- **How it runs:** the argv comes from the session's snapshot only (a missing snapshot, one of
+  another format and an untrusted project command are refused), placeholders are filled, and it
+  runs with no shell, its cwd set to the repo root. `{scope}` names a file of
+  `<verdict><TAB><path>` lines from `review_scope.py`.
+- **The program:** found by the tool's own lookup, never the operating system's: a bare name on the
+  absolute `PATH` entries outside the repository and the working directory (`.exe` and `.com` on
+  Windows), or an absolute path; the result must lie outside both. A `.cmd` or `.bat` file is
+  refused, because `cmd.exe` re-parses its arguments.
+- **Limits:** 900 s, 1,000,000 bytes of console output read from one pipe, a 5,000,000-byte output
+  file; environment stripped of `CLAUDE_*`, `HARNESS_*`, `GIT_*` and `RIGGER_MODULE_DIRS`
+  (`ANTHROPIC_*` stays, for a tool with its own key). A process the command started that still
+  holds the console 5 s after the command exits gives `child process left running`, and the whole
+  process tree is stopped after every run.
 - **Contract check:** it validates the output against the slot's contract (`slot_check.py`) and
-  prints one line `slot-run: ok <slot> <n findings>` or `slot-run: refused: <reason>`.
+  prints one last line `slot-run: ok <slot> <n> findings` or `slot-run: refused: <reason>`, after
+  a `slot-run: output <file>` line once the output folder exists.
 - **Failure:** a refused or timed-out command is a failed review. The orchestrator handles it like
   a `STATUS: BLOCKED` report (`orchestrating-subagents/SKILL.md:117-120`), never as "no findings".
 
@@ -742,9 +782,9 @@ It moves with it in phase 3.
 | `worker` | `rigger-core:worker`, `by-rule` | agent | First line `STATUS: DONE\|PARTIAL\|BLOCKED\|NEEDS_CONTEXT`, then `## Summary` with 3–5 bullets, then the brief's format (`worker.md:11-12`). |
 | `implementer` | `rigger-core:implementer`, `pinned` | agent | `STATUS`, `FILES`, `ROOT CAUSE`, `GATE`, `RED RUNS`, optional `QUESTION`; with BLOCKED or NEEDS_CONTEXT also `CALL`, `OUTPUT`, `ALTERNATIVE` (`implementer.md:33-43`). |
 | `mapper` | `rigger-core:mapper`, `pinned` | agent | Only lines `path:START[-END] - text` (at most 12 words) or one `NOT FOUND: <terms>` (`mapper.md:14,18`). Each path exists at the reviewed commit. |
-| `testing` | `rigger-core:testing` → `rigger-TESTING:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware). The filling module ships the commit-time test guards. |
-| `shell-guard` | `rigger-windows` → `rigger-shellwise` | hook | (a) A PreToolUse hook on `Bash` and `PowerShell`. It prints nothing to allow, may add a non-blocking note or warning the agent reads while the command runs (shellwise `warn`), or prints one JSON deny whose reason names a rule id and a fix. It always exits 0 (`tests/test_repo.py:336`), because an exit 2 from a crash blocks the tools needed to fix it (`CLAUDE.md:32`). (b) The filler declares `"failure_mode": "open"` or `"closed"` in its manifest: whether a command is allowed or denied when the guard cannot finish its analysis. Core prints the declared mode in the `## Slots` row and doctor reports it. A filler without the key is reported as `failure mode: undeclared`. rigger-windows declares `open`, and `rigger-shellwise` declares `closed` (shellwise answers `danger` when analysis cannot finish). (c) Median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) **Optional:** a rule checker, a Python module with `RULES` and `rule_guard_problem` as `lessons_lint.py --rule-checker` loads it (`lessons_lint.py:217-241`), named by `provides.shell-guard.rule_checker` in the filler's manifest. rigger-windows' default passes it with today's `lessons_guard.py`. A filler without one passes the contract. Each `live:<rule>` lesson is then reported `no checker` by doctor and curation, and is never dropped. |
-| `process.brainstorm`, `.plans`, `.tdd`, `.debug` | superpowers skills | skill | The skill exists in an enabled plugin. An empty role drops its rows and its `{{slot:…}}` sentences. |
+| `testing` | `rigger-core:testing` → `rigger-TESTING:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware; `--check` and a doctor `slot-order` row report a row that breaks it). From phase 3, the filling module ships the commit-time test guards; until then they live in rigger-core. |
+| `shell-guard` | `rigger-windows` → `rigger-shellwise` | hook | (a) A PreToolUse hook on `Bash` and `PowerShell`. It prints nothing to allow, may add a non-blocking note or warning the agent reads while the command runs (shellwise `warn`), or prints one JSON deny whose reason names a rule id in square brackets (`[<rule id>]`; rigger-windows' reason starts `shell-guard [<rule>]: `) and a fix. It always exits 0 (`tests/test_repo.py:336`), because an exit 2 from a crash blocks the tools needed to fix it (`CLAUDE.md:32`). (b) The filler declares `"failure_mode": "open"` or `"closed"` in its manifest: whether a command is allowed or denied when the guard cannot finish its analysis. Core prints the declared mode in the `## Slots` row and doctor reports it. A filler without the key is reported as `failure mode: undeclared`; fillers that declare both modes read `failure mode: closed (fillers disagree)`. rigger-windows declares `open`, and `rigger-shellwise` declares `closed` (shellwise answers `danger` when analysis cannot finish). (c) From phase 3: median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) **Optional:** a rule checker, a Python module with `RULES` and `rule_guard_problem` as `lessons_lint.py --rule-checker` loads it (`lessons_lint.py:217-241`), named by `provides.shell-guard.rule_checker` in the filler's manifest. rigger-windows' default passes it with today's `lessons_guard.py`. A filler without one passes the contract. Each `live:<rule>` lesson is then reported `no checker` by doctor and curation, and is never dropped. |
+| `process.brainstorm`, `.plans`, `.tdd`, `.debug` | superpowers skills | skill | The skill exists in an enabled plugin. An empty role drops its trigger entries and its `{{slot:…}}` sentences in module rules text (§9.2); no shipped rules sentence names one. |
 | `lessons` | `rigger-lessons` | hook | (a) A `SessionStart` line naming the inbox path and its open count (the panel reads the inbox, `rigger-panel/README.md:23`). (b) Inbox entries pass `inbox_lint.py`. (c) Its curation skill reads lesson targets from the snapshot (§11). |
 
 Every contract has fixtures in its module's tests (`tests.contract`): one passing reply, plus one
@@ -788,7 +828,9 @@ It carries what the fix-round rules rely on today:
 - A `quote`, whitespace-normalised, does not occur in `file` at `head` within `line..end_line`
   (±3 lines). This is the quote anchor, so a finding cannot point at code that is not there.
 - `in_scope` is not exactly `reviewed` ∪ `skipped`.
-- `in_scope` differs from what `review_scope.py` lists for `base..head`.
+- `in_scope` differs from what `review_scope.py` lists for `base..head`. That list is every path of
+  `git diff --no-renames --name-status` between the two commit ids, so a rename is a deletion and an
+  addition; an agent reviewer runs `review_scope.py` itself rather than a plain `git diff`.
 
 `review_scope.py` is part of the contract, so it lives in core
 (`rigger-core/tools/review-scope/review_scope.py`) from phase 2. An external CLI filling the slot
@@ -877,10 +919,14 @@ offers each matching company target and nothing public.
   - the sweep with `--no-denylist`.
 - **Full gate instead:** a change to shared files means the full gate (`gate.py`). Shared files are
   `scripts/`, `tests/`, any `plugins/*/rules/**`, `rigger-defaults.json`, `rules_start.sh` while it
-  exists, and `bin/py.sh`. The mode then prints `changed-modules: shared file <path>; run the gate`
-  and exits 2, so a caller cannot read it as green.
-- **Gate or not:** unlike `--fix-round`, this mode is a gate for pull requests because each module's
-  tests run complete. The full gate stays required for a release and for shared files.
+  exists, `bin/py.sh`, `plugins/*/hooks/core_check.sh`, `.github/**` and `.claude-plugin/**`. The
+  mode then prints `changed-modules: shared file <path>; run the gate` and exits 2, so a caller
+  cannot read it as green. Besides each changed module's tests it runs the tests of the modules
+  whose `dependencies` reach a changed one, and `tests/test_repo.py`, `tests/test_plugin_refs.py`
+  and `plugins/rigger-rules/tests/test_plugin_rules.py`.
+- **Gate or not:** until phase 3 the mode is a local pre-check, not the gate for a change inside one
+  module: some test files read another module's files without a dependency between the two, so it
+  can pass where the gate fails. A pull request and a release need the full gate.
   `select_tests.py` stays the engine of `--fix-round`.
 - **Test setup:** a test that starts `claude` with `--plugin-dir` also sets `RIGGER_MODULE_DIRS`
   to the same roots, joined with `os.pathsep`, next to the isolated `CLAUDE_CONFIG_DIR` and the
@@ -889,8 +935,8 @@ offers each matching company target and nothing public.
   but not `RIGGER_*`, so it also clears `RIGGER_MODULE_DIRS` from the inherited environment. A test
   that needs it sets it itself, and a developer's own value never leaks into the suite.
 - **CI:** pull requests to `main` only, on Windows, macOS and Linux (the workflow is a separate PR).
-  It runs `--changed-modules --base origin/main`, the contract test and the sweep. A release runs
-  `gate.py --release`.
+  It keeps the full gate on Linux and the full suite on macOS and Windows for every pull request. A
+  release runs `gate.py --release`.
 
 ## 13. Phases
 
@@ -989,11 +1035,13 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
   - `worker.md:8-10`;
   - `reviewer.md:17`;
   - `orchestrating-subagents/SKILL.md:86-93,122,147`;
-  - `coordinate.md:16,49,62`;
+  - `coordinate.md:49,62` (`:16` stays: it names `rigger-core:orchestrating-subagents`, a fixed
+    core skill no slot covers);
   - `implementer-brief.md:3,50-51`.
-- **Report shadow:** the existing `report_shadow.py` (SubagentStop, shadow only) also records
-  `slot_check` verdicts per agent type. That measures contract conformance before anything is
-  enforced.
+- **Report shadow:** the existing `report_shadow.py` (SubagentStop, shadow only) also records, per
+  row, the slot whose agent target is the stopped agent's type and the `slot_check --shape-only`
+  verdict on the reply (`ok`, `refused:<rule id>`, `none`, `unread`, `error`), with no git. That
+  measures contract conformance before anything is enforced.
 - **Doctor:** checks fillers and double fillers.
 
 **Exit criterion:**
@@ -1009,7 +1057,8 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
 
 - one trigger table instead of three;
 - rows for absent plugins disappear;
-- a new `## Slots` section of about 600 bytes in the main session.
+- a new `## Slots` section in the main session, capped at 1,200 bytes for the default set (eleven
+  rows of five columns; 717 bytes measured on Windows).
 
 **Migration:**
 
@@ -1017,7 +1066,8 @@ defaults 250, hooks and doctor 180), about 1,600 lines of tests (golden 400, ass
   table row in `rules.d` (text copied from `skills.md`) moves it to `triggers` in `config.json`.
   Doctor detects a `rules.d` file with a `| Before | Skill |` table and prints the equivalent JSON.
 
-**Estimate:** 12 h, about 800 lines of code, about 1,100 lines of tests.
+**Estimate:** about 40 h, 1,850 lines of code and 3,450 lines of tests (the phase 2 plan's
+estimate; this section first said 12 h, 800 and 1,100).
 
 **Simpler version:**
 
