@@ -25,12 +25,16 @@ With a finding, the commit passes only when a `Test-change: <reason>` line (or `
 takes it) with at least REASON_MIN characters stands in the command text (up to a quote), the `-F`/`--file`
 file, a file a `cat`/`Get-Content` before `git commit -F -` reads, the message `-C`/`-c` reuses, or HEAD's
 message on `--amend`. Otherwise the hook denies it and lists the findings. `--dry-run` is no commit.
-`-F -` has no other source: a message fed to stdin any other way is judged by the command text alone.
+`-F -` has no other source: a message fed to stdin any other way is judged by the command text alone. A `-F` file
+the command writes or removes before the commit, or one the hook cannot read, states no reason of its own.
 
 The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs, a bash
 `"$(...)"` as one word, the body when it is `cat` of a heredoc, `$'...'`, `$((...))`; bash keywords, `env`,
 `command`, `time`, `nohup` and `exec` in front of a program are dropped). A commit is a simple command whose
-program is git and whose subcommand is `commit`; `cd`, `Set-Location` and `git -C` before it set the folder. Every
+program is git and whose subcommand is `commit`; `cd`, `Set-Location` and `git -C` before it set the folder. In a
+folder or `-F` path, a variable the command sets to a literal before (bash `NAME=value` alone or after `export`,
+PowerShell `$name = value`, `$env:NAME = value`) is replaced by it, a Git Bash `/<d>/` or `/tmp` path is read as
+Windows names it. Every
 commit of the command is read (a `--dry-run` is none): their staging adds up, and the index is diffed once against
 HEAD (`HEAD~1` when the first one amends). When the command also stages (`git add`/`git rm` before a commit,
 `commit -a`, `-i <paths>`), those are replayed on a copy of the index; a single `git commit <paths>` without `-i`
@@ -39,11 +43,12 @@ commits HEAD plus those paths, replayed on `read-tree HEAD`. Redirections are no
 `rm --cached`) and that copy is diffed; `git add` writes the blobs it stages into the object store. The hook runs
 before the command is approved, so git runs with `core.fsmonitor=false`,
 `log` with `--no-show-signature`, the replay with every filter driver of its folder switched off, and a
-reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked,
-nor a commit after a `git merge`, `pull`, `cherry-pick`, `revert` or `rebase` in the same command when that is the
-only step that changes the index (`--abort` and `--quit` are index writers; a history step's `--help`, `-h` and
-`--show-current-patch` before `--`, with no `-m`/`-F`/`-X`/`-s`/`--strategy`, change nothing; a commit is never
-taken for help).
+reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked. A
+commit after a `git merge`, `pull`, `cherry-pick`, `revert` or `rebase` in the same command, when that is the only
+step that changes the index, is diffed as the index stands when the hook runs: what an earlier call staged is
+checked, the history step's content (checked when it was committed) is not there yet (`--abort` and `--quit` are
+index writers; a history step's `--help`, `-h` and `--show-current-patch` before `--`, with no
+`-m`/`-F`/`-X`/`-s`/`--strategy`, change nothing; a commit is never taken for help).
 
 Denied as "cannot tell what this commit holds", with a hint to run that step in its own call (a stated reason still
 passes): another index writer before the commit (`git checkout`, `switch`, `restore`, `reset`, `stash`, `mv`,
@@ -53,18 +58,22 @@ passes): another index writer before the commit (`git checkout`, `switch`, `rest
 `Add-Content`, `Out-File`, their PowerShell aliases, any redirection target) whose targets hold a tracked test
 file, or a variable, `~`, backtick or brace, when a later `git add`, `-a` or pathspec picks them up, a replayed
 step git rejects, a Bash glob or brace that, read as git does, weakens tests, commits in more than one
-repository, a command it cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and
-a `git` followed by a `commit` between two of `; & | ( ) { } !` or a newline, anywhere in the text (inside quotes
-too, at any distance), unless it lies in the literal text of a commit the parse read: a substitution, backtick,
+repository, a commit or staging step whose folder still holds a variable, substitution or leading `~`, a command
+it cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and
+a `git` followed by the whole word `commit` (not `--no-commit`, `fix/commit-x`, `commit.gpgsign`, `post-commit`;
+`commit-tree` counts) between two of `; & | ( ) { } !` or a newline, anywhere in the text (inside quotes too, at
+any distance), unless it lies in the literal text of a commit the parse read: a substitution, backtick,
 `$((...))` or unquoted heredoc part runs what it holds and covers nothing. So a commit in a string another shell
 runs, after `sudo`, `eval` or `timeout`, inside a substitution, or only named in an `echo` or `git log --grep` is
 denied. A staged path that names no file and no index entry yet
 is a new file the command makes, and is left out of the replay.
 
-Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
+Unchecked by design: a commit in the arguments of `wsl` or `ssh` works on a repository the hook cannot read, so
+it passes unread (a substitution in those arguments runs here and is still denied).
+
+Fails open: no commit, `cd` without a
 folder, an interactive add, staging outside the repository, another program that writes files (`python x.py`),
-no repository (a folder named by a variable or `~` is read literally and fails here), a git error, 8 s of
-git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
+no repository, a git error, 8 s of git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
 Loosening an assertion in place (`toBe(3)` to `toBeTruthy()`), a test replaced by a vacuous one, data
 provider rows and snapshot updates are not detected.
 
@@ -352,7 +361,7 @@ class Simple:
 
 HEREDOC_CAT = re.compile(r"\s*cat\s*<<-?[ \t]*(['\"]?)(\w+)\1[ \t]*\n")
 # The loose cross-check: a `git` and a later `commit` between two of these separators.
-SEGMENT = re.compile(r"[;&|(){}!\n]|\bgit\b|\bcommit\b")
+SEGMENT = re.compile(r"[;&|(){}!\n]|\bgit\b|(?<![\w./-])commit(?![\w./])")   # a whole word: not `--no-commit`
 SEGMENT_PS = re.compile(SEGMENT.pattern, re.I)
 KEYWORDS = frozenset(("then", "do", "else", "elif", "if", "while", "until", "!", "{", "time", "command", "nohup",
                       "exec"))
@@ -640,16 +649,47 @@ def split_command(text, powershell):
 
 
 def _local_path(path, powershell):
-    """A Git Bash drive path (`/<letter>/...`) as a Windows one, on Windows."""
+    """A Git Bash drive path (`/<letter>/...`) as a Windows one, and `/tmp` as the temp folder Git Bash mounts there,
+    on Windows."""
     if os.name == "nt" and not powershell and re.match(r"/[A-Za-z](?:/|$)", path):
         return path[1] + ":" + (path[2:] or "/")
+    if os.name == "nt" and not powershell and re.match(r"/tmp(?:/|$)", path):
+        return tempfile.gettempdir() + path[4:]
     return path
+
+
+def _assignments(words, powershell):
+    """[(name, value)] a simple command sets for the commands after it: bash `NAME=value ...` alone or after
+    `export`, PowerShell `$name = value` and `$env:NAME = value` (names folded to lower case)."""
+    if powershell:
+        if len(words) == 3 and words[1] == "=" and re.fullmatch(r"\$(?:env:)?\w+", words[0], re.I):
+            return [(words[0][1:].lower(), words[2])]
+        one = re.fullmatch(r"\$((?:env:)?\w+)=(.*)", words[0], re.I | re.S) if len(words) == 1 else None
+        return [(one.group(1).lower(), one.group(2))] if one else []
+    words = words[1:] if words[:1] == ["export"] else words
+    pairs = [re.fullmatch(r"([A-Za-z_]\w*)=(.*)", word, re.S) for word in words]
+    return [(pair.group(1), pair.group(2)) for pair in pairs] if pairs and all(pairs) else []
+
+
+def _expand(word, variables, powershell):
+    """`word` with each variable the command set to a literal replaced by its value; any other stays as written."""
+    if powershell:
+        pattern, fold = re.compile(r"\$(?:\{((?:env:)?\w+)\}|((?:env:)?\w+))", re.I), str.lower
+    else:
+        pattern, fold = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))"), str
+    return pattern.sub(lambda m: variables.get(fold(m.group(1) or m.group(2)), m.group(0)), word)
+
+
+def _unresolved(path):
+    """True when a folder still holds a variable, a substitution or a leading `~`, which the guard cannot name."""
+    return "$" in path or "`" in path or any(part.startswith("~") for part in re.split(r"[\\/]", path))
 
 
 class Commit:
     def __init__(self):
         self.folder = None
         self.message_file = None
+        self.message_written = False   # the `-F` file is one the command writes before the commit
         self.message_sources = []   # files a `cat`/`Get-Content` before `-F -` reads
         self.reuse = None           # -C / -c commit
         self.amend = False
@@ -676,7 +716,13 @@ class Unclear(Exception):
 
 
 READ_HINT = "Commit in a command of its own, with the message in `-m` or in a file read by `-F`"
-RUN_HINT = "Run `git commit` itself in the command, not in a string, a function or another shell"
+RUN_HINT = ("Run `git commit` itself in the command, not in a string, a function or another shell; if the command "
+            "does not commit, split it so no `git` and `commit` share a part between `;`, `&`, `|` and newlines, or "
+            "write that text to a file with the Write tool")
+FOLDER_WHY = "the folder of a git step is named by a variable or `~` the command does not set to a literal"
+FOLDER_HINT = ("Name the folder literally in `cd` or `git -C`, or set the variable to a literal path earlier in the "
+               "same command")
+REMOTE = ("wsl", "ssh")   # a commit they run works on a repository the hook cannot read: unchecked
 
 
 def _copy_targets(args):
@@ -703,7 +749,7 @@ def _command_words(words, powershell):
     return words
 
 
-def _git_parts(words, folder, powershell):
+def _git_parts(words, folder, powershell, variables=None):
     """(folder, subcommand, args) of a git command, folder None when it cannot be read; None when not git."""
     head = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
     if head not in ("git", "git.exe"):
@@ -714,7 +760,7 @@ def _git_parts(words, folder, powershell):
         if option == "-C":
             if i + 1 >= len(words) or folder is None:
                 return None, None, []
-            folder = os.path.join(folder, _local_path(words[i + 1], powershell))
+            folder = os.path.join(folder, _local_path(_expand(words[i + 1], variables or {}, powershell), powershell))
             i += 2
         elif option in GIT_VALUE_GLOBAL:
             i += 2
@@ -788,15 +834,21 @@ def read_command(command, cwd, powershell):
             raise Unclear("the guard cannot read the command (%s)" % why, READ_HINT)
         return None
     simples = [(_command_words(simple.words, powershell), simple) for simple in parsed]
-    _unread_commit(command, [s for words, s in simples
-                             if words and (_git_parts(words, cwd, powershell) or "--")[1] == "commit"], powershell)
+    _unread_commit(command, [s for words, s in simples if words and (
+        (_git_parts(words, cwd, powershell) or "--")[1] == "commit"
+        or re.sub(r"\.exe$", "", words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()) in REMOTE)], powershell)
     folder = cwd
-    stages, readers, commits = [], [], []
-    unclear, base, writes, touched, history, dirty = None, None, [], [], None, False
+    stages, readers, commits, variables, written = [], [], [], {}, set()
+    unclear, base, writes, touched, history, dirty, vague = None, None, [], [], None, False, False
     for words, simple in simples:
         targets = [t for t in simple.redirects if t.lower() not in NO_FILE]
         if targets:
             writes.append((folder, (words or ["a redirection"])[0], targets))
+            written.update(_written(folder, targets, variables, powershell))
+        assigned = _assignments(simple.words, powershell)
+        if assigned:
+            variables.update((name, _expand(value, variables, powershell)) for name, value in assigned)
+            continue
         if not words:
             continue
         head = words[0].lower()
@@ -805,7 +857,7 @@ def read_command(command, cwd, powershell):
             if not targets:
                 folder = None
             elif folder is not None:
-                folder = os.path.join(folder, _local_path(targets[-1], powershell))
+                folder = os.path.join(folder, _local_path(_expand(targets[-1], variables, powershell), powershell))
             continue
         if head in READERS and folder is not None:
             readers = [os.path.join(folder, w) for w in words[1:] if not w.startswith("-")]
@@ -815,8 +867,9 @@ def read_command(command, cwd, powershell):
         if kind and (program != "sed" or any(w.startswith("--in-place") or re.match(r"-[^-]*i", w) for w in words[1:])):
             names = [w for w in words[1:] if not w.startswith("-")]
             writes.append((folder, words[0], _copy_targets(words[1:]) if kind == "copy" else names))
+            written.update(_written(folder, writes[-1][2], variables, powershell))
             continue
-        parts = _git_parts(words, folder, powershell)
+        parts = _git_parts(words, folder, powershell, variables)
         if parts is None:
             continue
         git_folder, sub, args = parts
@@ -839,6 +892,7 @@ def read_command(command, cwd, powershell):
         if sub in ("add", "rm"):
             stages.append((sub, git_folder, args))
             touched, writes, dirty = touched + writes, [], True
+            vague = vague or (git_folder is not None and _unresolved(git_folder))
         elif sub == "commit":
             commit = Commit()
             _commit_options(commit, args)
@@ -846,12 +900,15 @@ def read_command(command, cwd, powershell):
                 continue
             if git_folder is None:
                 return None
+            if vague or _unresolved(git_folder):
+                raise Unclear(FOLDER_WHY, FOLDER_HINT)
             if commit.all or commit.pathspecs:
                 touched, writes, dirty = touched + writes, [], True
-            if history:
-                if dirty:
-                    raise Unclear("`git %s` and another change to the index run before it" % history)
-                continue
+            if history and dirty:
+                raise Unclear("`git %s` and another change to the index run before it" % history)
+            if commit.message_file and commit.message_file != "-":
+                commit.message_file = _local_path(_expand(commit.message_file, variables, powershell), powershell)
+                commit.message_written = bool(_written(git_folder, [commit.message_file], {}, powershell) & written)
             commit.folder, commit.stages, commit.powershell = git_folder, list(stages), powershell
             commit.message_sources, commit.touched, dirty = readers, list(touched), False
             commit.unclear, commit.base = unclear, base   # a step after the last commit changes nothing it holds
@@ -867,6 +924,14 @@ def read_command(command, cwd, powershell):
     if len(commits) > 1:
         commit.include = True   # the paths join what the earlier commits staged
     return commit
+
+
+def _written(folder, targets, variables, powershell):
+    """The paths, as compared, of files a step in `folder` writes or removes."""
+    if folder is None:
+        return set()
+    return {os.path.normcase(os.path.abspath(os.path.join(folder, _local_path(_expand(t, variables, powershell),
+                                                                              powershell)))) for t in targets}
 
 
 def _unread_commit(command, read, powershell):
@@ -995,10 +1060,10 @@ def _stated_one(commit):
     if commit.message_file == "-":
         return any(has_reason(_read(path), quoted=False) for path in commit.message_sources)
     if commit.message_file:
+        if commit.message_written:
+            return False   # what the command writes there stands in the command text, which is read already
         text = _read(os.path.join(commit.folder, commit.message_file))
-        if text is None:
-            raise RuntimeError("message file unreadable")   # the same command may still write it: fail open
-        return has_reason(text, quoted=False)
+        return text is not None and has_reason(text, quoted=False)   # a file it cannot read states no reason
     ref = commit.reuse or ("HEAD" if commit.amend and not commit.new_message else None)
     if ref and not ref.startswith("-"):
         return has_reason(_git(["log", "-1", "--no-show-signature", "--format=%B", ref, "--"],
@@ -1112,7 +1177,7 @@ def check(command, cwd, powershell):
         if other is None or not _inside(other, top) or not _inside(top, other):
             raise Unclear("commits in more than one repository")
     for folder, program, targets in commit.touched:
-        if folder is None or _holds_tests(folder, targets, top):
+        if folder is None or _unresolved(folder) or _holds_tests(folder, targets, top):
             raise Unclear("`%s` changes test files a later step stages" % program)
     base = (commit.base or "HEAD") + ("~1" if commit.amend else "")
     args =["diff", "-M", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/",
