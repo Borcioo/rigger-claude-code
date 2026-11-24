@@ -116,9 +116,10 @@ text that names it then points at nothing:
 - **Sibling plugins.** A rule or skill that names a skill of another plugin (`rigger-core:<skill>`,
   `rigger-windows:<skill>`, the `safe-edit.ps1` of `rigger-windows`) works only when that plugin is
   installed and enabled.
-- **Superpowers.** A separate plugin, not required. Rule text that names it (the plan rules, the
-  skill table, the agents, `/rigger-core:coordinate`, the question format of `rigger-talk`) applies
-  only if it is installed.
+- **Superpowers.** A separate plugin, not required. It fills the four `process` slots (brainstorm,
+  plans, TDD, debugging); without it those slots are empty and the Skill triggers table drops their
+  entries. Other text that names it (`/rigger-core:coordinate`, a few rule and skill sentences, the question format of `rigger-talk`)
+  applies only if it is installed.
 - **Lessons curation batches.** Off by default. With `RIGGER_LESSONS_BATCH=1` in the environment,
   `rigger-lessons` curates the inbox in the background with up to two `claude -p` runs per batch, billed
   to your plan usage or API credit (capped at $2 + $3 a batch, typically about $0.5).

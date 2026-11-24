@@ -174,10 +174,35 @@ class DiscoverTests(unittest.TestCase):
         finally:
             os.chdir(cwd)
         self.assertEqual(self.names(found), ["rigger-core"])
-        self.assertEqual(len(found.notices), 3, found.notices)
+        self.assertEqual(len(found.notices), 2, found.notices)
         self.assertIn("gone", found.notices[0])
-        self.assertIn("plain", found.notices[1])
-        self.assertIn("relative", found.notices[2])
+        self.assertIn("relative", found.notices[1])
+        self.assertIn("plain", found.enabled)  # D39: a plugin.json alone counts as enabled
+
+    def test_dirs_entry_with_plugin_json_only_counts_as_enabled(self):
+        plain = make_plugin(self.tmp / "plain", "plain-plugin", manifest=False)
+        cases = [
+            ("no plugin.json", None),
+            ("a list", b"[\"plain\"]"),
+            ("name is a number", b"{\"name\": 7}"),
+            ("not JSON", b"{name"),
+        ]
+        self.layout.environ[discover.MODULE_DIRS] = str(plain)
+        found = self.layout.run()
+        self.assertIn("plain-plugin", found.enabled)
+        self.assertEqual(self.names(found), ["rigger-core"])
+        self.assertEqual(found.notices, [])
+        for label, body in cases:
+            with self.subTest(case=label):
+                folder = self.tmp / ("bad " + label.replace(" ", "-"))
+                (folder / ".claude-plugin").mkdir(parents=True)
+                if body is not None:
+                    (folder / ".claude-plugin" / "plugin.json").write_bytes(body)
+                self.layout.environ[discover.MODULE_DIRS] = str(folder)
+                found = self.layout.run()
+                self.assertEqual(found.enabled, frozenset({"rigger-core"}))
+                self.assertEqual(len(found.notices), 1, found.notices)
+                self.assertIn("holds no %s" % discover.MANIFEST, found.notices[0])
 
     def test_module_dirs_with_space_and_non_ascii(self):
         root = make_plugin(self.tmp / "za\u017c\u00f3\u0142\u0107 \u0105" / "rigger-talk", "rigger-talk")

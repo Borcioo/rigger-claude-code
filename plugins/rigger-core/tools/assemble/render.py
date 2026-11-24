@@ -9,9 +9,11 @@ reported.
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 
-from manifest import Module, TriggerRow
+from config import _shown
+from manifest import SLOT_PATHS, Module, TriggerRow
+from parts import PART_CAP, _piece
 
 DEFAULT_SECTION = "skills.skill-triggers"
 PLACEHOLDER = re.compile(r"\{\{([a-z]+):([^{}\s]+)\}\}")
@@ -20,6 +22,13 @@ _ANY = re.compile(r"\{\{(?:([a-z]+):([^{}\s]+)|([a-z_]+))\}\}")
 _TRIGGERS_LINE = re.compile(r"[ \t]*\{\{triggers:([^{}\s]+)\}\}[ \t]*")
 HEADER = b"| Before | Skill |\n|---|---|\n"
 JOINER = ", then "
+SECOND_TABLE = "second trigger table"
+DROP_ORDER = ("L4:", "L3:", "L2:")  # project rows leave the table first, then personal, then company
+LEFT_OUT = "rigger: left out {count} of the trigger rows from {files}: the Skill triggers table must fit in one hook part"
+# A block of rules text is a list item with its indented lines, a paragraph, a heading line or a table line.
+_BLOCK_START = re.compile(r"[ \t]*(?:[-*+]|\d+\.)[ \t]|#|\|")
+_MARKER = re.compile(r"[ \t]*(?:(?:[-*+]|\d+\.|#{1,6})[ \t]+)?")
+_SENTENCE_END = re.compile(r"[.!?][)\"'`*]*(?=\s|$)")
 
 
 @dataclass
@@ -28,6 +37,21 @@ class RenderContext:
     rows_by_section: Dict[str, List[TriggerRow]]
     vars: Dict[str, Dict[str, str]]
     module: str
+    rows: Optional[List[TriggerRow]] = None
+    enabled: Optional[FrozenSet[str]] = None
+    table_seen: Optional[List[str]] = None
+    # The config level that set each row ("L2:<module>", "L3:<file>", "L4:<file>"), the module or
+    # level-1 row a config row replaced, and whether a rendered section fits one hook part.
+    row_sources: Optional[Dict[str, str]] = None
+    replaced: Optional[Dict[str, TriggerRow]] = None
+    fits: Optional[Callable[[bytes], bool]] = None
+
+
+def fits_part(root: str, encode: Callable[[bytes], bytes], cap: int = PART_CAP) -> Callable[[bytes], bool]:
+    """Whether a section, with the `Plugin root:` line the packer puts before it, fits an empty part."""
+    def fits(body: bytes) -> bool:
+        return len(encode(_piece(0, (root, body, ""), [])[2])) <= cap
+    return fits
 
 
 def _slot_target(slots: dict, path: str) -> Optional[str]:
@@ -38,6 +62,54 @@ def _slot_target(slots: dict, path: str) -> Optional[str]:
     return target if isinstance(target, str) else None
 
 
+def _names_empty_slot(text: str, slots: dict) -> bool:
+    return any(match.group(1) == "slot" and match.group(2) in SLOT_PATHS and _slot_target(slots, match.group(2)) is None
+               for match in PLACEHOLDER.finditer(text))
+
+
+def _without_sentences(body: str, slots: dict) -> str:
+    """`body` without each sentence that names an empty slot, and without the whitespace after it."""
+    spans = []  # type: List[Tuple[int, int, int]]  (start, end of the sentence, end of the space after it)
+    start = 0
+    while start < len(body):
+        found = _SENTENCE_END.search(body, start)
+        end = found.end() if found else len(body)
+        after = end
+        while after < len(body) and body[after].isspace():
+            after += 1
+        spans.append((start, end, after))
+        start = after
+    kept = "".join(body[s:a] for s, e, a in spans if not _names_empty_slot(body[s:e], slots))
+    return kept.rstrip() if kept != body else body
+
+
+def _drop_empty_slot_sentences(text: str, slots: dict) -> str:
+    """An empty slot's `{{slot:<path>}}` never prints: the sentence holding it goes, and a block left with no
+    sentence goes whole (coordinator ruling on phase 2 Task 16; spec section 10.4)."""
+    if not _names_empty_slot(text, slots):
+        return text
+    lines = text.split("\n")
+    blocks = []  # type: List[List[int]]
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        previous = lines[index - 1] if index else ""
+        if not blocks or blocks[-1][-1] != index - 1 or _BLOCK_START.match(line) \
+                or previous.startswith(("#", "|")):
+            blocks.append([index])
+        else:
+            blocks[-1].append(index)
+    for block in reversed(blocks):
+        whole = "\n".join(lines[i] for i in block)
+        if not _names_empty_slot(whole, slots):
+            continue
+        marker = _MARKER.match(whole).group(0)
+        body = _without_sentences(whole[len(marker):], slots)
+        kept = [line for line in (marker + body).split("\n") if line.strip()] if body.strip() else []
+        lines[block[0]:block[-1] + 1] = kept
+    return "\n".join(lines)
+
+
 def _entry(entry: str, slots: dict) -> str:
     if entry.startswith("slot:"):
         target = _slot_target(slots, entry[len("slot:"):])
@@ -46,11 +118,37 @@ def _entry(entry: str, slots: dict) -> str:
     return entry
 
 
-def table(rows: List[TriggerRow], slots: dict) -> bytes:
-    if not rows:
-        return b""
-    lines = ["| %s | %s |\n" % (row.before, JOINER.join("`%s`" % _entry(e, slots) for e in row.load)) for row in rows]
-    return HEADER + "".join(lines).encode("utf-8")
+def visible(rows: List[TriggerRow], slots: dict,
+            enabled: Optional[FrozenSet[str]]) -> List[Tuple[TriggerRow, List[str]]]:
+    """Each row with its resolved entries (D39); enabled None drops nothing, as phase 1 printed.
+
+    An entry goes when its slot is empty or its plugin is not enabled; a row goes when no entry is left.
+    An entry with no `:` names no plugin (a personal skill) and stays.
+    """
+    shown = []
+    for row in rows:
+        entries = []
+        for entry in row.load:
+            name = _entry(entry, slots)
+            if enabled is not None:
+                if entry.startswith("slot:") and _slot_target(slots, entry[len("slot:"):]) is None:
+                    continue
+                if ":" in name and name.split(":", 1)[0] not in enabled:
+                    continue
+            entries.append(name)
+        if entries or enabled is None:
+            shown.append((row, entries))
+    return shown
+
+
+def _row_lines(pairs: List[Tuple[TriggerRow, List[str]]]) -> bytes:
+    return "".join("| %s | %s |\n" % (row.before, JOINER.join("`%s`" % e for e in entries))
+                   for row, entries in pairs).encode("utf-8")
+
+
+def table(rows: List[TriggerRow], slots: dict, enabled: Optional[FrozenSet[str]] = None) -> bytes:
+    pairs = visible(rows, slots, enabled)
+    return HEADER + _row_lines(pairs) if pairs else b""
 
 
 def collect_rows(modules: List[Module], effective: dict) -> List[TriggerRow]:
@@ -95,14 +193,78 @@ def render(text: bytes, ctx: RenderContext) -> Tuple[bytes, List[str]]:
         return match.group(0)
 
     out = []  # type: List[bytes]
-    decoded = text.decode("utf-8", "surrogateescape")
+    decoded = _drop_empty_slot_sentences(text.decode("utf-8", "surrogateescape"), ctx.slots)
     lines = [part + "\n" for part in decoded.split("\n")]
     lines[-1] = lines[-1][:-1]
+    table_at = None  # type: Optional[int]
     for line in lines:
         body = line[:-1] if line.endswith("\n") else line
         whole = _TRIGGERS_LINE.fullmatch(body)
+        if whole and ctx.rows is not None:
+            if table_at is not None or ctx.table_seen:
+                unknown.append(SECOND_TABLE)
+                continue
+            table_at = len(out)
+            out.append(b"")  # filled once the rest of the section is known
+            if ctx.table_seen is not None:
+                ctx.table_seen.append(ctx.module)
+            continue
         if whole:
             out.append(table(ctx.rows_by_section.get(whole.group(1), []), ctx.slots))
             continue
         out.append(_ANY.sub(replace, line).encode("utf-8", "surrogateescape"))
+    if table_at is not None:
+        out[table_at] = _fitted_table(ctx, b"".join(out[:table_at]), b"".join(out[table_at + 1:]))
     return b"".join(out), unknown
+
+
+def _source_name(source: str) -> str:
+    if source.startswith("L2:"):
+        return "company module %s" % _shown(source[3:])
+    return _shown(source[3:], 300)
+
+
+def _fitted_table(ctx: RenderContext, before: bytes, after: bytes) -> bytes:
+    """The merged table, with config rows left out until the section fits one part.
+
+    Module and level-1 rows always stay (coordinator ruling on review RV1 Important 1): project rows
+    go first, then personal, then company rows, each level from its last row up. A dropped row that
+    replaced a module or level-1 row brings that row back. When the kept rows alone do not fit, every
+    config row goes and the packer reports the section.
+    """
+    pairs = visible(ctx.rows or [], ctx.slots, ctx.enabled)
+    sources = ctx.row_sources or {}
+    replaced = ctx.replaced or {}
+    queue = [row.id for prefix in DROP_ORDER for row, _ in reversed(pairs)
+             if sources.get(row.id, "").startswith(prefix)]
+
+    def build(count: int, line: bool = True) -> bytes:
+        dropped = set(queue[:count])
+        rows = [replaced.get(row.id) if row.id in dropped else row for row, _ in pairs]
+        kept = visible([row for row in rows if row is not None], ctx.slots, ctx.enabled)
+        text = HEADER + _row_lines(kept) if kept else b""
+        if count and line:
+            names = []  # type: List[str]
+            for row_id in queue[:count]:
+                name = _source_name(sources[row_id])
+                if name not in names:
+                    names.append(name)
+            files = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+            text += ("\n" + LEFT_OUT.format(count=count, files=files) + "\n").encode("utf-8")
+        return text
+
+    def fits(count: int) -> bool:
+        return ctx.fits is None or ctx.fits(before + build(count) + after)
+
+    if fits(0):
+        return build(0)
+    low, high = 0, len(queue)  # build(low) does not fit; build(high) does
+    if not fits(high):
+        return build(high, line=False)  # module and level-1 rows outrank the line
+    while high - low > 1:
+        middle = (low + high) // 2
+        if fits(middle):
+            high = middle
+        else:
+            low = middle
+    return build(high)

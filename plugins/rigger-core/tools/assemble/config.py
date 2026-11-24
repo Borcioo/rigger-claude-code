@@ -1,10 +1,12 @@
 """Resolve the four config levels: Rigger defaults, company modules, personal, project (spec section 7).
 
-Phase 1 applies `triggers` (levels 1-4) and `expects` (level 4). Every other key set above level 1
-is checked for its type and level, then recorded in `Resolved.inactive` without effect (D11), so
-`effective["slots"]` is always level 1's. A trigger row comes from files a cloned repository can
-ship, so its text is held to one line without `|` or control characters before it can reach a
-table, and every notice is printed with such characters escaped.
+`triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4) and `trust` (level 3) apply.
+Every other key set above level 1 is checked for its type and level, then recorded in
+`Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
+trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
+slot. A trigger row comes from files a cloned repository can ship, so its text is held to one line
+without `|` or control characters before it can reach a table, and every notice is printed with
+such characters escaped.
 """
 
 import copy
@@ -12,7 +14,7 @@ import json
 import unicodedata
 
 import manifest
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
@@ -29,8 +31,8 @@ KEYS = {
     "shell_guard": (dict, frozenset((3,))),
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
-# Keys with an effect in phase 1 when set above level 1; the others are recorded only (D11).
-ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects"))
+# Keys with an effect when set above level 1; the others are recorded only (D11, D32).
+ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust"))
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = manifest.BEFORE_MAX
 LOAD_MAX = manifest.LOAD_MAX
@@ -46,6 +48,8 @@ class Resolved:
     sources: Dict[Path_, str]
     inactive: Dict[Path_, str]
     notices: List[str]
+    # (source, cleaned data) per level, lowest first, level-2 conflicts removed: what slots.resolve_slots reads.
+    levels: List[Tuple[str, dict]] = field(default_factory=list)
 
 
 def _is_int(value) -> bool:
@@ -215,4 +219,5 @@ def resolve(l1: dict, l2: List[Tuple[str, dict]], l3: dict, l4: dict, paths: Dic
             if any(path[: len(leaf)] == leaf for leaf in leaves):
                 sources[path] = source
                 break
-    return Resolved(effective=effective, sources=sources, inactive=inactive, notices=notices)
+    return Resolved(effective=effective, sources=sources, inactive=inactive, notices=notices,
+                    levels=applied)

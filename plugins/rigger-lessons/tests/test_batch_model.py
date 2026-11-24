@@ -85,6 +85,21 @@ class CorpusTests(Temp):
         self.assertTrue(corpus.startswith("===== FILE: %s\nrule a\n\n===== FILE: " % self.files[0].as_posix()))
         self.assertTrue(corpus.endswith("===== FILE: %s\nuser rules\n\n" % self.user[2].as_posix()))
 
+    def test_rendered_rules_text_is_one_more_entry_and_the_files_stay_as_read(self):
+        # A rules file holds `{{triggers:…}}`; the rendered table exists only in assemble.py --render's output.
+        self.installed({"version": 2, "plugins": self.good()})
+        raw, rendered = self.tmp / "raw", self.tmp / "rendered"
+        raw.mkdir()
+        rendered.mkdir()
+        self.assertEqual(batch_model.write_corpus(raw, self.config), 7)
+        text = write(self.tmp / "render.md", "## Skill triggers\r\n\r\n| Before | Skill |\r\n|---|---|\r\n| x | `a:b` |\r\n")
+        self.assertEqual(no_raise(self, batch_model.write_corpus, rendered, self.config, text), 8)
+        before = (raw / "corpus.md").read_bytes().decode("utf-8")
+        after = (rendered / "corpus.md").read_bytes().decode("utf-8")
+        self.assertEqual(after, before + "===== FILE: %s (rendered rules in use; not an edit target)\n"
+                                         "## Skill triggers\n\n| Before | Skill |\n|---|---|\n| x | `a:b` |\n\n"
+                         % text.as_posix())
+
     def test_corpus_without_installed_plugins(self):
         self.assert_corpus([])
 

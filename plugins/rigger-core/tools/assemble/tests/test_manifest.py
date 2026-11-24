@@ -152,9 +152,10 @@ class ManifestTests(unittest.TestCase):
 
     def test_defaults(self):
         data = base_manifest()
-        data["failure_mode"] = "later phase key"
+        data["lesson_targets"] = "later phase key"
         root = self.make(data)
         module = manifest.load_manifest(root, "rigger", "dirs")
+        self.assertIsNone(module.failure_mode)
         self.assertEqual(
             module.rules, [manifest.RuleEntry(file="rules/demo.md", layer="general", audience="both", requires=())]
         )
@@ -206,6 +207,100 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(module.triggers[0].load, ("rigger-REVIEW:review",))
         self.assertEqual(module.provides, data["provides"])
         self.assertEqual(module.tests, data["tests"])
+
+    def load_with(self, **changes):
+        """Load base_manifest() with `changes`; the Module, or the ManifestError text."""
+        data = base_manifest()
+        data.update(changes)
+        root = self.make(data)
+        (root / "tools").mkdir()
+        (root / "tools" / "guard.py").write_bytes(b"RULES = ()\n")
+        try:
+            return manifest.load_manifest(root, "rigger", "installed")
+        except manifest.ManifestError as error:
+            return str(error)
+
+    def test_slot_paths(self):
+        self.assertEqual(manifest.SLOT_PATHS, (
+            "reviewer", "worker", "implementer", "mapper", "testing", "shell-guard", "lessons",
+            "process.brainstorm", "process.plans", "process.tdd", "process.debug",
+        ))
+
+    def test_fills_must_name_a_slot(self):
+        for value in (None, "process.tdd", "shell-guard"):
+            with self.subTest(value=value):
+                module = self.load_with(fills=value)
+                self.assertEqual(getattr(module, "fills", module), value)
+        rows = [
+            ("reviewers", "fills reviewers is not a slot"),
+            ("process", "fills process is not a slot"),
+            ("", "fills  is not a slot"),
+            (["reviewer"], "fills must be a slot name or null"),
+            (1, "fills must be a slot name or null"),
+        ]
+        for value, reason in rows:
+            with self.subTest(value=value):
+                self.assertEqual(self.load_with(fills=value), reason)
+
+    def test_failure_mode_values(self):
+        for value in ("open", "closed"):
+            with self.subTest(value=value):
+                module = self.load_with(failure_mode=value)
+                self.assertEqual(getattr(module, "failure_mode", module), value)
+        self.assertIsNone(self.load_with().failure_mode)
+        for value in ("maybe", 1, None, "Open", ["open"]):
+            with self.subTest(value=value):
+                self.assertEqual(self.load_with(failure_mode=value), "failure_mode must be open or closed")
+
+    def test_rule_checker_is_a_file_inside_the_module(self):
+        def guard(checker):
+            return {"shell-guard": {"kind": "hook", "target": "demo", "rule_checker": checker}}
+
+        module = self.load_with(provides=guard("tools/guard.py"))
+        self.assertEqual(getattr(module, "provides", module), guard("tools/guard.py"))
+        no_checker = {"shell-guard": {"kind": "hook", "target": "demo"}}
+        self.assertEqual(getattr(self.load_with(provides=no_checker), "provides", None), no_checker)
+        prefix = "provides shell-guard rule_checker "
+        # The file the `../x.py` row names exists next to the module, so only the inside check refuses it.
+        (self.tmp / "x.py").write_bytes(b"RULES = ()\n")
+        rows = [
+            ("parent", "../x.py", prefix + "../x.py is outside the module"),
+            ("dotdot inside", "tools/../tools/guard.py", prefix + "tools/../tools/guard.py is outside the module"),
+            ("absolute", "/abs/x.py", prefix + "/abs/x.py is outside the module"),
+            ("drive", "C" + ":/x.py", prefix + "C" + ":/x.py is outside the module"),
+            ("backslash", "tools\\guard.py", prefix + "tools\\guard.py is outside the module"),
+            ("missing", "tools/nope.py", prefix + "tools/nope.py is not a file"),
+            ("folder", "tools", prefix + "tools is not a file"),
+            ("empty", "", prefix + " is outside the module"),
+            ("number", 1, prefix + "must be a string"),
+            ("null", None, prefix + "must be a string"),
+        ]
+        for label, checker, reason in rows:
+            with self.subTest(label):
+                self.assertEqual(self.load_with(provides=guard(checker)), reason)
+
+    def test_provides_keys_and_tests_contract_name_slots(self):
+        provides = {"reviewer": {"kind": "agent"}, "process.tdd": {}}
+        module = self.load_with(provides=provides, tests={"paths": ["tests/"], "contract": ["reviewer", "process.tdd"]})
+        self.assertEqual((module.provides, module.tests["contract"]), (provides, ["reviewer", "process.tdd"]))
+        self.assertEqual(self.load_with(tests={"paths": ["tests/"]}).tests, {"paths": ["tests/"]})
+        rows = [
+            ("provides key", {"provides": {"reviewers": {}}}, "provides reviewers is not a slot"),
+            ("provides group", {"provides": {"process": {"tdd": {}}}}, "provides process is not a slot"),
+            ("provides value list", {"provides": {"reviewer": ["agent"]}}, "provides reviewer must be an object"),
+            ("provides value string", {"provides": {"reviewer": "agent"}}, "provides reviewer must be an object"),
+            ("provides list", {"provides": ["reviewer"]}, "provides must be an object"),
+            ("contract string", {"tests": {"contract": "reviewer"}}, "tests contract must be a list of slot names"),
+            ("contract empty string", {"tests": {"contract": ""}}, "tests contract must be a list of slot names"),
+            ("contract number", {"tests": {"contract": 1}}, "tests contract must be a list of slot names"),
+            ("contract null", {"tests": {"contract": None}}, "tests contract must be a list of slot names"),
+            ("contract non-slot", {"tests": {"contract": ["reviewer", "reviewers"]}}, "tests contract reviewers is not a slot"),
+            ("contract number entry", {"tests": {"contract": [1]}}, "tests contract must be a list of slot names"),
+            ("contract list entry", {"tests": {"contract": [["reviewer"]]}}, "tests contract must be a list of slot names"),
+        ]
+        for label, changes, reason in rows:
+            with self.subTest(label):
+                self.assertEqual(self.load_with(**changes), reason)
 
 
 if __name__ == "__main__":

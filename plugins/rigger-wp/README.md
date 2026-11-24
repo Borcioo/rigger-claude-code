@@ -2,7 +2,9 @@
 
 Opt-in, for WordPress developers. The rigger-wp plugin provides two skills. `rigger-wp-traps` holds the WordPress traps: the mistakes that recur when writing plugin and theme code, integration tests, migrations, roles and asset enqueues. Claude loads it before working on WordPress code so the checks happen while the code is written rather than after a review finds the problem. `wordpress-router` is the one listed entry for the upstream WordPress skills (below).
 
-rigger-core prints its rule that says when to load each skill, on startup, clear and compact.
+Its two skill rows (`triggers` in `rigger-module.json`) appear in rigger-core's one Skill triggers
+table, and rigger-core prints its `## WordPress site copies` rule (the site-copy HTTP and mail block),
+on startup, clear and compact.
 
 ## Upstream WordPress skills through the router
 

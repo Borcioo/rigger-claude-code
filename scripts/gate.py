@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import run_tests  # noqa: E402
 
 STATUS = "status.txt"
-PLANTED = "planted.md"
+PLANTED = run_tests.PLANTED
 PLANTED_TERM = "planted-term.md"
 NO_WSL = "wsl not on PATH"
 NO_CLAUDE = "claude: not on PATH, the suite runs with --no-claude"
@@ -309,11 +309,7 @@ def verify(status_file, root):
     return 0, "gate result matches: tree %s" % current
 
 
-def plant(out):
-    """A file the sweep must report. Built here: a literal path in this file would be a finding."""
-    path = out / PLANTED
-    path.write_text("x " + "C" + ":" + "/planted/path\n", encoding="utf-8", newline="\n")
-    return path
+plant = run_tests.plant   # one planted file for the gate's sweep control and --changed-modules
 
 
 def wsl_path(root):

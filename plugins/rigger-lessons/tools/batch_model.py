@@ -126,14 +126,19 @@ def corpus_files(config: Path) -> list[Path]:
     return files
 
 
-def write_corpus(run_dir: Path, config: Path) -> int:
-    """corpus.md in run_dir, each file as `===== FILE: <posix path>` then its text; returns the file count."""
+def write_corpus(run_dir: Path, config: Path, rules_text: Path | None = None) -> int:
+    """corpus.md in run_dir, each file as `===== FILE: <posix path>` then its text; returns the file count.
+
+    rules_text, the output of rigger-core's `assemble.py --render` (tables and values filled in), is one more entry
+    after the files, marked as not an edit target: an edit's old text is copied from the raw file it changes."""
     files = corpus_files(config)
+    entries = [(path, "") for path in files] + ([(rules_text, " (rendered rules in use; not an edit target)")]
+                                                if rules_text is not None else [])
     with open(run_dir / "corpus.md", "w", encoding="utf-8", newline="") as handle:
-        for path in files:
+        for path, mark in entries:
             with open(path, encoding="utf-8", errors="replace") as source:
-                handle.write("===== FILE: %s\n%s\n" % (path.as_posix(), source.read()))
-    return len(files)
+                handle.write("===== FILE: %s%s\n%s\n" % (path.as_posix(), mark, source.read()))
+    return len(entries)
 
 
 def step2_rules(skill_text: str) -> str:

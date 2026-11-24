@@ -1,6 +1,6 @@
 """Mechanical check of the lessons proposal queue against the current tree, before any model reads it.
 
-Usage: python proposal_check.py <lessons-proposals.md> [--repo DIR]... [--corpus FILE]... [--archive]
+Usage: python proposal_check.py <lessons-proposals.md> [--repo DIR]... [--corpus FILE]... [--rules-text FILE] [--archive]
 
 For each `## Run ` block (the format batch_apply writes) it resolves `- target:` (absolute, or relative to a
 --repo) and prints `<verdict>: <block heading> (<detail>)`, then `checked <n>: live .., stale .., applied ..,
@@ -8,11 +8,14 @@ covered ..`:
   applied  the target holds the New text and no longer the Old text (or the block has no Old text);
   stale    the target is missing, or its Old text does not occur exactly once;
   covered  every line the New text adds (lines of at least MIN_LINE characters with a word, whitespace collapsed) is
-           already in a rules file, skill or CLAUDE.md of a --repo, or in a --corpus file, other than the target;
+           already in a rules file, skill or CLAUDE.md of a --repo, or in a --corpus file, other than the target, or
+           in the --rules-text file (the output of rigger-core's `assemble.py --render`: tables and values filled
+           in) on a line the target itself does not hold;
   live     none of these.
 --archive moves every block that is not live into `## Check <stamp>` of lessons-archive.md next to the queue (the
 entry line plus `archived: <verdict>: <detail>`) and removes it from the queue. Exit 2, before any check, when the
-queue is missing or unreadable or holds text but no block, when a --repo holds no `plugins/` folder, or when
+queue is missing or unreadable or holds text but no block, when a --repo holds no `plugins/` folder, when the
+--rules-text file is missing, not UTF-8 or blank, or when
 --archive meets a relative target with no --repo; exit 1 when --archive found a batch holding the lock or the queue
 changed since it was read (nothing written); else 0.
 """
@@ -114,7 +117,9 @@ def _counts(line: str) -> bool:
     return len(line) >= MIN_LINE and re.search(r"[^\W_]{3}", line) is not None
 
 
-def verdict(block: dict, repos: list[Path], corpus: dict[str, set[str]]) -> tuple[str, str]:
+def verdict(block: dict, repos: list[Path], corpus: dict[str, set[str]],
+            rules_text: tuple[str, set[str]] = ("", set())) -> tuple[str, str]:
+    """rules_text: (its shown path, its normalised lines); a line the target holds is never its cover."""
     path = resolve(block["target"], repos)
     if path is None:
         return "stale", "target not found: %s" % (block["target"] or "none named")
@@ -128,7 +133,9 @@ def verdict(block: dict, repos: list[Path], corpus: dict[str, set[str]]) -> tupl
     old_lines = {_norm(line) for line in block["old"].split("\n")}
     added = [_norm(line) for line in new.split("\n") if _counts(_norm(line)) and _norm(line) not in old_lines]
     own = str(path.resolve())
-    holders = [corpus.get(line, set()) - {own} for line in added]
+    own_lines = {_norm(line) for line in text.split("\n")}
+    holders = [(corpus.get(line, set()) - {own})
+               | ({rules_text[0]} if line in rules_text[1] and line not in own_lines else set()) for line in added]
     if added and all(holders):
         return "covered", "every added line is already in %s" % ", ".join(
             sorted(Path(name).as_posix() for found in holders for name in found))
@@ -175,6 +182,7 @@ def main(argv=None) -> int:
     parser.add_argument("queue", type=Path)
     parser.add_argument("--repo", type=Path, action="append", default=[])
     parser.add_argument("--corpus", type=Path, action="append", default=[])
+    parser.add_argument("--rules-text", type=Path)
     parser.add_argument("--archive", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -195,8 +203,19 @@ def main(argv=None) -> int:
     if args.archive and relative and not args.repo:
         print("proposal_check: refused: %d targets are relative to the harness repo; pass --repo <clone>" % len(relative))
         return 2
+    rules_text = ("", set())  # type: tuple[str, set[str]]
+    if args.rules_text is not None:
+        try:
+            lines = args.rules_text.read_bytes().decode("utf-8").replace("\r\n", "\n").split("\n")
+        except (OSError, UnicodeDecodeError):
+            print("proposal_check: --rules-text %s: cannot read" % args.rules_text)
+            return 2
+        rules_text = (args.rules_text.resolve().as_posix(), {_norm(line) for line in lines} - {""})
+        if not rules_text[1]:
+            print("proposal_check: --rules-text %s: holds no text" % args.rules_text)
+            return 2
     corpus = corpus_lines(corpus_files(args.repo, args.corpus))
-    results = [verdict(block, args.repo, corpus) for block in blocks]
+    results = [verdict(block, args.repo, corpus, rules_text) for block in blocks]
     for block, (kind, detail) in zip(blocks, results):
         print("%s: %s (%s)" % (kind, block["heading"], detail))
     counts = {kind: sum(1 for result in results if result[0] == kind) for kind in VERDICTS}

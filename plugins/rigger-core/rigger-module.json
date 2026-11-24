@@ -7,6 +7,10 @@
     {
       "file": "rules/state-file.md",
       "audience": "main"
+    },
+    {
+      "file": "rules/skills.md",
+      "audience": "both"
     }
   ],
   "triggers": [
@@ -57,6 +61,11 @@
       "tests/",
       "tools/*/tests/"
     ],
-    "contract": []
+    "contract": [
+      "reviewer",
+      "worker",
+      "implementer",
+      "mapper"
+    ]
   }
 }

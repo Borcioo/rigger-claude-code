@@ -1,6 +1,9 @@
 """Contract test of the module manifests (spec section 12): `assemble.py --check` over the repository, with a
-planted duplicate it must catch, and no public manifest naming a denylist."""
+planted duplicate it must catch, and no public manifest naming a denylist; every contract fixture of every
+manifest's `tests.contract` through rigger-core's `slot_check.py`, and the default fillers against their
+contracts."""
 
+import importlib.util
 import json
 import os
 import re
@@ -17,6 +20,86 @@ ASSEMBLE = CORE / "tools" / "assemble" / "assemble.py"
 MANIFEST = "rigger-module.json"
 MODULES = 7
 SUMMARY = re.compile(r"^# check: modules (\d+), rules files (\d+), findings 0$")
+SLOT_CHECK_DIR = CORE / "tools" / "slot-check"
+ASSEMBLE_DIR = CORE / "tools" / "assemble"
+WINDOWS = ROOT / "plugins" / "rigger-windows"
+LESSONS = ROOT / "plugins" / "rigger-lessons"
+# Written by the test into the reviewer's head tree: the sweep refuses a committed binary file.
+HEAD_EXTRA = {"reviewer": {"data.bin": b"\x00\x01binary\x00\xff\n"}}
+GIT_IDENTITY = dict(GIT_AUTHOR_NAME="test", GIT_AUTHOR_EMAIL="test", GIT_COMMITTER_NAME="test",
+                    GIT_COMMITTER_EMAIL="test")
+
+
+def import_from(folder, name):
+    """Import `name` from `folder`, leaving sys.path as it was."""
+    sys.path.insert(0, str(folder))
+    try:
+        return __import__(name)
+    finally:
+        sys.path.remove(str(folder))
+
+
+def find_sh():
+    if os.name == "nt":
+        git_sh = Path(os.environ["ProgramFiles"], "Git", "usr", "bin", "sh.exe")
+        return str(git_sh) if git_sh.is_file() else shutil.which("sh")
+    return "/bin/sh"
+
+
+def plain_env(**extra):
+    env = {key: value for key, value in os.environ.items()
+           if not key.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_", "SHELL_GUARD"))}
+    env.update(extra)
+    return env
+
+
+def fail_rule(name, rules):
+    """The rule id a `fail-<rule id>[-<label>].<ext>` file names: the longest id of `rules` it starts with."""
+    stem = name[len("fail-"):].split(".", 1)[0]
+    found = [rule for rule in rules if stem == rule or stem.startswith(rule + "-")]
+    return max(found, key=len) if found else None
+
+
+def build_repo(tmp, fixtures, slot):
+    """A two-commit repository from `<fixtures>/repo/base` (empty when absent) and `repo/head`; (repo, base, head)."""
+    repo = tmp / ("repo-" + slot)
+    repo.mkdir()
+    config = tmp / "gitconfig"
+    config.write_bytes(b"")
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(config), GIT_CEILING_DIRECTORIES=str(tmp),
+               **GIT_IDENTITY)
+
+    def git(*args):
+        proc = subprocess.run(["git"] + list(args), cwd=str(repo), env=env, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        if proc.returncode:
+            raise AssertionError("git %s: %s" % (args[0], proc.stderr.decode("utf-8", "replace")))
+        return proc.stdout.decode("ascii").strip()
+
+    def lay(state, extra):
+        for entry in os.listdir(str(repo)):
+            if entry != ".git":
+                path = repo / entry
+                shutil.rmtree(str(path)) if path.is_dir() else path.unlink()
+        source = fixtures / "repo" / state
+        if source.is_dir():
+            for path in sorted(source.rglob("*")):
+                if path.is_file():
+                    target = repo / path.relative_to(source)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(path.read_bytes())
+        for name, data in extra.items():
+            (repo / name).write_bytes(data)
+        git("add", "-A")
+        git("commit", "-q", "--allow-empty", "-m", state)
+        return git("rev-parse", "HEAD")
+
+    git("init", "-q")
+    git("config", "core.autocrlf", "false")
+    base = lay("base", {})
+    head = lay("head", HEAD_EXTRA.get(slot, {}))
+    return repo, base, head
 
 
 def module_dirs():
@@ -87,6 +170,134 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(denylist_findings(manifests + [planted]), [planted])
         with self.assertRaisesRegex(AssertionError, "0 manifests read"):
             denylist_findings([])
+
+    def test_every_contract_fixture(self):
+        slot_check = import_from(SLOT_CHECK_DIR, "slot_check")
+        manifest = import_from(ASSEMBLE_DIR, "manifest")
+        read = 0
+        for module_dir in module_dirs():
+            module = manifest.load_manifest(module_dir, None, "repository")
+            for slot in module.tests.get("contract", []):
+                folder = module_dir / "tests" / "contract" / slot
+                where = "%s %s" % (module.name, slot)
+                self.assertTrue(folder.is_dir(), where)
+                self.assertIn(slot, slot_check.RULES, where)
+                rules = slot_check.RULES[slot]
+                files = sorted(p for p in folder.iterdir() if p.is_file())
+                strays = [p.name for p in files if not p.name.startswith(("pass", "fail-"))]
+                self.assertEqual(strays, [], where)
+                self.assertTrue([p for p in files if p.name.startswith("pass")], where + ": no pass file")
+                git_rules = [rule for rule in rules if rule in slot_check.GIT_RULES]
+                repo = base = head = None
+                if git_rules:
+                    self.assertTrue((folder / "repo" / "head").is_dir(), where + ": git rules need repo/head")
+                    repo, base, head = build_repo(self.tmp, folder, slot)
+                refused = set()
+                for path in files:
+                    text = path.read_bytes().decode("utf-8")
+                    if repo is not None:
+                        text = text.replace("{base}", base).replace("{head}", head)
+                    verdict = slot_check.check(slot, text, repo=repo, base=base, head=head)
+                    read += 1
+                    with self.subTest(fixture="%s/%s" % (where, path.name)):
+                        if path.name.startswith("pass"):
+                            self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
+                        else:
+                            rule = fail_rule(path.name, rules)
+                            self.assertIsNotNone(rule, "%s names no rule of %s" % (path.name, rules))
+                            self.assertEqual((verdict.ok, verdict.rule), (False, rule), verdict)
+                            refused.add(rule)
+                with self.subTest(slot=where):
+                    self.assertEqual([rule for rule in rules if rule not in refused], [],
+                                     "rules without a fail- fixture")
+        self.assertGreater(read, 0, "0 fixtures read")
+        sys.stdout.write("# contract fixtures: %d\n" % read)
+
+    def test_every_trigger_section_names_a_section_that_exists(self):
+        # `section` is ignored by the renderer (one merged table), so a stale id would go unnoticed
+        sections = import_from(ASSEMBLE_DIR, "sections")
+        known, rows, stale = set(), 0, []
+        manifests = [(d, json.loads((d / MANIFEST).read_bytes().decode("utf-8"))) for d in module_dirs()]
+        for module_dir, data in manifests:
+            for entry in data.get("rules", []):
+                path = module_dir / entry["file"]
+                known.update(section.id for section in sections.split(path.stem, path.read_bytes()))
+        self.assertIn("skills.skill-triggers", known)
+        for module_dir, data in manifests:
+            for row in data.get("triggers", []):
+                rows += 1
+                if "section" in row and row["section"] not in known:
+                    stale.append("%s %s: %s" % (module_dir.name, row["id"], row["section"]))
+        self.assertGreater(rows, 0, "0 trigger rows read")
+        self.assertEqual(stale, [])
+
+    def test_fail_rule_takes_the_longest_id(self):
+        rules = ("coverage-sum", "coverage-scope", "path", "base-head", "status", "status-line")
+        rows = [("fail-coverage-scope-rename.json", "coverage-scope"), ("fail-path-absolute.json", "path"),
+                ("fail-status-line.md", "status-line"), ("fail-status.json", "status"),
+                ("fail-base-head.json", "base-head"), ("fail-pathx.json", None), ("fail-coverage.json", None)]
+        for name, rule in rows:
+            self.assertEqual(fail_rule(name, rules), rule, name)
+
+    def test_default_fillers_meet_their_contracts(self):
+        slot_check = import_from(SLOT_CHECK_DIR, "slot_check")
+        manifest = import_from(ASSEMBLE_DIR, "manifest")
+        # shell-guard (a): the one PowerShell handler, run through sh as Claude Code runs it
+        hooks = json.loads((WINDOWS / "hooks" / "hooks.json").read_bytes().decode("utf-8"))
+        commands = [hook["command"] for group in hooks["hooks"]["PreToolUse"] for hook in group["hooks"]
+                    if "--pwsh-all" in hook["command"]]
+        self.assertEqual(len(commands), 1, commands)
+        # the command starts `sh` by name, as the hook does: its folder is on PATH
+        env = plain_env(CLAUDE_PLUGIN_ROOT=str(WINDOWS), POWERSHELL_TELEMETRY_OPTOUT="1",
+                        PATH=os.path.dirname(find_sh()) + os.pathsep + os.environ.get("PATH", ""))
+
+        def guard(command):
+            event = json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command},
+                                "cwd": str(self.tmp)}).encode("utf-8")
+            proc = subprocess.run([find_sh(), "-c", commands[0]], input=event, env=env, cwd=str(self.tmp),
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            self.assertEqual((proc.returncode, proc.stderr), (0, b""), command)
+            return proc.stdout.decode("utf-8")
+
+        self.assertEqual(guard("Get-ChildItem"), "")
+        self.assertTrue(slot_check.check("shell-guard", guard("Get-ChildItem")).ok)
+        reply = guard("git commit --no-verify -m x")
+        self.assertEqual(json.loads(reply)["hookSpecificOutput"]["permissionDecision"], "deny", reply)
+        verdict = slot_check.check("shell-guard", reply)
+        self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
+        self.assertIn("[git-no-verify]", json.loads(reply)["hookSpecificOutput"]["permissionDecisionReason"])
+        # shell-guard (b) and (d): the declared failure mode and the rule checker the manifest names
+        windows = manifest.load_manifest(WINDOWS, None, "repository")
+        self.assertEqual(windows.fills, "shell-guard")
+        self.assertIn(windows.failure_mode, manifest.FAILURE_MODES)
+        checker_path = WINDOWS / windows.provides["shell-guard"]["rule_checker"]
+        saved_path, saved_modules = list(sys.path), set(sys.modules)
+        try:
+            sys.path.insert(0, str(checker_path.parent))
+            spec = importlib.util.spec_from_file_location("contract_rule_checker", str(checker_path))
+            checker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(checker)
+        finally:
+            sys.path[:] = saved_path
+            for name in set(sys.modules) - saved_modules:
+                del sys.modules[name]
+        self.assertTrue(hasattr(checker, "RULES"))
+        self.assertTrue(callable(getattr(checker, "rule_guard_problem", None)))
+        # lessons (a): the SessionStart line, on a scratch inbox of two entries
+        config = self.tmp / "lessons-config"
+        config.mkdir()
+        inbox = config / "lessons-inbox.md"
+        inbox.write_bytes(b"# Lessons inbox\n\n- 2026-01-01 \xc2\xb7 global \xc2\xb7 a \xc2\xb7 b \xc2\xb7 c\n"
+                          b"- 2026-01-02 \xc2\xb7 global \xc2\xb7 d \xc2\xb7 e \xc2\xb7 f\n")
+        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", str(LESSONS / "hooks" / "lessons_start.py")],
+                              env=plain_env(CLAUDE_CONFIG_DIR=str(config), HARNESS_LESSONS_INBOX=str(inbox),
+                                            HOME=str(self.tmp), USERPROFILE=str(self.tmp)),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        text = proc.stdout.decode("utf-8")
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""), text)
+        self.assertTrue(text.splitlines()[0].endswith(": 2 entries"), text)
+        verdict = slot_check.check("lessons", text)
+        self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-SNAPSHOT_FORMAT = 1
+SNAPSHOT_FORMAT = 2  # 2: `slots` holds the resolved slot table (slots.as_snapshot), not the level-1 merge
 SNAPSHOT_KEYS = ("format", "parts", "modules", "config", "sections", "rows", "slots", "notices")
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 CLEANUP_PATTERNS = ("*.resolved.json", "*.options.*.json", "*.tmp")

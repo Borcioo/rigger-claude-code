@@ -586,6 +586,12 @@ def main():
         check("rules: a plugin's rules/*.md is scanned, the plugin root resolves there too", fx.market_hits(
             "Nothing here.\n", "Follow `templates/x.md`, `templates/gone.md`.\n\nAgent type: `rigger-core:gone`.\n"),
             [("r.md", 1, "repo-path", "templates/gone.md"), ("r.md", 3, "agent", "rigger-core:gone")])
+        # Raw rules text with placeholders gives the same findings as the text assemble.py --render prints from it
+        # (measured on the repository, Task 20): the table line is no reference, a {{skill:…}} name is checked.
+        check("rules: a {{triggers:…}} line is no finding, a {{skill:…}} placeholder's name is checked", fx.market_hits(
+            "Nothing here.\n", "{{triggers:skills.skill-triggers}}\n\nProcedure: {{skill:rigger-core:s}}.\n\n"
+                               "Also {{skill:rigger-core:gone}}.\n"),
+            [("r.md", 5, "skill", "rigger-core:gone")])
         code, out = fx.run_market("Nothing here.\n")
         check("rules: only *.md directly in rules/ is scanned",
               ("in-a-txt" in out, "in-a-subfolder" in out, code), (False, False, 0))

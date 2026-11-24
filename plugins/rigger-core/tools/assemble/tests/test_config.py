@@ -229,7 +229,9 @@ class ResolveTests(unittest.TestCase):
         data.update({"format": snapshot.SNAPSHOT_FORMAT, "config": got.effective, "notices": got.notices})
         self.assertIsNotNone(snapshot.write_snapshot(tmp, "s1", data))
 
-    def test_slots_above_level_one_are_recorded_not_applied(self):
+    def test_slots_and_trust_above_level_one_apply(self):
+        # D32: slots (levels 2-4) and trust (level 3) take effect; review, shell_guard, company and leak_guard
+        # stay recorded only. effective["slots"] is the plain merge, before the trust filter.
         l3 = {
             "schema": 1,
             "slots": {"testing": {"target": "x:y"}},
@@ -238,16 +240,17 @@ class ResolveTests(unittest.TestCase):
             "shell_guard": {"shellwise_path": "/opt/sw"},
             "leak_guard": {"denylist": "~/deny.txt"},
         }
-        l4 = {"schema": 1, "company": "company-deploy"}
+        l4 = {"schema": 1, "company": "company-deploy",
+              "slots": {"reviewer": {"kind": "command", "target": ["rv", "{out}"]}}}
         got = resolve(l3=l3, l4=l4)
-        self.assertEqual(got.effective["slots"]["testing"]["target"], "rigger-core:testing")
-        self.assertEqual(got.effective["slots"], SPEC_SLOTS)
+        self.assertEqual(got.effective["slots"]["testing"]["target"], "x:y")
+        self.assertEqual(got.effective["slots"]["reviewer"],
+                         {"kind": "command", "target": ["rv", "{out}"], "model": "by-rule"})
+        self.assertEqual(got.effective["trust"], {"project_commands": ["reviewer"]})
         source3, source4 = "L3:" + PATHS[3], "L4:" + PATHS[4]
         self.assertEqual(
             got.inactive,
             {
-                ("slots", "testing", "target"): source3,
-                ("trust", "project_commands"): source3,
                 ("review", "paths", "*.php"): source3,
                 ("shell_guard", "shellwise_path"): source3,
                 ("leak_guard", "denylist"): source3,
@@ -256,8 +259,27 @@ class ResolveTests(unittest.TestCase):
         )
         self.assertEqual(got.notices, [])
         company = resolve(l2=[("company-a", {"slots": {"reviewer": {"model": "opus"}}})])
-        self.assertEqual(company.inactive, {("slots", "reviewer", "model"): "L2:company-a"})
-        self.assertEqual(company.effective["slots"]["reviewer"]["model"], "by-rule")
+        self.assertEqual(company.inactive, {})
+        self.assertEqual(company.effective["slots"]["reviewer"]["model"], "opus")
+
+    def test_levels_are_kept_in_order(self):
+        # Resolved.levels feeds slots.resolve_slots: cleaned data per level, lowest first, with the level-2
+        # conflicts already removed and the recorded-only keys gone.
+        a = ("company-a", {"slots": {"worker": {"model": "a"}, "mapper": {"model": "m"}}})
+        b = ("company-b", {"slots": {"worker": {"model": "b"}}})
+        l3 = {"schema": 1, "slots": {"testing": {"target": "x:y"}}, "trust": {"project_commands": ["reviewer"]},
+              "leak_guard": {"denylist": "~/deny.txt"}, "nope": 1}
+        l4 = {"schema": 1, "slots": {"reviewer": None}, "company": "c"}
+        got = resolve(l2=[a, b], l3=l3, l4=l4)
+        self.assertEqual([source for source, _ in got.levels],
+                         ["L1:" + PATHS[1], "L2:company-a", "L2:company-b", "L3:" + PATHS[3], "L4:" + PATHS[4]])
+        data = dict(got.levels)
+        self.assertEqual(data["L1:" + PATHS[1]]["slots"], SPEC_SLOTS)
+        self.assertEqual(data["L2:company-a"], {"slots": {"worker": {}, "mapper": {"model": "m"}}})
+        self.assertEqual(data["L2:company-b"], {"slots": {"worker": {}}})
+        self.assertEqual(data["L3:" + PATHS[3]], {"schema": 1, "slots": {"testing": {"target": "x:y"}},
+                                                  "trust": {"project_commands": ["reviewer"]}})
+        self.assertEqual(data["L4:" + PATHS[4]], {"schema": 1, "slots": {"reviewer": None}})
 
     def test_merge_rules(self):
         base = {"a": {"x": 1, "y": [1, 2]}, "b": 2, "c": {"z": 3}}
@@ -314,6 +336,21 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(got.inactive, {})
         allowed = resolve(l4={"schema": 1, "expects": ["x"]})
         self.assertEqual((allowed.effective["expects"], allowed.notices), (["x"], []))
+
+    def test_trust_outside_the_personal_file_is_refused(self):
+        # D33: only the personal file (level 3) may trust a project command; a cloned project's file or a company
+        # module setting `trust` is dropped with a notice.
+        trust = {"project_commands": ["reviewer"]}
+        rows = [
+            ("project file", resolve(l4={"schema": 1, "trust": trust}),
+             "rigger: config %s key trust not allowed at level 4; ignored" % PATHS[4]),
+            ("company module", resolve(l2=[("company-a", {"trust": trust})]),
+             "rigger: config module company-a key trust not allowed at level 2; ignored"),
+        ]
+        for row, got, notice in rows:
+            with self.subTest(row=row):
+                self.assertEqual(got.notices, [notice])
+                self.assertNotIn("trust", got.effective)
 
     def test_sources_name_the_level_file(self):
         row = {"before": "writing meeting notes", "load": ["notes-style"]}

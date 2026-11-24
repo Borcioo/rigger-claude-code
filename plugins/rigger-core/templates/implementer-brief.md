@@ -1,6 +1,6 @@
 # Implementer brief and report template
 
-For any implementation agent (`rigger-core:worker`, `rigger-core:implementer`, `general-purpose`). Copy per dispatch
+For any implementation agent (the `worker` or `implementer` slot's agent, or `general-purpose`). Copy per dispatch
 (or per project as `implementer-common.md`) and fill every `<…>`. A field that does not apply
 says "n/a" with a reason; never delete it silently.
 
@@ -47,13 +47,13 @@ build, or fix round n and the finding ids it takes; from n = 2 the re-plan's pat
 the machine lock where the project has one (e.g. a project's `tools/e2e-lock.mjs`); without one, run them
 only within the limit above and report a run you had to wait for.
 
-**Skills:** `<skill name>` per skill the task needs, with the step it covers; `rigger-core:worker`
-and `rigger-core:reviewer` load them themselves, `rigger-core:implementer` gets none.
+**Skills:** `<skill name>` per skill the task needs, with the step it covers; the `worker` and
+`reviewer` slots' agents load them themselves, the `implementer` slot's agent gets none.
 **Browser:** which one, or none. **Risk:** low / full, as the tests rule defines it (rigor follows risk, check by
 check). With full, list the
 checks that get a mutation per branch, table row, stage and wiring (`<capability and ownership rules, validation, visibility, ...>`)
 and those capped at 5 (`<shared infrastructure, migrations>`); the rest of the change is low. For
-`rigger-core:implementer`, pass both groups as RISK.
+the `implementer` slot's agent, pass both groups as RISK.
 
 **Pitfalls**
 - Project: `<project CLAUDE.md, Pitfalls section>` — read it first.

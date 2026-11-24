@@ -16,7 +16,7 @@
       "load": [
         "rigger-wp:rigger-wp-traps"
       ],
-      "section": "wp-skills.wordpress-skill-loaded-before-the-first-step-of-its-kind"
+      "section": "skills.skill-triggers"
     },
     {
       "id": "rigger-wp.wordpress-router",
@@ -24,7 +24,7 @@
       "load": [
         "rigger-wp:wordpress-router"
       ],
-      "section": "wp-skills.wordpress-skill-loaded-before-the-first-step-of-its-kind"
+      "section": "skills.skill-triggers"
     }
   ],
   "tests": {

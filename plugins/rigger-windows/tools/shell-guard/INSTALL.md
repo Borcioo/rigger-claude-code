@@ -290,7 +290,8 @@ first):
 ```
 
 The hook reads the event JSON on stdin. It prints a `permissionDecision: "deny"` (ASCII JSON) only on
-a match and exits 0 on anything else, including its own errors (fail-open).
+a match, with a reason that starts `shell-guard [<rule id>]: `, and exits 0 on anything else, including
+its own errors (fail-open).
 
 ## Disable
 

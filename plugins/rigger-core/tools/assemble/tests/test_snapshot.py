@@ -98,6 +98,15 @@ class SnapshotTests(unittest.TestCase):
                 self.assertIsNone(snapshot.read_snapshot(self.config, "old"))
         self.assertIsNone(snapshot.read_snapshot(self.config, "missing"))
 
+    def test_format_is_two_and_a_format_one_file_reads_as_none(self):
+        # D44: the snapshot's slots became the resolved table, so a file written by release 0.5.0 is not read.
+        self.assertEqual(snapshot.SNAPSHOT_FORMAT, 2)
+        self.state.mkdir(parents=True)
+        (self.state / "old.resolved.json").write_bytes(json.dumps(full_data(format=1)).encode("utf-8"))
+        self.assertIsNone(snapshot.read_snapshot(self.config, "old"))
+        (self.state / "new.resolved.json").write_bytes(json.dumps(full_data(format=2)).encode("utf-8"))
+        self.assertEqual(snapshot.read_snapshot(self.config, "new")["format"], 2)  # control
+
     def test_cleanup_age(self):
         self.state.mkdir(parents=True)
         ages = {

@@ -55,6 +55,7 @@ class PartShTests(unittest.TestCase):
         (self.core / "rules").mkdir()
         # A section ending in a blank line: part.sh must keep every trailing newline.
         (self.core / "rules" / "state-file.md").write_bytes(b"## State file\n\nkeep a state file\n\n")
+        shutil.copyfile(str(CORE / "rules" / "skills.md"), str(self.core / "rules" / "skills.md"))
         target = self.core / "tools" / "assemble"
         target.mkdir(parents=True)
         for path in (CORE / "tools" / "assemble").iterdir():
@@ -103,7 +104,9 @@ class PartShTests(unittest.TestCase):
                                 stdout=subprocess.PIPE, env=self.env(), cwd=str(self.tmp), timeout=60).stdout
         control = self.run_part("1")
         self.assertIn(b"Plugin root: ", control)
-        self.assertTrue(control.endswith(b"keep a state file\n\n"), control[-40:])
+        self.assertIn(b"keep a state file\n\n## Skill triggers\n", control)
+        self.assertIn(b"\n## Slots\n", control)
+        self.assertTrue(control.endswith(b" | default |\n"), control[-40:])  # ## Slots closes rigger-core's rules
         self.assertEqual(control, direct)
         resume = json.dumps({"cwd": str(self.tmp), "source": "resume"}).encode()
         self.assertEqual(self.run_part("1", stdin=resume), b"")  # exit 10: nothing on purpose

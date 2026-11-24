@@ -41,6 +41,13 @@ change inside one module's folder: it runs that module's tests, its dependents' 
 repository-wide files, then the sweep. It is not a gate. A pull request and a release still need
 the full gate, and exit 2 means a shared file changed, so only the gate says anything.
 
+A plugin that fills a slot ships its contract fixtures in `tests/contract/<slot>/` and names the
+slot in `tests.contract` of its `rigger-module.json`. Each folder holds `pass*` files that must pass
+and one `fail-<rule id>*` file for every rule of that slot's contract
+(`plugins/rigger-core/tools/slot-check/slot_check.py` `RULES`), each failing on that rule alone.
+`tests/test_module_contracts.py` runs every fixture through `slot_check.py`, and fails when a rule
+has no `fail-` file.
+
 ## The gate
 
 `scripts/gate.py` runs the suite, its planted control, the sweep and its control at once, then, on

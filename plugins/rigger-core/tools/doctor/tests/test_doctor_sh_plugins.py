@@ -370,8 +370,6 @@ class DoctorShTests(DoctorShCase):
             {
                 "config-inactive leak_guard.denylist": (
                     "INFO", "leak_guard.denylist in %s: no effect in this release" % shown, "assemble.py --doctor"),
-                "config-inactive slots.reviewer.model": (
-                    "INFO", "slots.reviewer.model in %s: no effect in this release" % shown, "assemble.py --doctor"),
             },
         )
         self.assertRow(result, "rules-assembly", "OK")
@@ -392,6 +390,166 @@ class DoctorShTests(DoctorShCase):
         self.assertIsNone(result.fixes["expects " + hostile])
         self.assertRow(result, "rules-assembly", "OK")
 
+    # -- slot rows (Task 18) ------------------------------------------------------------------------
+
+    SLOTS = ("reviewer", "worker", "implementer", "mapper", "testing", "shell-guard", "lessons",
+             "process.brainstorm", "process.plans", "process.tdd", "process.debug")  # spec section 7.1
+
+    def module(self, name, fills, failure_mode=None, checker=None):
+        """A module fixture that fills `fills`; a rule checker file when `checker` is given."""
+        mod = self.tmp / "mods" / name
+        self.write_file(mod / ".claude-plugin" / "plugin.json", json.dumps({"name": name}))
+        manifest = {"schema": 1, "name": name, "layer": "general", "fills": fills, "rules": [], "triggers": []}
+        if failure_mode is not None:
+            manifest["failure_mode"] = failure_mode
+        if checker is not None:
+            manifest["provides"] = {fills: {"kind": "hook", "target": name, "rule_checker": checker}}
+            self.write_file(mod / checker, "RULES = []\n")
+        self.write_file(mod / "rigger-module.json", json.dumps(manifest))
+        return mod
+
+    def personal_config(self, data):
+        self.write_file(self.config / "rigger" / "config.json", json.dumps(dict({"schema": 1}, **data)))
+        return self.config / "rigger" / "config.json"
+
+    def test_clean_layout_gives_one_slot_row_per_slot_and_no_warning(self):
+        result = self.run_assembly()
+        expected = set(self.SLOTS) if os.name == "nt" else set(self.SLOTS) - {"shell-guard"}  # requires os:windows
+        self.assertEqual(set(self.rows(result, "slot ")), {"slot " + path for path in expected})
+        how = "assemble.py --doctor"
+        self.assertEqual(result.checks["slot reviewer"], ("OK", "rigger-core:reviewer (default)", how))
+        self.assertEqual(result.checks["slot testing"], ("OK", "rigger-core:testing (default)", how))
+        self.assertEqual(result.checks["slot process.tdd"], ("INFO", "empty: plugin superpowers is not enabled", how))
+        self.assertEqual(result.checks["slot lessons"], ("INFO", "empty: plugin rigger-lessons is not enabled", how))
+        self.assertEqual([n for n, row in result.checks.items() if row[2] == how and row[0] in ("WARN", "MISSING")], [])
+        self.assertEqual(self.rows(result, "slot-"), {})
+        self.assertRow(result, "rules-assembly", "OK")
+
+    def test_hook_slot_rows_name_the_filler_and_its_failure_mode(self):
+        # `requires: []` keeps the shell-guard row on every system; it sets neither kind nor target.
+        # An expected filler set above level 1 that is enabled gives OK, not MISSING.
+        self.personal_config({"slots": {"shell-guard": {"requires": []},
+                                        "lessons": {"kind": "hook", "target": "rigger-lessons"}}})
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", REPO_PLUGINS / "rigger-windows")
+        self.assertRow(result, "slot lessons", "OK", "rigger-lessons (failure mode: undeclared)")
+        self.assertRow(result, "slot shell-guard", "OK", "rigger-windows (fails open)")
+        checker = result.checks["slot-checker shell-guard"]
+        self.assertEqual(checker[0], "OK", checker)
+        self.assertTrue(checker[1].endswith("rigger-windows/tools/shell-guard/lessons_guard.py"), checker)
+        self.assertTrue(Path(checker[1]).is_file(), checker)
+        self.assertRow(result, "rules-assembly", "OK")
+
+    def test_a_shell_guard_filler_without_a_rule_checker_gives_an_info_row(self):
+        self.personal_config({"slots": {"shell-guard": {"requires": []}}})
+        result = self.run_assembly(self.module("zz-guard", "shell-guard", failure_mode="closed"))
+        self.assertRow(result, "slot shell-guard", "OK", "zz-guard (fails closed)")
+        self.assertRow(result, "slot-checker shell-guard", "INFO",
+                       "no checker: live:<rule> lessons are reported as no checker")
+
+    def test_two_fillers_warn_with_a_disable_fix(self):
+        for second, fix in (("zz-lessons", ["claude plugin disable zz-lessons"]), ("zz.Lessons", None)):
+            with self.subTest(second=second):
+                result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", self.module(second, "lessons"))
+                self.assertRow(result, "slot lessons", "WARN", "filled by rigger-lessons and " + second)
+                self.assertEqual(result.fixes["slot lessons"], fix)
+                self.assertRow(result, "rules-assembly", "OK")  # the two-filler notice has its own row
+
+    def test_an_expected_filler_set_above_level_one_that_is_absent_is_missing(self):
+        for name, fix in (("mod-guard", ["claude plugin install mod-guard"]), ("Mod.Guard", None)):
+            with self.subTest(name=name):
+                self.personal_config({"slots": {"lessons": {"kind": "hook", "target": name}}})
+                result = self.run_assembly()
+                self.assertRow(result, "slot lessons", "MISSING", "expected %s is not enabled" % name)
+                self.assertEqual(result.fixes["slot lessons"], fix)
+                self.assertRow(result, "rules-assembly", "OK")
+
+    def test_a_config_row_that_loads_tdd_before_testing_warns(self):
+        self.write_file(self.work / ".claude" / "rigger.json", json.dumps({"schema": 1, "triggers": {
+            "proj.tdd-first": {"before": "x", "load": ["slot:process.tdd", "slot:testing"]},
+            "proj.testing-first": {"before": "y", "load": ["slot:testing", "slot:process.tdd"]},
+        }}))
+        result = self.run_assembly()
+        self.assertEqual(self.rows(result, "slot-order"), {"slot-order proj.tdd-first": (
+            "WARN", "loads process.tdd without testing before it", "assemble.py --doctor")})
+
+    def table_json(self, detail, config):
+        head = "holds a trigger table; move its rows to triggers in %s: " % config
+        self.assertTrue(detail.startswith(head), detail)
+        return detail[len(head):]
+
+    def test_a_rules_d_trigger_table_gives_its_rows_as_config_json(self):
+        self.write_file(self.config / "rigger" / "rules.d" / "mine.md", (
+            "## Skill triggers\n\n- Mine:\n\n| Before | Skill |\n|---|---|\n"
+            "| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-core:testing`, then `x:tdd` |\n"
+            "| meeting notes | `notes:style` |\n"))
+        self.write_file(self.config / "rigger" / "rules.d" / "other.md", "| Name | Value |\n|---|---|\n| a | `b:c` |\n")
+        result = self.run_assembly()
+        self.assertEqual(set(self.rows(result, "rules-d-table")), {"rules-d-table rules.d/mine.md"})
+        row = result.checks["rules-d-table rules.d/mine.md"]
+        self.assertEqual(row[0], "INFO", row)
+        data = json.loads(self.table_json(row[1], self.config / "rigger" / "config.json"))
+        self.assertEqual(data, {"triggers": {
+            # a row copied from the shipped table keeps its id, so the config row replaces it
+            "rigger-core.testing": {"before": "writing code or tests, reviewing tests, a spike, port or rehearsal",
+                                    "load": ["rigger-core:testing", "x:tdd"]},
+            "personal.mine-2": {"before": "meeting notes", "load": ["notes:style"]},
+        }})
+
+    def test_the_old_rigger_rules_table_moves_whole_under_the_shipped_ids(self):
+        """Spec section 13, migration: the table release 0.5.0 shipped, copied into rules.d, fits uncut."""
+        old = REPO_PLUGINS.parent / "tests" / "fixtures" / "golden-34e7713" / "plugins" / "rigger-rules" / "rules" / "skills.md"
+        self.write_file(self.config / "rigger" / "rules.d" / "skills.md", old.read_bytes().decode("utf-8"))
+        result = self.run_assembly()
+        text = self.table_json(result.checks["rules-d-table rules.d/skills.md"][1], self.config / "rigger" / "config.json")
+        rows = json.loads(text)["triggers"]  # a cut JSON would not parse
+        self.assertEqual({row_id: row["load"] for row_id, row in rows.items()}, {
+            "rigger-core.orchestrating-subagents": ["rigger-core:orchestrating-subagents"],
+            "rigger-core.git-workflow": ["rigger-core:git-workflow"],
+            "rigger-core.web-ui-traps": ["rigger-core:web-ui-traps"],
+            "rigger-core.e2e-playwright-speed": ["rigger-core:e2e-playwright-speed"],
+            "rigger-core.stack-tooling": ["rigger-core:stack-tooling"],
+            "rigger-core.plans": ["superpowers:brainstorming", "superpowers:writing-plans"],
+            "rigger-core.testing": ["rigger-core:testing", "superpowers:test-driven-development"],
+            "rigger-core.debugging": ["superpowers:systematic-debugging"],
+        })
+        self.assertEqual(rows["rigger-core.debugging"]["before"], "a bug, a failing test or unexpected behaviour")
+
+    def test_empty_slot_rows_say_why_above_level_one(self):
+        self.personal_config({"slots": {"testing": None, "lessons": {"kind": "hook", "target": "rigger-rules"}}})
+        result = self.run_assembly()
+        self.assertRow(result, "slot testing", "INFO", "empty: personal config leaves it empty")
+        self.assertRow(result, "slot lessons", "INFO", "empty: rigger-rules does not fill it")
+
+    def test_two_fillers_win_over_a_missing_expected_filler(self):
+        self.personal_config({"slots": {"lessons": {"kind": "hook", "target": "mod-absent"}}})
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", self.module("zz-lessons", "lessons"))
+        self.assertRow(result, "slot lessons", "WARN", "filled by rigger-lessons and zz-lessons")
+        self.assertEqual(result.fixes["slot lessons"], ["claude plugin disable zz-lessons"])
+
+    def test_a_command_slot_shows_its_program_and_source(self):
+        self.personal_config({"slots": {"reviewer": {"kind": "command", "target": ["reviewer-cli", "--out", "{out}"]}}})
+        result = self.run_assembly()
+        self.assertRow(result, "slot reviewer", "OK", "reviewer-cli … (personal)")
+
+    def test_a_long_rules_d_table_is_cut_at_1500_characters(self):
+        lines = "".join("| step %02d %s | `a:b` |\n" % (i, "w" * 60) for i in range(40))
+        self.write_file(self.config / "rigger" / "rules.d" / "long.md", "| Before | Skill |\n|---|---|\n" + lines)
+        result = self.run_assembly()
+        text = self.table_json(result.checks["rules-d-table rules.d/long.md"][1], self.config / "rigger" / "config.json")
+        self.assertEqual(len(text), 1502)
+        self.assertTrue(text.startswith('{"triggers": {"personal.long-1": {"before": "step 00 '), text[:80])
+        self.assertTrue(text.endswith(" …"), text[-10:])
+
+    def test_a_forged_row_in_a_slot_target_does_not_get_through(self):
+        # With " (personal)" and the how-checked field appended, the second line is a whole row of a name the filter lets through.
+        forged = "x\nCHECK\tslot worker\tWARN\tforged"
+        self.personal_config({"slots": {"reviewer": {"target": forged},
+                                        "mapper": {"kind": "command", "target": [forged + "\t", "{out}"]}}})
+        result = self.run_assembly()
+        self.assertRow(result, "slot worker", "OK", "rigger-core:worker (default)")
+        self.assertRow(result, "slot reviewer", "OK", "rigger-core:reviewer (default)")
+        self.assertNotIn("forged", result.stdout)
+
     def test_real_assembler_run_writes_no_bytecode(self):
         """doctor.sh writes no file: the assembler's imports leave no __pycache__ in a copy of the plugin."""
         copy = self.tmp / "plugin copy" / "rigger-core"
@@ -406,7 +564,11 @@ class DoctorShTests(DoctorShCase):
         answer = ASSEMBLER_OK.replace(
             "'; exit 0",
             "not a row\\nCHECK\\tconfig-inactive a.b\\tINFO\\tx\\ty\\textra\\nCHECK\\tos\\tWARN\\tforged\\tz\\n"
-            "FIX\\tos\\tforged\\nCHECK\\texpects mod-y\\tMISSING\\tnot installed and enabled\\tassemble.py --doctor\\n'; exit 0",
+            "FIX\\tos\\tforged\\nCHECK\\texpects mod-y\\tMISSING\\tnot installed and enabled\\tassemble.py --doctor\\n"
+            "CHECK\\tslot worker\\tOK\\tx\\tCHECK\\tos\\tWARN\\n"
+            "CHECK\\tslot lessons\\tWARN\\tfilled by a and b\\tassemble.py --doctor\\nFIX\\tslot lessons\\tclaude plugin disable b\\n"
+            "CHECK\\tslot-checker shell-guard\\tINFO\\tc\\td\\nCHECK\\tslot-order t.x\\tWARN\\te\\tf\\n"
+            "CHECK\\trules-d-table rules.d/m.md\\tINFO\\tg\\th\\n'; exit 0",
         )
         self.stub_python("python3", assembler=answer)
         result = self.run_doctor("Linux")
@@ -415,6 +577,11 @@ class DoctorShTests(DoctorShCase):
         self.assertNotIn("os", result.fixes)
         self.assertEqual(self.rows(result, "config-inactive"), {})
         self.assertRow(result, "expects mod-y", "MISSING")
+        self.assertNotIn("slot worker", result.checks)
+        self.assertRow(result, "slot lessons", "WARN", "filled by a and b")
+        self.assertEqual(result.fixes["slot lessons"], ["claude plugin disable b"])
+        for name in ("slot-checker shell-guard", "slot-order t.x", "rules-d-table rules.d/m.md"):
+            self.assertIn(name, result.checks)
 
     def test_rules_assembly_warns_without_python(self):
         self.skip_if_system_python_candidates()

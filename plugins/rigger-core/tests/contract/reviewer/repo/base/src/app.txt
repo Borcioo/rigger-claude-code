@@ -1,0 +1,4 @@
+def session(user, token):
+    if user.is_admin:
+        return grant(user)
+    return deny(user)

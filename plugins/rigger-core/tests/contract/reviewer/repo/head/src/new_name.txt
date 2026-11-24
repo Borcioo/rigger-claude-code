@@ -1,0 +1,2 @@
+a file that is renamed between the two commits
+its content does not change
