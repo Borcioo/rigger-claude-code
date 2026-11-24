@@ -3339,7 +3339,7 @@ def main():
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": "shell-guard: %s (False positive or intended? Add a trailing `# %s`.)" % (deny.message, ALLOW_MARKER),
+        "permissionDecisionReason": "shell-guard [%s]: %s (False positive or intended? Add a trailing `# %s`.)" % (deny.rule, deny.message, ALLOW_MARKER),
     }}))   # ASCII JSON: stdout may be a legacy code-page pipe, and a raw „ would reach the reader as invalid UTF-8
     return 0
 
