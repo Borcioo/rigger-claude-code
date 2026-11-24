@@ -153,7 +153,8 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   the repository is dropped), and on Windows `NoDefaultCurrentDirectoryInExePath=1` is set, so a
   program the command starts by bare name is never one the repository holds. It stops the whole process tree past
   900 s or 1,000,000 bytes of console output, when a process the command started still holds the
-  console 5 s after the command exits (`child process left running`), and after every run. It then
+  console 5 s after the command exits (`child process left running`), and after every run (known limit:
+  on POSIX a process the command detaches with `setsid` leaves the tree and can outlive the run). It then
   checks the output file with `slot_check.py`. The last line is `slot-run: ok <slot> <n> findings` or
   `slot-run: refused: <reason>`; a refusal is a failed review, never "no findings".
 - `tools/slot-check/slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--shape-only]`:
