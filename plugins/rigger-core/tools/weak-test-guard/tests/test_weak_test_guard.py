@@ -704,6 +704,9 @@ NARROW_ROWS = [
     ("Bash", "git config commit.gpgsign false", False),
     ("Bash", "cat .git/hooks/post-commit", False),
     ("Bash", "git log --oneline --grep commit", True),   # still a whole word
+    # the rewrite the hint names
+    ("Bash", 'git log --oneline --grep "$(printf commit)"', False),
+    ("PowerShell", "git log --oneline --grep \"$('commit')\"", False),
 ]
 # Shell keywords and wrappers in front of a commit the guard reads.
 WRAPPED = ["if true; then git commit -am x; fi", "while false; do :; done; command git commit -am x",
@@ -748,6 +751,7 @@ class ReadingTests(unittest.TestCase):
                 self.assertTrue(reason.startswith(UNCLEAR + "a git commit the guard could not parse"), reason)
                 self.assertIn("Run `git commit` itself", reason)
                 self.assertIn("if the command does not commit, split it so no `git` and `commit` share", reason)
+                self.assertIn("pass an argument such as `--grep commit` from a substitution", reason)
         for command in POWERSHELL_HIDDEN:
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root, tool="PowerShell"))
@@ -805,7 +809,10 @@ class ReadingTests(unittest.TestCase):
                         'wsl bash -c "git commit -am x"', 'wsl bash -c "cd %s && git commit -am x"' % "/".join(("", "mnt", "c", "x")),
                         "wsl bash -c \"cd ~/r && eval 'git commit -am x'\"", "wsl --exotic git commit -am x",
                         "wsl bash -c 'GIT_DIR=/srv/r/.git git -C ~ commit -am x'",
-                        "wsl bash -c 'cd ~/../../srv && git commit -am x'", "wsl bash -c 'cd ~/r && git commit -am \"$(x'"):
+                        "wsl bash -c 'cd ~/../../srv && git commit -am x'", "wsl bash -c 'cd ~/r && git commit -am \"$(x'",
+                        # the script's folder walk does not follow a folder stack or a subshell
+                        'wsl bash -c "pushd ~/r && popd && git commit -am x"',
+                        'wsl bash -c "(cd ~/r); git commit -am x"'):
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root))
                 self.assertIsNotNone(reason)
@@ -847,7 +854,13 @@ class ReadingTests(unittest.TestCase):
                     # the name inside its own value (the folder holds "guard") or inside a longer word is no use
                     ('guard="%s"; git -C "$guard" commit -m x' % drive, "Bash"),
                     ("$guard = '%s'; git -C $guard commit -m x" % root, "PowerShell"),
-                    ('wt="%s"; git -C "$wt" commit -m "fix my-wt"' % drive, "Bash")]
+                    ('wt="%s"; git -C "$wt" commit -m "fix my-wt"' % drive, "Bash"),
+                    # the literal text of a commit the guard reads is its message, never an assignment
+                    ("wt=\"%s\"; git -C \"$wt\" commit -m 'move wt to the new place'" % drive, "Bash"),
+                    ('wt="%s"; git -C "$wt" commit -m "wt: fix"' % drive, "Bash"),
+                    ("$wt = '%s'; git -C $wt commit -m 'fix wt path'" % root, "PowerShell"),
+                    ('wt="%s"; wt=/x git commit -m x; cd "$wt" && git commit -m y' % drive, "Bash"),   # git's env only
+                    ('wt="%s"; git commit -m `wt=/s`; git -C "$wt" commit -m x' % drive, "Bash")]   # a subshell
         for command, tool in resolved:
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root, tool))
@@ -891,7 +904,12 @@ class ReadingTests(unittest.TestCase):
                     ("$wt = '%s'; Remove-Variable wt; git -C $wt commit -m x", "PowerShell"),
                     ("$wt = '%s'; $script:wt = 'x'; git -C $wt commit -m x", "PowerShell"),
                     ("$wt = '%s'; [ref]$wt; git -C $wt commit -m x", "PowerShell"),
-                    ("$wt = '%s'; $wt.Replace('a', 'b'); git -C $wt commit -m x", "PowerShell"))):
+                    ("$wt = '%s'; $wt.Replace('a', 'b'); git -C $wt commit -m x", "PowerShell"),
+                    # what runs inside a commit's message, or stands outside every commit, still counts
+                    ('wt="%s"; git commit -m "$(wt=/s; echo x)"; git -C "$wt" commit -m y', "Bash"),
+                    ("$wt = '%s'; git commit -m \"$($wt = 'x')\"; git -C $wt commit -m y", "PowerShell"),
+                    ('wt="%s"; echo wt; git -C "$wt" commit -m x', "Bash"),
+                    ('wt="%s"; git commit -m a; wt=/s; git -C "$wt" commit -m x', "Bash"))):
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root, tool))
                 self.assertIsNotNone(reason)
@@ -1217,6 +1235,63 @@ class DiffSourceTests(unittest.TestCase):
                               ("Set-Location '%s'; git commit -m 'x'" % name, "PowerShell")):
             with self.subTest(command=command):
                 self.assertIsNotNone(reason_of(run_hook(command, outside, tool=tool)))
+
+    def test_the_folder_is_restored_after_popd_and_a_subshell(self):
+        # Two repositories with different test files: the commit is read in the one whose test it removes.
+        w, x = Repo(self, BASE), Repo(self, {"tests/test_other.py": PY_TEST})
+        rm_w, rm_x = "git rm -q tests/test_parser.py", "git rm -q tests/test_other.py"
+        for command, tool, cwd in (
+                ("(cd {x} && git status); %s && git commit -m x" % rm_w, "Bash", w),
+                ("pushd {x} && git status && popd && %s && git commit -m x" % rm_w, "Bash", w),
+                ("pushd {w} && pushd {x} && popd && %s && git commit -m x" % rm_w, "Bash", x),
+                ("pushd {w} && (popd) && popd && %s && git commit -m x" % rm_x, "Bash", x),
+                ("v=$(cd {x}; pwd); %s && git commit -m x" % rm_w, "Bash", w),
+                # a `case` pattern ends in a `)` that closes no subshell
+                ("case a in a) true;; esac; %s && git commit -m x" % rm_w, "Bash", w),
+                ("case a in a) (cd {x}); %s && git commit -m x;; esac" % rm_w, "Bash", w),
+                ("Push-Location {x}; git status; Pop-Location; %s; git commit -m x" % rm_w, "PowerShell", w),
+                ("pushd {x}; popd; %s; git commit -m x" % rm_w, "PowerShell", w),
+                ("Push-Location; Set-Location {x}; Pop-Location; %s; git commit -m x" % rm_w, "PowerShell", w),
+                ("Push-Location {x}; Pop-Location -PassThru; %s; git commit -m x" % rm_w, "PowerShell", w),
+                ("pushd {x} && pushd && %s && git commit -m x" % rm_w, "Bash", w),   # a bare pushd swaps the top two
+                # The folder a step leaves stays for the steps after it.
+                ("pushd {x} && %s && git commit -m x" % rm_x, "Bash", w),
+                ("Push-Location -Path {x}; %s; git commit -m x" % rm_x, "PowerShell", w),
+                ("Push-Location -LiteralPath {x}; %s; git commit -m x" % rm_x, "PowerShell", w),
+                ("pushd -- {x} && %s && git commit -m x" % rm_x, "Bash", w),
+                ("(Set-Location {x}); %s; git commit -m x" % rm_x, "PowerShell", w),   # no subshell in PowerShell
+                # A step after the last commit changes nothing it holds; an absolute folder is known again.
+                ("%s && git commit -m x; popd" % rm_w, "Bash", w),
+                ("popd; cd {w} && %s && git commit -m x" % rm_w, "Bash", w)):
+            command = command.format(w="'%s'" % w.root.as_posix(), x="'%s'" % x.root.as_posix())
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, cwd.root, tool))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests: removed test"), reason)
+
+    def test_a_folder_stack_it_cannot_follow_is_refused(self):
+        w, x = Repo(self, BASE), Repo(self, {"tests/test_other.py": PY_TEST})
+        for command, tool in (("popd && git commit -am x", "Bash"), ("Pop-Location; git commit -am x", "PowerShell"),
+                              ("pushd && git commit -am x", "Bash"), ("pushd +1 && git commit -am x", "Bash"),
+                              ("pushd -n {x} && git commit -am x", "Bash"),
+                              ("pushd {x} && popd +0 && git commit -am x", "Bash"),
+                              ("Push-Location -StackName s {x}; Pop-Location -StackName s; git commit -am x",
+                               "PowerShell"),
+                              ("echo a); cd tests && git commit -am x", "Bash"),   # a `)` no `(` or `case` opened
+                              ("case a in a) true;; esac; echo a); cd tests && git commit -am x", "Bash"),
+                              ("pushd {x}; popd tests; git commit -am x", "Bash"),
+                              ("popd; cd tests && git commit -am x", "Bash"),
+                              ("popd; git add -A; cd {w} && git commit -m x", "Bash")):
+            command = command.format(w="'%s'" % w.root.as_posix(), x="'%s'" % x.root.as_posix())
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, w.root, tool))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR + "the guard cannot follow the folder"), reason)
+                self.assertIn("after the last `popd`, `Pop-Location` or `)`", reason)
+        reason = reason_of(run_hook("popd; rm tests/test_parser.py; cd '%s' && git add -A && git commit -m x"
+                                    % w.root.as_posix(), w.root))
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith(UNCLEAR + "`rm` changes test files"), reason)
 
     @unittest.skipUnless(os.name == "nt", "Git Bash drive paths exist only on Windows")
     def test_a_git_bash_drive_path_is_read(self):
