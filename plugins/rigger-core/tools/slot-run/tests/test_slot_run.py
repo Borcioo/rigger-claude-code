@@ -67,10 +67,16 @@ def pid_alive(pid):
         kernel.CloseHandle(handle)
         return code.value == 259  # STILL_ACTIVE
     try:
-        with open("/proc/%d/stat" % pid, "rb") as handle:
-            return handle.read().split(b") ", 1)[1][:1] != b"Z"  # a zombie is gone
-    except OSError:
+        os.kill(pid, 0)
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
+    try:  # a zombie is gone; without /proc (macOS) the signal answer stands
+        with open("/proc/%d/stat" % pid, "rb") as handle:
+            return handle.read().split(b") ", 1)[1][:1] != b"Z"
+    except OSError:
+        return True
 
 
 def command_row(argv, source="personal", model=None, kind="command", filled=True):
@@ -226,8 +232,53 @@ class RunTests(SlotRunCase):
         """An empty `.git` folder in a subfolder is not a repository: git's own root disagrees, so nothing runs."""
         (self.repo / "sub" / ".git").mkdir(parents=True)
         self.write_snapshot([command_row(self.command("ok"))])
-        code, lines = self.run_slot(cwd=self.repo / "sub")
-        self.assertEqual((code, lines), (2, ["slot-run: refused: not a git repository: %s" % (self.repo / "sub")]))
+        sub = str(self.repo / "sub")
+        code, lines = self.run_slot(["--session", SESSION, "--base", self.base, "--repo", sub])
+        self.assertEqual((code, lines), (2, ["slot-run: refused: not a git repository: %s" % sub]))
+        self.assertFalse(os.path.exists(self.record))
+
+    def test_revision_and_repository_errors_refuse(self):
+        outside = self.tmp / "norepo"
+        outside.mkdir()
+        rows = [
+            ("a base that names no commit", ["--base", "no-such-rev"],
+             "revision does not name a commit: no-such-rev"),
+            ("a head that looks like an option", ["--base", self.base, "--head", "-p"],
+             "revision starts with '-': -p"),
+            ("a folder outside any repository", ["--base", self.base, "--repo", str(outside)],
+             "not a git repository: %s" % outside),
+        ]
+        self.write_snapshot([command_row(self.command("ok"))])
+        for row, args, reason in rows:
+            with self.subTest(row=row):
+                code, lines = self.run_slot(["--session", SESSION] + args)
+                self.assertEqual((code, lines), (2, ["slot-run: refused: " + reason]))
+                self.assertFalse(os.path.exists(self.record))
+
+    def test_command_line_errors_refuse_with_the_usage(self):
+        usage = "slot-run: refused: usage: slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]"
+        rows = [
+            ("no slot", []),
+            ("an option for the slot", ["--repo", "--session", SESSION, "--base", "HEAD"]),
+            ("an unknown option", ["reviewer", "--session", SESSION, "--base", "HEAD", "--out", "x"]),
+            ("a repeated option", ["reviewer", "--session", SESSION, "--session", SESSION, "--base", "HEAD"]),
+            ("an option without a value", ["reviewer", "--session", SESSION, "--base"]),
+            ("no --session", ["reviewer", "--base", "HEAD"]),
+            ("no --base", ["reviewer", "--session", SESSION]),
+        ]
+        self.write_snapshot([command_row(self.command("ok"))])
+        for row, argv in rows:
+            with self.subTest(row=row):
+                out = io.BytesIO()
+                code = slot_run.main(argv, stdout=out)
+                self.assertEqual((code, out.getvalue().decode("utf-8")), (2, usage + "\n"))
+        self.assertFalse(os.path.exists(self.record))
+
+    def test_an_unexpected_error_is_a_refusal(self):
+        self.write_snapshot([command_row(self.command("ok"))])
+        with mock.patch.object(slot_run.review_scope, "scope", side_effect=RuntimeError("boom")):
+            code, lines = self.run_slot()
+        self.assertEqual((code, lines), (2, ["slot-run: refused: internal: RuntimeError: boom"]))
         self.assertFalse(os.path.exists(self.record))
 
     def test_no_shell_reads_the_arguments(self):
@@ -387,9 +438,9 @@ class BoundTests(SlotRunCase):
         """The command exits 0, but a process it started keeps the console pipe open past the deadline."""
         self.write_snapshot([command_row(self.command("orphan"))])
         self.addCleanup(self.wait_for_grandchild)
-        with mock.patch.object(slot_run, "TIMEOUT", 3):
+        with mock.patch.object(slot_run, "TIMEOUT", 2):
             code, lines = self.run_slot()
-        self.assertEqual((code, lines[-1]), (2, "slot-run: refused: timed out after 3 s"), lines)
+        self.assertEqual((code, lines[-1]), (2, "slot-run: refused: timed out after 2 s"), lines)
 
     def wait_for_grandchild(self):
         """On Windows the tree kill cannot reach a grandchild whose parent has exited: let it end first."""
@@ -498,6 +549,23 @@ class ProgramTests(SlotRunCase):
             self.assertTrue(same_path(argv0, outside), argv0)
             self.assertTrue(os.path.isabs(argv0))
             self.assertTrue(same_path(cwd, self.repo), cwd)
+
+    @unittest.skipUnless(NT, "program extensions are a Windows lookup")
+    def test_program_extensions_outside_the_repository(self):
+        """A bare name given with `.exe`, and a `.com` program, are found and started outside the repository."""
+        com_folder = self.tmp / "combin"
+        com_folder.mkdir()
+        com = str(com_folder / "comtool.com")
+        shutil.copy(self.source, com)  # a PE image starts whatever its extension
+        exe = self.plant(self.tmp / "outbin")
+        for row, program, expected in (("name.exe", self.file, exe), (".com", "comtool", com)):
+            with self.subTest(row=row):
+                self.calls = []
+                code, lines = self.run_with_path(self.base_path + [str(self.tmp / "outbin"), str(com_folder)],
+                                                 program=program)
+                started = [call for call in self.calls if same_path(call[0], expected)]
+                self.assertEqual(len(started), 1, self.calls)
+                self.assertTrue(lines[-1].startswith("slot-run: refused: the command exited "), lines)
 
     def test_working_directory_entries_are_not_searched(self):
         """Started from a folder outside the repository, with --repo: that folder's copy is never run."""

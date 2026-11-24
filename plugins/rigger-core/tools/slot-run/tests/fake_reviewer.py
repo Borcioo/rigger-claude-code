@@ -7,7 +7,7 @@ ok (one finding, coverage from the scope file), copy-scope (no findings, coverag
 bad-status, nonzero (a valid file, then exit 3), no-out, big-out (a valid file padded past 20,000 bytes),
 flood (console output without end), flood-exit (a valid file, then <n> console bytes and exit 0, with
 `--bytes n`), flood-err (the same as flood, on stderr), orphan (a valid file, then a grandchild that keeps the
-console open for 8 s after this process exits 0), hang (starts a grandchild that writes its pid next to the record file, then both sleep).
+console open for 5 s after this process exits 0), hang (starts a grandchild that writes its pid next to the record file, then both sleep).
 """
 import json
 import os
@@ -97,7 +97,7 @@ def main():
     elif mode == "orphan":
         write_out(document(ONE_FINDING))
         subprocess.Popen([sys.executable, os.path.abspath(__file__), "sleep", "--record", record + ".child",
-                          "--seconds", "8"])
+                          "--seconds", "5"])
         deadline = time.time() + 30
         while not os.path.exists(record + ".child.pid") and time.time() < deadline:
             time.sleep(0.05)
