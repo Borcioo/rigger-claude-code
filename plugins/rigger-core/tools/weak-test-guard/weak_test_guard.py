@@ -27,7 +27,8 @@ file, a file a `cat`/`Get-Content` before `git commit -F -` reads, the message `
 message on `--amend`. Otherwise the hook denies it and lists the findings. `--dry-run` is no commit.
 `-F -` has no other source: a message fed to stdin any other way is judged by the command text alone.
 
-The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs). The
+The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs, a bash
+`"$(...)"` as one word, the body when it is `cat` of a heredoc). The
 commit is the first simple command whose program is git and whose subcommand is `commit`; `cd`,
 `Set-Location` and `git -C` before it set the folder. The diff is the index against HEAD (`HEAD~1` with
 `--amend`). When the command also stages (`git add`/`git rm` before the commit, `commit -a`, `-i <paths>`),
@@ -301,8 +302,72 @@ class Simple:
         self.words = []
 
 
+HEREDOC_CAT = re.compile(r"\s*cat\s*<<-?[ \t]*(['\"]?)(\w+)\1[ \t]*\n")
+
+
+def _substitution_end(text, i):
+    """The index just past the `)` that closes the bash `$(` at i (len(text) when none does). Quotes, nested
+    substitutions and heredoc bodies inside it are skipped as bash reads them, so a `"` or `)` there ends nothing."""
+    stack, j, n, pending = ["("], i + 2, len(text), []
+    while j < n and stack:
+        c = text[j]
+        if stack[-1] == '"':
+            if c == "\\":
+                j += 2
+            elif c == '"':
+                stack.pop()
+                j += 1
+            elif text.startswith("$(", j):
+                stack.append("(")
+                j += 2
+            else:
+                j += 1
+        elif c == "\\":
+            j += 2
+        elif c == "'":
+            end = text.find("'", j + 1)
+            j = n if end < 0 else end + 1
+        elif c in '"(':
+            stack.append(c)
+            j += 1
+        elif c == ")":
+            stack.pop()
+            j += 1
+        elif text.startswith("<<", j) and not text.startswith("<<<", j):
+            k = j + 2 + (text[j + 2:j + 3] == "-")
+            while k < n and text[k] in " \t":
+                k += 1
+            start = k
+            while k < n and text[k] not in " \t\n;|&<>()":
+                k += 1
+            pending.append(text[start:k].strip("'\""))
+            j = k
+        elif c == "\n" and pending:
+            for delimiter in pending:
+                line = re.compile(r"^[ \t]*%s[ \t]*$" % re.escape(delimiter), re.M).search(text, j + 1)
+                j = line.end() if line else n
+            pending = []
+        else:
+            j += 1
+    return n if stack else j
+
+
+def _substitution_word(inner):
+    """The word bash makes of `$(<inner>)` when it is `cat` of one heredoc (its body without the trailing newlines),
+    else the text itself."""
+    head = HEREDOC_CAT.match(inner)
+    if head:
+        lines = inner[head.end():].split("\n")
+        for k, line in enumerate(lines):
+            if line.strip(" \t") == head.group(2):
+                if not "".join(lines[k + 1:]).strip():
+                    return "\n".join(lines[:k]).rstrip("\n")
+                break
+    return "$(" + inner + ")"
+
+
 def split_command(text, powershell):
-    """[Simple] of a shell command. A redirection and its target are no words."""
+    """[Simple] of a shell command. A redirection and its target are no words; a bash `"$(...)"` is one word."""
     out, current = [], Simple()
     word, has_word, drop_next = [], False, False
     pending = []   # bash heredoc delimiters waiting for the end of the line
@@ -402,6 +467,11 @@ def split_command(text, powershell):
                 if text[j] == escape and j + 1 < n and (powershell or text[j + 1] in "$`\"\\\n"):
                     word.append(text[j + 1])
                     j += 2
+                    continue
+                if not powershell and text.startswith("$(", j):
+                    end = _substitution_end(text, j)
+                    word.append(_substitution_word(text[j + 2:end - 1]))
+                    j = end
                     continue
                 word.append(text[j])
                 j += 1

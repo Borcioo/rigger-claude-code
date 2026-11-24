@@ -439,9 +439,11 @@ class PatternTests(unittest.TestCase):
 
     def test_regexes_stay_linear_on_repeated_tokens(self):
         tokens = [" ", "\t", "-", "--ab", "(", ")", "'", '"', "`", "it(", "it('", "test_", "def ", "func (", "const x = ",
-                  "->", "::", ".", "assert", "expect(", "@", "#[", "/", "x", "a1", "|", "*", "export "]
+                  "->", "::", ".", "assert", "expect(", "@", "#[", "/", "x", "a1", "|", "*", "export ",
+                  "$(", '"$(', "<<'EOF'\n", "cat <<", "\nEOF\n"]
         patterns = [GUARD.TEST_DEF, GUARD.SKIP, GUARD.ASSERT, GUARD.DEFINES, GUARD.COMMENT, GUARD.DECORATOR,
-                    GUARD.PHP_METHOD, GUARD.PHP_TEST_MARK, GUARD.TEST_FILE, GUARD.TEST_AFFIX, GUARD.FOLDS, GUARD.STRING]
+                    GUARD.PHP_METHOD, GUARD.PHP_TEST_MARK, GUARD.TEST_FILE, GUARD.TEST_AFFIX, GUARD.FOLDS, GUARD.STRING,
+                    GUARD.HEREDOC_CAT]
         for repeat in (40, 2000):
             start = time.perf_counter()
             for token in tokens:
@@ -533,6 +535,51 @@ class ReasonTests(unittest.TestCase):
         self.assertIsNone(reason_of(run_hook("git commit --amend --no-edit", repo.root)))
         self.assertIsNone(reason_of(run_hook("git commit -C HEAD --amend", repo.root)))
         self.assertIsNotNone(reason_of(run_hook('git commit --amend -m "weaken"', repo.root)))
+
+
+def shell():
+    return shutil.which("sh") if os.name != "nt" else str(Path(os.environ["ProgramFiles"], "Git", "bin", "sh.exe"))
+
+
+# Message bodies of the commit form Claude Code writes: -m "$(cat <<'EOF' ... EOF )". Each holds a character that
+# ends or opens something outside a heredoc.
+HEREDOC_BODIES = ['fix "the parser" edge', 'an odd " quote', "close ) paren (and open", "it's here", "a `tick` here",
+                  "a && b; c | d > e", "mention --dry-run and -- tests/test_parser.py",
+                  'subject\n\n- item "x" (y)\n- $HOME stays', 'trailing blank lines "\n\n']
+
+
+def heredoc_commit(body, delimiter="'EOF'"):
+    return 'git commit -am "$(cat <<%s\n%s\nEOF\n)"' % (delimiter, body)
+
+
+class SubstitutionTests(unittest.TestCase):
+    def test_a_heredoc_message_is_the_word_bash_passes(self):
+        for body in HEREDOC_BODIES:
+            with self.subTest(body=body):
+                command = heredoc_commit(body)
+                script = 'printf %s "$(cat <<\'EOF\'\n' + body + '\nEOF\n)"\n'
+                bash = subprocess.run([shell()], input=script.encode("utf-8"), stdout=subprocess.PIPE, check=True)
+                simples = GUARD.split_command(command, False)
+                self.assertEqual([s.words for s in simples], [["git", "commit", "-am", bash.stdout.decode("utf-8")]])
+
+    def test_any_other_substitution_is_one_word_kept_as_its_text(self):
+        # One row per thing inside `$(...)` that holds a `)` or `"` bash does not end the substitution on.
+        # A trailing `"q"` makes a substitution closed too early end the outer quote too.
+        for inner in ("printf '%s' 'a ) b' \"q\"", 'echo "x ) y"', r'echo \) "q"', "echo $(echo a ) b) c",
+                      ' (echo a) "q"',
+                      r'echo "\" ) $(echo ")" ) z"', "cat <<'EOF'\nbody ) \"\nEOF\necho tail"):
+            with self.subTest(inner=inner):
+                simples = GUARD.split_command('git commit -am "$(%s)" && git status' % inner, False)
+                self.assertEqual([s.words for s in simples], [["git", "commit", "-am", "$(%s)" % inner], ["git", "status"]])
+
+    def test_a_heredoc_message_does_not_hide_a_weakening(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        for command in [heredoc_commit(body) for body in HEREDOC_BODIES] + [heredoc_commit('fix "x" (y)', "EOF")]:
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests: removed test"), reason)
 
 
 class DiffSourceTests(unittest.TestCase):
