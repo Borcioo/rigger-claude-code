@@ -52,8 +52,8 @@ and the `# files` line ends with `, load-only N`. One that fails again stays fai
               then. Otherwise it runs the test files of each changed module and of each module whose
               plugin.json dependencies reach one, plus ALWAYS_RUN, then the sweep with
               --no-denylist. Exit 0 only when every file passed and the sweep printed
-              "# files N, findings 0" with N > 0, else 1. --fix-round and --control are refused next
-              to it.
+              "# files N, findings 0" with N > 0, else 1. --fix-round, --control and --agent are
+              refused next to it.
 """
 
 import argparse
@@ -700,7 +700,7 @@ def main(argv=None, root=ROOT):
         "--changed-modules", action="store_true", help="local pre-check: the changed modules' tests, never a gate"
     )
     args = parser.parse_args(argv)
-    for flag, value in (("--fix-round", args.fix_round), ("--control", args.control)):
+    for flag, value in (("--fix-round", args.fix_round), ("--control", args.control), ("--agent", args.agent)):
         if args.changed_modules and value:
             parser.error("--changed-modules cannot be combined with %s" % flag)
     env = clean_env(os.environ, no_claude=args.no_claude)

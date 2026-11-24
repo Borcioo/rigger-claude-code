@@ -492,8 +492,8 @@ class ChangedModulesTests(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("FAIL plugins/c/tests/test_x.py", output)
 
-    def test_fix_round_or_control_next_to_it_is_refused(self):
-        for flag in ("--fix-round", "--control"):
+    def test_fix_round_control_or_agent_next_to_it_is_refused(self):
+        for flag in ("--fix-round", "--control", "--agent"):
             with self.subTest(flag=flag):
                 errors = io.StringIO()
                 with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
