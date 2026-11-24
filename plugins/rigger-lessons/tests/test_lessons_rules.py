@@ -49,7 +49,7 @@ class LessonsRulesTests(unittest.TestCase):
         self.assertEqual(hooks["SessionStart"], [{"hooks": [{
             "type": "command", "timeout": 10,
             "command": 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" --notice "${CLAUDE_PLUGIN_ROOT}/hooks/lessons_start.py"'}]},
-            {"matcher": "startup|clear", "hooks": [{
+            {"matcher": "startup|clear|compact", "hooks": [{
                 "type": "command", "timeout": 10,
                 "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-lessons'}]}])
 
