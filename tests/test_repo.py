@@ -146,7 +146,7 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(sorted(listed), on_disk)
                 self.assertEqual(len(listed), len(set(listed)))
                 checked += len(listed)
-        self.assertEqual(checked, 19)
+        self.assertEqual(checked, 18)
 
     def test_modules_with_rules_depend_on_core(self):
         with_rules = 0

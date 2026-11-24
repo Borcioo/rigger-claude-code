@@ -20,12 +20,11 @@ MATCHER = "startup|clear|compact"
 SIZE_LIMIT = 9000
 SESSION_FILES = [
     "00-scope.md", "english.md", "scope.md", "git.md", "tests.md", "verify.md", "verify-main.md",
-    "plans.md", "plans-main.md", "defects.md", "environment.md", "skills.md",
+    "plans.md", "plans-main.md", "defects.md", "environment.md",
 ]
 SUBAGENT_FILES = [
     ["00-scope.md", "english.md", "scope.md", "git.md", "tests.md"],
     ["verify.md", "plans.md", "defects.md"],
-    ["skills.md"],
 ]
 SKIPPED_AGENTS = ["Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper"]
 WORKTREE_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/worktree_root.sh"'
@@ -315,7 +314,7 @@ class DropTests(Base):
 class RulesFilesTests(Base):
     def rules_files(self):
         files = sorted(REPO.glob("plugins/*/rules/*.md"))
-        self.assertGreaterEqual(len(files), 19)
+        self.assertGreaterEqual(len(files), 18)
         return files
 
     def test_size_check_limit(self):

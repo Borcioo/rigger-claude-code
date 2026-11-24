@@ -221,5 +221,34 @@ class FindingLabelTests(unittest.TestCase):
         self.assertIn("A Critical finding on a Risk-full change", rounds)
 
 
+class SlotWordingTests(unittest.TestCase):
+    """Phase 2 Task 16: the agent texts name slots or the Skill triggers table, and the reviewer's reply ends
+    with the `rigger.reviewer/1` JSON that `slot_check.py reviewer` reads (D41, D46, D49)."""
+
+    def test_the_reviewer_ends_with_the_contract_json(self):
+        reviewer = " ".join(REVIEWER.read_text(encoding="utf-8").split())
+        self.assertIn("End the reply with one fenced `json` block holding the `rigger.reviewer/1` object", reviewer)
+        self.assertIn("`tools/review-scope/review_scope.py --base <base> --head <head>`", reviewer)
+        self.assertIn("`git diff --no-renames --name-status <base>..<head>`", reviewer)
+        self.assertIn("A changed file that is neither reviewed nor skipped makes the status PARTIAL.", reviewer)
+        self.assertIn("`git --no-pager diff --no-ext-diff --no-textconv --no-color <base>..<head>`", reviewer)
+        self.assertIn("under a `Behaviour changes` heading of the report", reviewer)
+        self.assertIn("(procedure in the testing skill the Skill triggers table names)", reviewer)
+        self.assertIn("opens with `SHORTCUTS: <n>`", reviewer)
+
+    def test_dispatch_names_slots(self):
+        skill = " ".join(SKILL.read_text(encoding="utf-8").split())
+        self.assertIn("Agent type: the `worker` slot for implementation, the `reviewer` slot for review or "
+                      "verification (table `## Slots`;", skill)
+        self.assertIn("`slot-run: refused` is handled like a `STATUS: BLOCKED` report, never as no findings", skill)
+        self.assertIn("`tools/slot-check/slot_check.py reviewer <reply file> --base <base> --head <head>`", skill)
+        self.assertIn("two fresh read-only agents of the `reviewer` slot", skill)
+        self.assertIn("the `mapper` slot's agent (locations only)", skill)
+        self.assertIn("where the `lessons` slot is filled", skill)
+        for text in (skill, " ".join(REVIEWER.read_text(encoding="utf-8").split()),
+                     " ".join((CORE / "agents" / "worker.md").read_text(encoding="utf-8").split())):
+            self.assertNotIn("superpowers:", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

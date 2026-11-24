@@ -24,21 +24,19 @@ import assemble  # noqa: E402
 MATCHER = common.MATCHER
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
-SKILL_TABLES = {
-    "rigger-windows": "windows-skills.md",
-    "rigger-wp": "wp-skills.md",
-}
 WINDOWS = PLUGINS / "rigger-windows"
 ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these sections: they may be rewritten, never grown. Lower the ceiling when they shrink.
 # The sum is the rendered general layer with module options at their defaults (D20).
-RULES_CEILING_BYTES = 27708
-RULES_MIN_FILES = 19
+RULES_CEILING_BYTES = 27200
+SLOTS_CEILING_BYTES = 1200
+SLOTS_ID = "slots.slots"
+RULES_MIN_FILES = 18
 WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"
-ROW_RE = re.compile(r"\| .+ \| `([a-z-]+):([a-z-]+)` \|")
+ROW_RE = re.compile(r"\| .+ \| `([a-z0-9-]+):([a-z0-9-]+)` \|")
 SID = "5b1f0c1e-7d3a-4c55-9a2e-0f6d1c2b3a49"
 FILL = 8400  # one fill section per part: two never share the 9,000-byte cap
 
@@ -225,9 +223,10 @@ class WiringTests(HookRun):
         return root
 
     def test_every_part_the_assembler_fills_has_a_handler(self):
-        # Core's state file takes part 1, so five main fills reach part 6; four subagent fills reach part 4.
+        # Core's state file, Skill triggers table and Slots take part 1, so five main fills reach part 6; core's
+        # table also takes a subagent's part 1 (D38), so three subagent fills reach part 4.
         dirs = [self.fill_module("mainfill", SESSION_PARTS - 1, "main"),
-                self.fill_module("subfill", SUBAGENT_PARTS, "subagent")]
+                self.fill_module("subfill", SUBAGENT_PARTS - 1, "subagent")]
         session = self.session(dirs)
         self.assertEqual(len(session), SESSION_PARTS)
         self.assertNotIn(b"", session)
@@ -239,7 +238,7 @@ class WiringTests(HookRun):
         self.assertNotIn(b"", subagent)
         joined = b"".join(subagent)
         self.assertNotIn(b"left out over the hook cap", joined)
-        self.assertEqual(joined.count(b"x" * FILL), SUBAGENT_PARTS)
+        self.assertEqual(joined.count(b"x" * FILL), SUBAGENT_PARTS - 1)
 
 
 class SessionStartTests(HookRun):
@@ -250,7 +249,7 @@ class SessionStartTests(HookRun):
                 if entry["audience"] in ("both", audience):
                     text = assembled().text(root.name, entry["file"][len("rules/"):], audience).decode("utf-8")
                     found.extend(heading_lines(text))
-        self.assertGreaterEqual(len(found), 17)  # 18 main-session files; 00-scope.md is a preamble, no heading
+        self.assertGreaterEqual(len(found), 16)  # 17 main-session files; 00-scope.md is a preamble, no heading
         return found
 
     def test_each_source_prints_each_section_once_after_its_root_line(self):
@@ -281,12 +280,11 @@ class SubagentStartTests(HookRun):
                 self.assertEqual(without_root_lines(text.encode("utf-8")),
                                  without_root_lines(assembled().whole("subagent")))
 
-    def test_a_worker_gets_each_skill_table(self):
+    def test_a_worker_gets_the_skill_table(self):
         text = assembled().whole("subagent").decode("utf-8")
-        for plugin, name in SKILL_TABLES.items():
-            with self.subTest(plugin=plugin):
-                self.assertIn(TABLE_HEADER, rules_text(plugin, name, "subagent").decode("utf-8"))
-                self.assertIn(rules_text(plugin, name, "subagent").decode("utf-8"), text)
+        table = rules_text("rigger-core", "skills.md", "subagent").decode("utf-8")
+        self.assertIn(TABLE_HEADER, table)
+        self.assertIn(table, text)
 
     def test_skipped_agents_get_nothing(self):
         for agent in common.SKIPPED_AGENTS:
@@ -298,7 +296,8 @@ class DropTests(unittest.TestCase):
     def test_a_basename_drops_only_its_own_file(self):
         found = Assembled(HARNESS_RULES_DROP="windows.md")
         self.assertEqual(found.text("rigger-windows", "windows.md"), b"")
-        self.assertEqual(found.text("rigger-windows", "windows-skills.md"), rules_text("rigger-windows", "windows-skills.md"))
+        self.assertIn(b"`rigger-windows:windows-dev-env`", found.text("rigger-core", "skills.md"))
+        self.assertEqual(found.text("rigger-core", "skills.md"), rules_text("rigger-core", "skills.md"))
 
     def test_root_name_stays_when_the_shell_heading_is_dropped(self):
         heading = heading_lines(rules_text("rigger-windows", "windows.md").decode("utf-8"))[0]
@@ -308,28 +307,32 @@ class DropTests(unittest.TestCase):
 
 
 class SkillTableTests(unittest.TestCase):
-    def test_each_table_lists_the_plugin_skills_by_installed_name(self):
-        for plugin, name in SKILL_TABLES.items():
-            with self.subTest(plugin=plugin):
-                text = rules_text(plugin, name).decode("utf-8")
-                self.assertIn(TABLE_HEADER, text)
-                rows = text.split(TABLE_HEADER)[1].splitlines()
-                matches = [ROW_RE.fullmatch(row) for row in rows]
-                self.assertNotIn(None, matches, rows)
-                self.assertEqual({match.group(1) for match in matches}, {plugin})
-                skills = sorted(path.parent.name for path in (PLUGINS / plugin / "skills").glob("*/SKILL.md"))
-                self.assertGreater(len(skills), 0)
-                self.assertEqual(sorted(match.group(2) for match in matches), skills)
+    def table_rows(self, audience="main"):
+        text = rules_text("rigger-core", "skills.md", audience).decode("utf-8")
+        self.assertIn(TABLE_HEADER, text)
+        return text.split(TABLE_HEADER)[1].splitlines()
 
-    def test_the_core_table_keeps_the_header_the_others_repeat(self):
-        self.assertIn(TABLE_HEADER, rules_text("rigger-rules", "skills.md").decode("utf-8"))
+    def test_the_one_table_lists_every_module_skill_once_by_installed_name(self):
+        for audience in ("main", "subagent"):
+            with self.subTest(audience=audience):
+                matches = [ROW_RE.fullmatch(row) for row in self.table_rows(audience)]
+                self.assertNotIn(None, matches)
+                listed = sorted((match.group(1), match.group(2)) for match in matches)
+                for plugin in ("rigger-core", "rigger-windows", "rigger-wp"):
+                    skills = sorted(path.parent.name for path in (PLUGINS / plugin / "skills").glob("*/SKILL.md"))
+                    self.assertGreater(len(skills), 0)
+                    # Without superpowers, the testing slot's row reads `rigger-core:testing` alone (D39).
+                    self.assertEqual(sorted(skill for owner, skill in listed if owner == plugin), skills, plugin)
 
-    def test_every_table_is_a_placeholder_in_its_rules_file(self):
-        for plugin, name in dict(SKILL_TABLES, **{"rigger-rules": "skills.md"}).items():
-            with self.subTest(plugin=plugin):
-                raw = (PLUGINS / plugin / "rules" / name).read_text(encoding="utf-8")
+    def test_exactly_one_rules_file_holds_a_table_placeholder(self):
+        holding = []
+        for root in module_dirs():
+            for path in sorted((root / "rules").glob("*.md")):
+                raw = path.read_text(encoding="utf-8")
                 self.assertNotIn("| Before | Skill |", raw)
-                self.assertEqual(len(re.findall(r"^\{\{triggers:[^{}\s]+\}\}$", raw, re.M)), 1)
+                holding += [path.relative_to(PLUGINS).as_posix()] * len(
+                    re.findall(r"^\{\{triggers:[^{}\s]+\}\}$", raw, re.M))
+        self.assertEqual(holding, ["rigger-core/rules/skills.md"])
 
 
 class CrossPluginWordingTests(unittest.TestCase):
@@ -406,11 +409,12 @@ class PlanStopTests(unittest.TestCase):
         named = set(re.findall(r"`([a-z-]+)`", re.search(r"set `stop:` to (.+?), then ask", self.plans()).group(1)))
         self.assertEqual(accepted, named | {"done"})
 
-    def test_the_brainstorming_route_comes_from_the_process_slots(self):
-        self.assertIn("(with superpowers installed: `superpowers:brainstorming`, then `superpowers:writing-plans`)",
-                      self.plans())
+    def test_the_brainstorming_route_names_the_table_not_a_slot(self):
+        # D37: no rules sentence names an optional slot.
+        self.assertIn("never waive brainstorming or planning (load the brainstorm and plans skills the Skill "
+                      "triggers table names), the thinking pass", self.plans())
         raw = (PLUGINS / "rigger-rules" / "rules" / "plans-main.md").read_text(encoding="utf-8")
-        self.assertIn("{{slot:process.brainstorm}}, then {{slot:process.plans}}", raw)
+        self.assertNotIn("{{slot:", raw)
 
     def test_the_state_file_rule_names_the_plan_and_stop_keys(self):
         text = " ".join(rules_text("rigger-core", "state-file.md").decode("utf-8").split())
@@ -421,16 +425,27 @@ class TestingSkillTriggerTests(unittest.TestCase):
     """Where the TDD skill is loaded, the testing skill that overrides it is loaded too."""
 
     def test_the_testing_skill_rides_every_tdd_trigger(self):
-        # The Skill cell (the last one) of every row that loads TDD loads the testing skill first.
-        rows = [line.split("|") for line in rules_text("rigger-rules", "skills.md").decode("utf-8").splitlines()
-                if line.startswith("|")]
-        cells = [row[-2] for row in rows if "superpowers:test-driven-development" in row[-2]]
-        self.assertTrue(cells, "no TDD row read from skills.md")
-        for cell in cells:
-            self.assertIn("`rigger-core:testing`, then `superpowers:test-driven-development`", cell)
+        # In the row data (manifests and the level-1 defaults), every row that loads the TDD slot loads the
+        # testing slot before it (D47).
+        rows = [row for root in module_dirs() for row in load_manifest(root)["triggers"]]
+        with open(CORE / "rigger-defaults.json", encoding="utf-8") as handle:
+            rows += list(json.load(handle)["triggers"].values())
+        tdd = [row["load"] for row in rows if "slot:process.tdd" in row["load"]]
+        self.assertTrue(tdd, "no row loads slot:process.tdd")
+        for load in tdd:
+            self.assertIn("slot:testing", load[:load.index("slot:process.tdd")], load)
+        # With superpowers enabled, the rendered cell is the one 0.4.0 printed.
+        stub = Path(tempfile.mkdtemp(prefix="superpowers-stub-"))
+        self.addCleanup(shutil.rmtree, str(stub), True)
+        common.write_bytes(stub / ".claude-plugin" / "plugin.json", json.dumps({"name": "superpowers"}))
+        dirs = os.pathsep.join(str(path) for path in module_dirs() + [stub])
+        text = Assembled(RIGGER_MODULE_DIRS=dirs).text("rigger-core", "skills.md").decode("utf-8")
+        cells = [line.split("|")[-2] for line in text.splitlines()
+                 if line.startswith("|") and "superpowers:test-driven-development" in line]
+        self.assertEqual(cells, [" `rigger-core:testing`, then `superpowers:test-driven-development` "])
         worker = " ".join((PLUGINS / "rigger-core" / "agents" / "worker.md").read_text(encoding="utf-8").split())
-        self.assertIn("Load `rigger-core:testing` before writing code or tests and, where superpowers is "
-                      "installed, `superpowers:test-driven-development` after it", worker)
+        self.assertIn("Load the skills the Skill triggers table names for writing code or tests and for a bug or "
+                      "failing test, each before that step.", worker)
         lines = TESTING_SKILL.read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines[:4], ["---", "name: testing", "description: >-",
                                      "  Load BEFORE writing, changing or reviewing tests or a red run: a feature or bugfix test, a test"])
@@ -444,9 +459,14 @@ class RulesSizeTests(unittest.TestCase):
         main_ids = {section["id"] for section in found.main.sections}
         blocks = list(found.main.blocks) + [block for block, section in zip(found.subagent.blocks, found.subagent.sections)
                                             if section["id"] not in main_ids]
-        files = {(s["module"], s["file"]) for s in found.main.sections + found.subagent.sections}
+        files = {(s["module"], s["file"]) for s in found.main.sections + found.subagent.sections
+                 if s["id"] != SLOTS_ID}
         self.assertGreaterEqual(len(files), RULES_MIN_FILES, "rules files read from %s" % root)
-        self.assertLessEqual(sum(len(block[1]) for block in blocks), RULES_CEILING_BYTES)
+        # `## Slots` is generated and has a ceiling of its own (D50).
+        slots = [block for block in blocks if block[2] == SLOTS_ID]
+        self.assertEqual(len(slots), 1)
+        self.assertLessEqual(len(slots[0][1]), SLOTS_CEILING_BYTES)
+        self.assertLessEqual(sum(len(block[1]) for block in blocks if block[2] != SLOTS_ID), RULES_CEILING_BYTES)
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ one full gate runs on the machine at a time.
    once, and several light parts go to one session (it may hand them to its own subagents), so the
    app's few concurrent sessions cover more of the plan.
 3. Every brief states: goal, files, what done looks like, which checks fit what the change can
-   reach (the session loads `rigger-core:testing` and runs only those; the full suite and the gate
+   reach (the session loads the testing skill the Skill triggers table names and runs only those; the full suite and the gate
    are yours, at checkpoints), the model it runs on (passed as `model` to `start_session`: the skill's model rule covers
    sessions too, and a session without it inherits the strongest model), the parts it hands to a
    cheaper worker when its tasks mix risk, and that the session ends each turn with no ask and none
@@ -59,7 +59,7 @@ one full gate runs on the machine at a time.
    file's head (up to the first `##` after Summary), the whole file only when a decision needs it,
    and hand it to the reviewer by path. Every question and decision goes to you,
    never to the user. Run each gate command once yourself before it goes in a brief. A part that
-   designs or plans loads `superpowers:brainstorming` and `superpowers:writing-plans` and sends its
+   designs or plans loads the brainstorm and plans skills the Skill triggers table names and sends its
    questions and design to you. Before each brief, check the project's MCP servers (your tool list,
    `.mcp.json`, `mcp` in `.claude/environments.json`) and name in the brief what the part may use.
 4. Check each result against evidence before relaying it. For a side session's branch the

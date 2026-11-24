@@ -66,7 +66,7 @@ class SplitTests(unittest.TestCase):
 
     def test_split_is_lossless_for_every_repo_rules_file(self):
         files = sorted(REPO.glob("plugins/*/rules/*.md"))
-        self.assertGreaterEqual(len(files), 19)
+        self.assertGreaterEqual(len(files), 18)
         for path in files:
             with self.subTest(path=path.name):
                 data = path.read_bytes()

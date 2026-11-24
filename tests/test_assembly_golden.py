@@ -41,6 +41,150 @@ TALK_STORE = {"reply_language": TALK_LANGUAGE, "reply_lines": 7, "report_lines":
 GIT_HEADING = "## Git (procedure and naming: `rigger-core:git-workflow`)"
 OVERRIDE_NOTICE = b"rigger: rules.d/tests.md replaces rule tests.tests\n"
 MINE = b"## Tests\n- mine\n"
+# An enabled plugin named superpowers with no manifest: it fills the four process slots (D39, D40).
+STUB = "superpowers"
+STUB_KEY = STUB + "@stub-market"
+
+# --- the allowed differences of plan decision D40, applied to the baseline side -------------------
+TABLE_HEADER = b"| Before | Skill |\n|---|---|\n"
+SKILLS = "## Skill triggers"
+OLD_INTRO = (b"- Load the skill before the first step of its kind; the `superpowers:` rows apply when the\n"
+             b"  superpowers plugin is installed:\n")
+NEW_INTRO = b"- Load the skill before the first step of its kind:\n"
+WINDOWS_TABLE = "## Windows skills, loaded before the first step of their kind"
+WP_OLD = "## WordPress skill, loaded before the first step of its kind"
+WP_NEW = "## WordPress site copies"
+PLANS = "## Plans: main session"
+PLANS_OLD = (b"- A brief or full requirements never waive brainstorming or planning (with superpowers installed:\n"
+             b"  `superpowers:brainstorming`, then `superpowers:writing-plans`), the thinking pass (goal, reader,\n")
+PLANS_NEW = (b"- A brief or full requirements never waive brainstorming or planning (load the brainstorm and\n"
+             b"  plans skills the Skill triggers table names), the thinking pass (goal, reader,\n")
+SLOT_ROWS = [  # D36, written by hand: every slot at its default, superpowers enabled
+    b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n",
+    b"| worker | agent | rigger-core:worker | by-rule | default |\n",
+    b"| implementer | agent | rigger-core:implementer | pinned | default |\n",
+    b"| mapper | agent | rigger-core:mapper | pinned | default |\n",
+    b"| testing | skill | rigger-core:testing | \xe2\x80\x94 | default |\n",
+    b"SHELL-GUARD",
+    b"| lessons | hook | rigger-lessons (failure mode: undeclared) | \xe2\x80\x94 | default |\n",
+    b"| process.brainstorm | skill | superpowers:brainstorming | \xe2\x80\x94 | default |\n",
+    b"| process.plans | skill | superpowers:writing-plans | \xe2\x80\x94 | default |\n",
+    b"| process.tdd | skill | superpowers:test-driven-development | \xe2\x80\x94 | default |\n",
+    b"| process.debug | skill | superpowers:systematic-debugging | \xe2\x80\x94 | default |\n",
+]
+SHELL_GUARD_FILLED = b"| shell-guard | hook | rigger-windows (fails open) | \xe2\x80\x94 | default |\n"
+SHELL_GUARD_EMPTY = b"| shell-guard | hook | \xe2\x80\x94 | \xe2\x80\x94 | default |\n"
+
+
+def expected_slots(layout: str) -> bytes:
+    """`## Slots` for this system: 11 rows on Windows (shell-guard filled only with rigger-windows), else 10."""
+    if os.name != "nt":
+        shell_guard = b""
+    else:
+        shell_guard = SHELL_GUARD_FILLED if layout == "windows" else SHELL_GUARD_EMPTY
+    rows = b"".join(shell_guard if line == b"SHELL-GUARD" else line for line in SLOT_ROWS)
+    return b"## Slots\n\n| Slot | Kind | Target | Model | From |\n|---|---|---|---|---|\n" + rows
+
+
+def split_table(piece: bytes) -> Tuple[bytes, List[bytes], bytes]:
+    """(text before the table header, the row lines, text after the last row) of a piece with one table."""
+    before, _, rest = piece.partition(TABLE_HEADER)
+    lines = rest.splitlines(True)
+    rows = [line for line in lines if line.startswith(b"| ")]
+    return before, rows, b"".join(lines[len(rows):])
+
+
+def _piece(pieces: Dict[str, List[Tuple[str, bytes]]], module: str, key: str) -> Optional[int]:
+    found = [i for i, (k, _) in enumerate(pieces.get(module, [])) if k == key]
+    return found[0] if found else None
+
+
+def _merged_table(scenario, roots, pieces) -> bool:
+    """The rigger-rules table moves to rigger-core with the new intro and every row of the three tables (D38)."""
+    at = _piece(pieces, "rigger-rules", SKILLS)
+    if at is None:
+        return False
+    _, old = pieces["rigger-rules"].pop(at)
+    before, rows, after = split_table(old)
+    core = [row for row in rows if b"`superpowers:" not in row]
+    slot_rows = [row for row in rows if b"`superpowers:" in row]
+    others = []  # type: List[bytes]
+    for module, key in (("rigger-windows", WINDOWS_TABLE), ("rigger-wp", WP_OLD)):
+        where = _piece(pieces, module, key)
+        if where is not None:
+            others += split_table(pieces[module][where][1])[1]
+    if OLD_INTRO not in before:
+        raise AssertionError("the frozen intro moved: %r" % before)
+    merged = before.replace(OLD_INTRO, NEW_INTRO) + TABLE_HEADER + b"".join(core + others + slot_rows) + after
+    pieces.setdefault("rigger-core", []).append((SKILLS, merged))
+    return True
+
+
+def _windows_table_goes(scenario, roots, pieces) -> bool:
+    at = _piece(pieces, "rigger-windows", WINDOWS_TABLE)
+    if at is None:
+        return False
+    pieces["rigger-windows"].pop(at)
+    if not pieces["rigger-windows"]:
+        del pieces["rigger-windows"]
+        roots.discard("Plugin root: " + gb.root_text(FIXTURE.tree(scenario) / "rigger-windows"))
+    return True
+
+
+def _wp_sentence(scenario, roots, pieces) -> bool:
+    at = _piece(pieces, "rigger-wp", WP_OLD)
+    if at is None:
+        return False
+    before, _, after = split_table(pieces["rigger-wp"][at][1])
+    heading = WP_OLD.encode("utf-8") + b"\n"
+    if not before.startswith(heading) or not before.endswith(b"\n\n"):
+        raise AssertionError("the frozen wp piece changed shape: %r" % before)
+    pieces["rigger-wp"][at] = (WP_NEW, WP_NEW.encode("utf-8") + b"\n" + before[len(heading):-1] + after)
+    return True
+
+
+def _slots_section(scenario, roots, pieces) -> bool:
+    if scenario.subagent or _piece(pieces, "rigger-core", SKILLS) is None:
+        return False
+    pieces["rigger-core"].append(("## Slots", expected_slots(scenario.layout)))
+    return True
+
+
+def _core_root_for_subagents(scenario, roots, pieces) -> bool:
+    if not scenario.subagent or _piece(pieces, "rigger-core", SKILLS) is None:
+        return False
+    roots.add("Plugin root: " + gb.root_text(FIXTURE.tree(scenario) / "rigger-core"))
+    return True
+
+
+def _plans_wording(scenario, roots, pieces) -> bool:
+    at = _piece(pieces, "rigger-rules", PLANS)
+    if at is None:
+        return False
+    key, text = pieces["rigger-rules"][at]
+    if PLANS_OLD not in text:
+        raise AssertionError("the frozen plans piece changed: %r" % text[:300])
+    pieces["rigger-rules"][at] = (key, text.replace(PLANS_OLD, PLANS_NEW))
+    return True
+
+
+# D40's fixed list, in the order it is applied; every entry must apply in at least one scenario.
+ALLOWED = [
+    ("the rigger-rules table moves to rigger-core and merges the three tables", _merged_table),
+    ("the rigger-windows table section goes", _windows_table_goes),
+    ("the rigger-wp section keeps its sentence under a new heading", _wp_sentence),
+    ("rigger-core gains ## Slots for the main session", _slots_section),
+    ("subagents get rigger-core's root line", _core_root_for_subagents),
+    ("## Plans: main session names the table, not the slots", _plans_wording),
+]
+
+
+def apply_allowed(scenario, roots: set, pieces: dict) -> List[str]:
+    """Apply ALLOWED in place to a normalised baseline's roots and pieces; return the names of the entries used."""
+    used = [name for name, effect in ALLOWED if effect(scenario, roots, pieces)]
+    for module in [m for m, p in pieces.items() if not p]:
+        del pieces[module]
+    return used
 
 
 @dataclass(frozen=True)
@@ -56,6 +200,7 @@ class Scenario:
     talk: bool = False
     discovery: str = "installed"  # or "dirs": RIGGER_MODULE_DIRS with an empty installed_plugins.json
     mark_personal: bool = True
+    stub: bool = True  # the superpowers stub is installed and enabled
 
     @property
     def subagent(self) -> bool:
@@ -110,6 +255,12 @@ AUD_SUB_SUB = replace(AUD_SUB, id="aud_sub_sub", event="SubagentStart", source=N
 AUD_MAIN = Scenario("aud_main_startup", rules_d="aud_main", mark_personal=False)
 AUD_MAIN_SUB = replace(AUD_MAIN, id="aud_main_sub", event="SubagentStart", source=None, agent="general-purpose")
 NAMED = [OVERRIDE, OVERRIDE_SUB, LONE_ROOT, AUD_SUB, AUD_SUB_SUB, AUD_MAIN, AUD_MAIN_SUB]
+# Review Focus 7: rules.d files named after the sections the merge moves (skills.md) or removes (windows-skills.md).
+MY_TABLE = b"## Skill triggers\n- my own table\n"
+MY_WINDOWS = b"## Windows skills, loaded before the first step of their kind\n- my windows words\n"
+TABLE_OVERRIDES = Scenario("table_overrides_startup", rules_d="table_overrides")
+TABLE_OVERRIDES_SUB = replace(TABLE_OVERRIDES, id="table_overrides_sub", event="SubagentStart", source=None,
+                              agent="general-purpose")
 
 
 def write(path: Path, data: bytes) -> None:
@@ -168,6 +319,7 @@ class Fixture:
             for plugin in WINDOWS_MODULES:
                 shutil.copytree(str(WORK_PLUGINS / plugin), str(tree / plugin),
                                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            write(tree / STUB / ".claude-plugin" / "plugin.json", json.dumps({"name": STUB}).encode("utf-8"))
             if eol == "crlf":
                 to_crlf(tree)
         self.crlf_md["work"] = self._crlf_counts(self.trees["crlf"])
@@ -189,6 +341,9 @@ class Fixture:
             write(folder / "rigger" / "rules.d" / "lessons-subagent.md", LESSONS_MINE)
         elif scenario.rules_d == "aud_main":
             write(folder / "rigger" / "rules.d" / "state-file.md", STATE_MINE)
+        elif scenario.rules_d == "table_overrides":
+            write(folder / "rigger" / "rules.d" / "skills.md", MY_TABLE)
+            write(folder / "rigger" / "rules.d" / "windows-skills.md", MY_WINDOWS)
         elif scenario.rules_d == "main_budget":
             write(folder / "rigger" / "rules.d" / "b-main.md", b"## Main budget\n" + b"m" * 5985 + b"\n")
             write(folder / "rigger" / "rules.d" / "c.md", b"## After main\n" + b"c" * 3986 + b"\n")
@@ -217,9 +372,13 @@ class Fixture:
         installed = {} if scenario.discovery == "dirs" else {
             "%s@%s" % (m, MARKET): [{"scope": "user", "installPath": str(tree / m), "version": "0.4.0"}]
             for m in scenario.modules()}
+        if scenario.discovery != "dirs" and scenario.stub:
+            installed[STUB_KEY] = [{"scope": "user", "installPath": str(tree / STUB), "version": "1.0.0"}]
         write(config / "plugins" / "installed_plugins.json",
               json.dumps({"version": 2, "plugins": installed}).encode("utf-8"))
         settings = {"enabledPlugins": {"%s@%s" % (m, MARKET): True for m in scenario.modules()}}
+        if scenario.stub:
+            settings["enabledPlugins"][STUB_KEY] = True
         if scenario.talk:
             market = "inline" if scenario.discovery == "dirs" else MARKET
             settings["pluginConfigs"] = {"rigger-talk@" + market: {"options": TALK_STORE}}
@@ -234,7 +393,9 @@ class Fixture:
         if scenario.drop:
             env["HARNESS_RULES_DROP"] = scenario.drop
         if scenario.discovery == "dirs":
-            env["RIGGER_MODULE_DIRS"] = os.pathsep.join(str(self.tree(scenario) / m) for m in scenario.modules())
+            dirs = [self.tree(scenario) / m for m in scenario.modules()] + ([self.tree(scenario) / STUB]
+                                                                           if scenario.stub else [])
+            env["RIGGER_MODULE_DIRS"] = os.pathsep.join(str(path) for path in dirs)
         return env
 
     def assembler(self, scenario: Scenario, env: Dict[str, str], args: List[str], stdin: bytes = b"") -> \
@@ -319,6 +480,7 @@ class GoldenTest(unittest.TestCase):
         new_roots, new = gb.normalize_render(rendered, names)
         self.assertNotIn(b"\r", rendered + joined, "CR in the assembler's output")
         self.check_preconditions(scenario, baseline, old_roots, old, config)
+        apply_allowed(scenario, old_roots, old)
         self.assertEqual(new_roots, old_roots, "root-line sets differ")
         self.assertEqual(new, old, "module pieces differ")
         if scenario.rules_d:
@@ -353,7 +515,7 @@ class GoldenTest(unittest.TestCase):
             self.assertIn("rigger-windows", old)
         if scenario.eol == "crlf":
             self.assertEqual(FIXTURE.crlf_md["frozen"], (19, 0))
-            self.assertEqual(FIXTURE.crlf_md["work"], (19, 0))
+            self.assertEqual(FIXTURE.crlf_md["work"], (18, 0))  # windows-skills.md is gone (D38)
         if scenario.rules_d == "hostile":
             personal = b"".join(v for _, v in old["personal"])
             self.assertIn(b"rules_extra: cannot read e.md\n", personal)
@@ -412,6 +574,7 @@ class GoldenTest(unittest.TestCase):
             with self.subTest(scenario.id):
                 old_roots, old = gb.normalize(FIXTURE.baselines[scenario.baseline_key()], scenario.subagent)
                 self.assertEqual(old["personal"], [("## Tests", MINE)])
+                apply_allowed(scenario, old_roots, old)
                 expected = {m: list(p) for m, p in old.items() if m != "personal"}
                 at = keys(expected["rigger-rules"]).index("## Tests")
                 expected["rigger-rules"][at] = ("## Tests", MINE)
@@ -455,6 +618,51 @@ class GoldenTest(unittest.TestCase):
                              b"rigger: rules.d/state-file.md replaces rule state-file.state-file-for-long-sessions\n",
                              "session", "rigger-core")
 
+    def test_every_allowed_difference_applies_somewhere(self):
+        used = set()
+        for scenario in SCENARIOS + NAMED:
+            roots, pieces = gb.normalize(FIXTURE.baselines[scenario.baseline_key()], scenario.subagent)
+            used.update(apply_allowed(scenario, roots, pieces))
+        self.assertEqual([name for name, _ in ALLOWED if name not in used], [])
+
+    def test_merged_table_holds_every_row_of_the_three_tables(self):
+        """D40: the 13 rows of the frozen tables, as a multiset, then in D38's order."""
+        frozen = {}
+        for module, name in (("rigger-rules", "skills.md"), ("rigger-windows", "windows-skills.md"),
+                             ("rigger-wp", "wp-skills.md")):
+            lines = (gb.FIXTURE / "plugins" / module / "rules" / name).read_bytes().splitlines(True)
+            frozen[module] = [line for line in lines if line.startswith(b"| ") and line != b"| Before | Skill |\n"]
+        self.assertEqual([len(frozen[m]) for m in ("rigger-rules", "rigger-windows", "rigger-wp")], [8, 3, 2])
+        every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"]
+        core = [row for row in frozen["rigger-rules"] if b"`superpowers:" not in row]
+        self.assertEqual(len(core), 5)
+        ordered = (core + frozen["rigger-windows"] + frozen["rigger-wp"]
+                   + [row for row in frozen["rigger-rules"] if b"`superpowers:" in row])
+        for scenario in (SCENARIOS[0], next(s for s in SCENARIOS if s.agent == "general-purpose")):
+            with self.subTest(scenario.id):
+                rendered, _, _, _ = FIXTURE.run_new(scenario)
+                _, new = gb.normalize_render(rendered, FIXTURE.root_names(scenario))
+                at = _piece(new, "rigger-core", SKILLS)
+                self.assertIsNotNone(at, "rigger-core prints no %s" % SKILLS)
+                rows = split_table(new["rigger-core"][at][1])[1]
+                self.assertEqual(sorted(rows), sorted(every))
+                self.assertEqual(rows, ordered)
+
+    def test_overrides_of_merged_table_sections(self):
+        """Review Focus 7: rules.d/skills.md replaces the merged table with the override notice; a
+        rules.d/windows-skills.md with the removed heading prints as a personal section."""
+        notice = b"rigger: rules.d/skills.md replaces rule skills.skill-triggers\n"
+        for scenario in (TABLE_OVERRIDES, TABLE_OVERRIDES_SUB):
+            with self.subTest(scenario.id):
+                rendered, joined, _, _ = FIXTURE.run_new(scenario)
+                _, new = gb.normalize_render(rendered, FIXTURE.root_names(scenario))
+                self.assertEqual(new[gb.HEAD], [(gb.PREAMBLE, notice)])
+                self.assertEqual(new["personal"], [(SKILLS, MY_TABLE), (WINDOWS_TABLE, MY_WINDOWS)])
+                self.assertNotIn(SKILLS, keys(new.get("rigger-core", [])))
+                self.assertNotIn(TABLE_HEADER, rendered + joined)
+                for text in (notice, MY_TABLE, MY_WINDOWS):
+                    self.assertIn(text, joined)
+
     def test_lone_root_line_is_the_only_root_difference(self):
         """D1: a handler whose every section is dropped prints a lone root line today; the assembler prints none."""
         old_roots, old = gb.normalize(FIXTURE.baselines[LONE_ROOT.baseline_key()], False)
@@ -464,6 +672,7 @@ class GoldenTest(unittest.TestCase):
         talk_root = "Plugin root: " + gb.root_text(FIXTURE.tree(LONE_ROOT) / "rigger-talk")
         self.assertIn(talk_root, old_roots)
         self.assertNotIn("rigger-talk", old)
+        apply_allowed(LONE_ROOT, old_roots, old)
         self.assertEqual(old_roots - new_roots, {talk_root})
         self.assertEqual(new_roots - old_roots, set())
         self.assertEqual(new, old)
@@ -482,7 +691,7 @@ for _scenario in SCENARIOS:
 
 
 if __name__ == "__main__":
-    print("# scenarios %d, named tests 5" % len(SCENARIOS))
+    print("# scenarios %d, named tests 8" % len(SCENARIOS))
     sys.stdout.flush()
     started = time.time()
     try:
