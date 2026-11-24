@@ -314,6 +314,15 @@ class DriverTests(GitCase):
 EXE = ".exe" if os.name == "nt" else ""
 
 
+def ctypes_volume_name(mount):
+    """The `\\\\?\\Volume{...}\\` name of the volume mounted at `mount` (Windows)."""
+    import ctypes
+    buffer = ctypes.create_unicode_buffer(64)
+    if not ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW(mount, buffer, len(buffer)):
+        raise OSError("no volume name for %s" % mount)
+    return buffer.value
+
+
 @contextlib.contextmanager
 def working_directory(path):
     before = os.getcwd()
@@ -371,7 +380,18 @@ class ProgramLookupTests(GitCase):
             ("a folder holding a directory named like the program", str(self.tmp / "dirs"), self.elsewhere),
         ]
         if os.name == "nt":
-            rows.append(("the repository spelled in another case", str(self.repo).swapcase(), self.elsewhere))
+            self.program(self.tmp / "rootrel", "tool")
+            rows += [
+                ("the repository spelled in another case", str(self.repo).swapcase(), self.elsewhere),
+                ("the repository with the extended prefix", "\\\\?\\" + str(self.repo), self.elsewhere),
+                ("a folder inside the repository with the extended prefix in forward slashes",
+                 "//?/" + str(self.repo / "bin").replace("\\", "/"), self.elsewhere),
+                ("the repository with the device prefix", "\\\\.\\" + str(self.repo), self.elsewhere),
+                # Outside both, but read against another drive's root by a child on another drive.
+                ("a root-relative entry", os.path.splitdrive(str(self.tmp / "rootrel"))[1], self.elsewhere),
+                ("a drive-relative entry", os.path.splitdrive(str(self.tmp))[0] + os.path.join("..", "..", "rel"),
+                 nested_cwd),
+            ]
         else:
             rows.append(("a file that is not executable", str(self.tmp / "noexec"), self.elsewhere))
         for label, unsafe, cwd in rows:
@@ -410,6 +430,58 @@ class ProgramLookupTests(GitCase):
                 with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([unsafe, str(self.good)])}):
                     with working_directory(cwd):
                         self.same(review_scope.find_program("tool", repo, (EXE,)), self.tool)
+
+    @unittest.skipUnless(os.name == "nt", "the extended and device prefixes are Windows spellings")
+    def test_a_prefixed_entry_is_read_without_its_prefix(self):
+        """A prefixed entry outside both is still searched; one the prefix cannot be removed from is not."""
+        good = str(self.good)
+        volume = ctypes_volume_name(os.path.splitdrive(good)[0] + "\\")
+        rows = [  # (row, entry, searchable)
+            ("the extended prefix", "\\\\?\\" + good, True),
+            ("the extended prefix in forward slashes", "//?/" + good.replace("\\", "/"), True),
+            ("the device prefix", "\\\\.\\" + good, True),
+            ("a doubled prefix", "\\\\?\\\\\\?\\" + good, False),
+            ("the extended UNC prefix", "\\\\?\\UNC\\localhost\\share\\bin", True),
+            ("the device UNC prefix", "\\\\.\\UNC\\localhost\\share\\bin", True),
+            ("a volume name", volume + os.path.splitdrive(good)[1].lstrip("\\"), False),
+            ("a device with no drive", "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\bin", False),
+        ]
+        for label, entry, expected in rows:
+            with self.subTest(row=label, entry=entry):
+                self.assertIs(review_scope.searchable(entry, self.repo, str(self.elsewhere)), expected)
+
+    def case_twin(self, folder):
+        """`folder` with its last name in the other case, when the file system reads it as the same folder."""
+        twin = folder.parent / folder.name.swapcase()
+        if not twin.is_dir() or not os.path.samefile(str(twin), str(folder)):
+            self.skipTest("case-sensitive file system at %s (on WSL set TMPDIR to a /mnt/<drive> folder)" % folder)
+        return twin
+
+    def test_lookup_skips_the_repository_and_the_cwd_spelled_in_another_case(self):
+        """On a case-insensitive file system (macOS by default, WSL's /mnt/<drive>, Windows) another spelling of
+        the repository or the working directory is the same folder."""
+        (self.repo / "bin").mkdir()
+        (self.elsewhere / "bin").mkdir()
+        repo_twin = self.case_twin(self.repo)
+        cwd_twin = self.case_twin(self.elsewhere)
+        rows = [
+            ("the repository", str(repo_twin)),
+            ("a folder inside the repository", str(repo_twin / "bin")),
+            ("a missing folder inside the repository", str(repo_twin / "nope" / "deeper")),
+            ("the working directory", str(cwd_twin)),
+            ("a folder inside the working directory", str(cwd_twin / "bin")),
+        ]
+        for label, unsafe in rows:
+            with self.subTest(row=label):
+                self.assertIs(review_scope.searchable(unsafe, self.repo, str(self.elsewhere)), False)
+        # Not over-excluded: an existing folder beside them, outside both, is still searched.
+        self.assertIs(review_scope.searchable(str(self.good), self.repo, str(self.elsewhere)), True)
+
+    def test_no_entry_is_searched_when_the_working_directory_cannot_be_read(self):
+        """Without the folder's identity another spelling of it cannot be ruled out."""
+        missing = self.tmp / "gone"
+        self.assertIs(review_scope.searchable(str(self.good), self.repo, str(self.elsewhere)), True)
+        self.assertIs(review_scope.searchable(str(self.good), self.repo, str(missing)), False)
 
     @unittest.skipUnless(os.name == "nt", "batch files exist on Windows only")
     def test_git_lookup_never_takes_a_batch_file(self):

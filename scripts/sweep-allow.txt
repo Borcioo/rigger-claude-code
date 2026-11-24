@@ -93,3 +93,8 @@ plugins/rigger-panel/hooks/plan.ts	xmlns="http://www.w3.org/2000/svg"
 plugins/rigger-panel/hooks/look.tsx	xmlns="http://www.w3.org/2000/svg"
 # README logo
 assets/rigger-logo.webp	<binary>
+# review-scope PATH lookup: the Windows extended and device prefixes it strips, and fake prefixed entries
+plugins/rigger-core/tools/review-scope/review_scope.py	_PREFIXES = (("\\\\?\\UNC\\", "\\\\"), ("\\\\.\\UNC\\", "\\\\"), ("\\\\?\\", ""), ("\\\\.\\", ""))
+plugins/rigger-core/tools/review-scope/tests/test_review_scope.py	("the extended UNC prefix", "\\\\?\\UNC\\localhost\\share\\bin", True),
+plugins/rigger-core/tools/review-scope/tests/test_review_scope.py	("the device UNC prefix", "\\\\.\\UNC\\localhost\\share\\bin", True),
+plugins/rigger-core/tools/review-scope/tests/test_review_scope.py	("a device with no drive", "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\bin", False),

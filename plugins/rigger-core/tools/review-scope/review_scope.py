@@ -39,16 +39,62 @@ def inside(folder, root):
     return folder == root or folder.startswith(root.rstrip(os.sep) + os.sep)
 
 
+_PREFIXES = (("\\\\?\\UNC\\", "\\\\"), ("\\\\.\\UNC\\", "\\\\"), ("\\\\?\\", ""), ("\\\\.\\", ""))
+
+
+def _plain(entry):
+    # type: (str) -> Optional[str]
+    """On Windows `entry` without an extended (`\\\\?\\`) or device (`\\\\.\\`) prefix, or None when what is left
+    has no drive or UNC root: a root-relative or drive-relative entry, a volume name or a device."""
+    if os.name != "nt":
+        return entry
+    text = entry.replace("/", "\\")
+    for prefix, put in _PREFIXES:
+        if text[:len(prefix)].upper() == prefix:
+            text = put + text[len(prefix):]
+            break
+    drive = os.path.splitdrive(text)[0]
+    if drive[1:2] == ":" or (drive.startswith("\\\\") and drive[2:3] not in ("?", ".")):
+        return text
+    return None
+
+
+def _same_folder_above(path, roots):
+    # type: (str, Sequence[os.stat_result]) -> bool
+    """`path` or a folder above it is one of `roots` by file identity, which holds where a case-insensitive file
+    system lets another spelling name the same folder; a level that cannot be read is passed over."""
+    folder = path
+    while True:
+        try:
+            if any(os.path.samestat(os.stat(folder), root) for root in roots):
+                return True
+        except OSError:
+            pass
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            return False
+        folder = parent
+
+
 def searchable(entry, repo, cwd):
     # type: (str, Path, str) -> bool
-    """`entry` is an absolute PATH entry outside `repo` and `cwd`, compared as spelled and with links resolved
-    on each side, so a junction, a symlink or a linked checkout cannot lead into either."""
-    if not os.path.isabs(entry):
+    """`entry` is an absolute PATH entry outside `repo` and `cwd`, compared as spelled, with links resolved on
+    each side and by file identity, so a junction, a symlink, a linked checkout or another spelling of a folder
+    cannot lead into either. On Windows a prefixed entry is compared without its prefix and one with no drive or
+    UNC root is not absolute. When `repo` or `cwd` cannot be read, no entry is searched."""
+    entry = _plain(entry)
+    if entry is None or not os.path.isabs(entry):
         return False
-    return not any(inside(path, base)
-                   for path in (entry, os.path.realpath(entry))
-                   for root in (str(repo), cwd)
-                   for base in (root, os.path.realpath(root)))
+    try:
+        roots = [os.stat(root) for root in (str(repo), cwd)]
+    except OSError:
+        return False
+    real = os.path.realpath(entry)
+    return not (any(inside(path, base)
+                    for path in (entry, real)
+                    for root in (str(repo), cwd)
+                    for base in (root, os.path.realpath(root)))
+                or _same_folder_above(real, roots))
 
 
 def find_program(name, repo, exts):
