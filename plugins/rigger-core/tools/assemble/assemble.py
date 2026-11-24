@@ -58,6 +58,7 @@ EXPECTS = ("rigger: this project expects {name}, which is not installed and enab
 SNAPSHOT_MISSING = "rigger: snapshot missing; rules read again"
 SNAPSHOT_NOT_WRITTEN = "rigger: snapshot not written; compaction will read the rules again"
 CRASH = "rigger: rules not assembled: {kind}: {text} (" + DOCTOR + ")"
+LOST = "Rigger rules part {index} of {count} not loaded: {reason} (" + DOCTOR + ")"
 NOTICES_CAP = 2000  # bytes of notices a session or subagent gets; --render prints them all (M4)
 MORE_NOTICES = "rigger: {count} more notices not shown; assemble.py --render prints them all"
 LEFT_OUT = "rules_extra: left out over the hook cap: {names}"
@@ -848,11 +849,18 @@ def main(argv: Optional[List[str]] = None, stdin: Optional[bytes] = None, stdout
             hook = _hook(sys.stdin.buffer.read() if stdin is None else stdin)
             inputs = _inputs(environ, hook)
             data = _subagent_part(inputs, hook, index) if subagent else _session_part(inputs, hook, index)
-        except Exception as error:  # never a silent empty part: part 1 says what broke
+        except Exception as error:  # never a silent empty part: part 1 says what broke, a part above 1 names itself
             data = b""
+            kind, text = type(error).__name__, _shown(error, 300)
+            line = None
             if index == 1 or (index is None and _option_value(argv, "--part") == "1"):
-                line = (CRASH.format(kind=type(error).__name__, text=_shown(error, 300)) + "\n").encode("utf-8")
-                data = wrap(line) if subagent else line
+                line = CRASH.format(kind=kind, text=text)
+            elif index is not None:
+                count = SUBAGENT_PARTS if subagent else SESSION_PARTS
+                line = LOST.format(index=index, count=count, reason="%s: %s" % (kind, text))
+            if line is not None:
+                line_bytes = (line + "\n").encode("utf-8")
+                data = wrap(line_bytes) if subagent else line_bytes
         out.write(data)
         out.flush()
         return 0 if data else EXIT_NOTHING

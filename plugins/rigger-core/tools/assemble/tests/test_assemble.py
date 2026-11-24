@@ -495,7 +495,7 @@ class OutputTests(Base):
         try:
             for argv, expected, code in (
                 (["--part", "1"], b"rigger: rules not assembled: RuntimeError: boom (run /rigger-core:doctor)\n", 0),
-                (["--part", "2"], b"", 10),
+                (["--part", "2"], b"Rigger rules part 2 of 6 not loaded: RuntimeError: boom (run /rigger-core:doctor)\n", 0),
             ):
                 out = io.BytesIO()
                 self.assertEqual(assemble.main(argv, stdin=self.layout.hook_input(), stdout=out), code)
@@ -504,6 +504,28 @@ class OutputTests(Base):
             self.assertEqual(assemble.main(["--part", "1", "--subagent"], stdin=b"{}", stdout=out), 0)
             context = json.loads(out.getvalue().decode("utf-8"))["hookSpecificOutput"]["additionalContext"]
             self.assertEqual(context, "rigger: rules not assembled: RuntimeError: boom (run /rigger-core:doctor)\n")
+        finally:
+            assemble.assemble = original
+
+    def test_a_crash_in_a_part_above_one_prints_its_line(self):
+        original = assemble.assemble
+
+        def crash(*args, **kwargs):
+            raise ValueError("x")
+
+        assemble.assemble = crash
+        try:
+            out = io.BytesIO()
+            self.assertEqual(assemble.main(["--part", "3"], stdin=self.layout.hook_input(), stdout=out), 0)
+            self.assertEqual(out.getvalue(), b"Rigger rules part 3 of 6 not loaded: ValueError: x (run /rigger-core:doctor)\n")
+            out = io.BytesIO()
+            self.assertEqual(assemble.main(["--part", "4", "--subagent"], stdin=b"{}", stdout=out), 0)
+            self.assertTrue(out.getvalue().endswith(b"}\n"), out.getvalue())
+            context = json.loads(out.getvalue().decode("utf-8"))["hookSpecificOutput"]["additionalContext"]
+            self.assertEqual(context, "Rigger rules part 4 of 4 not loaded: ValueError: x (run /rigger-core:doctor)\n")
+            out = io.BytesIO()  # no part number to name: an index outside 1..6 stays silent, as before
+            self.assertEqual((assemble.main(["--part", "7"], stdin=self.layout.hook_input(), stdout=out), out.getvalue()),
+                             (10, b""))
         finally:
             assemble.assemble = original
 

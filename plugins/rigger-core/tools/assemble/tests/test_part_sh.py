@@ -11,9 +11,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CORE = HERE.parents[2]
+sys.path.insert(0, str(HERE.parent))
+
+import parts  # noqa: E402  the part counts part.sh names in its lines
 NO_PYTHON = b"Rigger rules not loaded: Python 3 not found (run /rigger-core:doctor)\n"
 EXITED = "Rigger rules not loaded: the assembler exited {} (run /rigger-core:doctor)\n"
 PRINTED_NOTHING = "Rigger rules not loaded: the assembler printed nothing (run /rigger-core:doctor)\n"
+LOST = "Rigger rules part {} of {} not loaded: {} (run /rigger-core:doctor)\n"
 COPIED = ("bin", ".claude-plugin", "rigger-module.json", "rigger-defaults.json", "agents", "skills")
 
 
@@ -120,10 +124,60 @@ class PartShTests(unittest.TestCase):
                 try:
                     self.assertEqual(self.run_part("1"), line.encode())
                     self.assertEqual(wrapped(self.run_part("1", "--subagent")), line)
-                    self.assertEqual(self.run_part("2"), b"")
-                    self.assertEqual(self.run_part("2", "--subagent"), b"")
                 finally:
                     script.write_bytes(real)
+
+    def test_a_failing_part_above_one_prints_its_own_line(self):
+        # D29: each lost part says so with its own number; an empty part on purpose (exit 10) stays silent.
+        self.assertEqual(self.run_part("2"), b"")
+        self.assertEqual(self.run_part("2", "--subagent"), b"")
+        script = self.core / "tools" / "assemble" / "assemble.py"
+        real = script.read_bytes()
+        partial = b"import sys\nsys.stdout.write('half')\nsys.stdout.flush()\nraise SystemExit(1)\n"
+        rows = (
+            ("exit 3", b"raise SystemExit(3)\n", "the assembler exited 3"),
+            ("missing script", None, "the assembler exited 2"),
+            ("empty file", b"", "the assembler printed nothing"),
+            ("output then exit 1", partial, "the assembler exited 1"),
+        )
+        for name, body, reason in rows:
+            if body is None:
+                script.unlink()
+            else:
+                script.write_bytes(body)
+            try:
+                session, subagent = parts.SESSION_PARTS, parts.SUBAGENT_PARTS
+                for args, count in ((("2",), session), (("3",), session), (("2", "--subagent"), subagent)):
+                    with self.subTest(name, args=args):
+                        line = LOST.format(args[0], count, reason)
+                        out = self.run_part(*args)
+                        if "--subagent" in args:
+                            self.assertTrue(out.endswith(b"}\n"), out)
+                            self.assertEqual(wrapped(out), line)
+                        else:
+                            self.assertEqual(out, line.encode())
+            finally:
+                script.write_bytes(real)
+
+    @unittest.skipUnless(os.name == "nt", "a backslash separates folders only on Windows")
+    def test_backslash_script_path(self):
+        control = self.run_part("1")
+        self.assertIn(b"keep a state file", control)
+        path = str(self.core / "tools" / "assemble" / "part.sh")
+        self.assertNotIn("/", path)
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        done = subprocess.run([SH, path, "1"], input=self.stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=self.env(), cwd=str(elsewhere), timeout=60)
+        self.assertEqual((done.returncode, done.stdout), (0, control), done.stderr)
+
+    def test_bare_script_name(self):
+        # Started as `sh part.sh 1` from its own folder: $0 has no separator, so the folder is `.`.
+        control = self.run_part("1")
+        self.assertIn(b"keep a state file", control)
+        done = subprocess.run([SH, "part.sh", "1"], input=self.stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=self.env(), cwd=str(self.core / "tools" / "assemble"), timeout=60)
+        self.assertEqual((done.returncode, done.stdout), (0, control), done.stderr)
 
 
 if __name__ == "__main__":
