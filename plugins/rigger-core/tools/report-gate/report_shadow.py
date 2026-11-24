@@ -1,10 +1,12 @@
-"""report_shadow: one row per subagent stop, saying whether its final report opens with `STATUS: <word>`.
+"""report_shadow: one row per subagent stop, saying whether its final report opens with `STATUS: <word>` and, for an
+agent that fills a slot, whether the report meets that slot's contract (shape only: no git, and no file read but the slot table).
 
 Shadow only: it never holds a subagent. Runs as an async SubagentStop hook, prints nothing and exits 0. One row file per
 (session, agent) is created with O_EXCL and holds one JSON line; it never holds report text.
 
     report_shadow.py --summary --data <plugin data dir>   one line per agent_type (verdict counts, then `summary <n>`
-                                                          rows with an opening `## Summary`), then `# rows N`
+                                                          rows with an opening `## Summary`, then `contract-ok <n>`
+                                                          and `contract-refused <n>`), then `# rows N`
 """
 import hashlib
 import json
@@ -13,13 +15,19 @@ import re
 import sys
 import threading
 import time
+from pathlib import Path
 
+TOOLS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CORE_ROOT = os.path.dirname(TOOLS)
 WAIT = 2.5          # seconds this process lives at most
 ROW_CAP = 20000     # about 5 MB
 TAIL_BYTES = 256 * 1024
 TYPE_CAP = 60
 VERDICTS = ("ok", "missing", "bad-value", "unread", "error")
 STATUS_LINE = re.compile(r"STATUS: (DONE|PARTIAL|BLOCKED|NEEDS_CONTEXT)\s*")
+CONTRACT_COUNTS = (("contract-ok", lambda value: value == "ok"),
+                   ("contract-refused", lambda value: isinstance(value, str) and value.startswith("refused:")))
+COLUMNS = VERDICTS + ("summary",) + tuple(column for column, _ in CONTRACT_COUNTS)
 
 
 def classify(text):
@@ -99,6 +107,40 @@ def _text(value):
     return value if isinstance(value, str) else ""
 
 
+def _agent_slots(session):
+    """(slot path, agent target) of each filled agent slot: the session's snapshot, else the level-1 defaults."""
+    import slots
+    import snapshot
+    value = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    config_dir = Path(value) if value else Path.home() / ".claude"
+    stored = snapshot.read_snapshot(config_dir, session)
+    parsed = slots.from_snapshot(stored["slots"]) if stored is not None else None
+    if parsed is not None:
+        return [(row.path, row.target) for row in parsed[0] if row.filled and row.kind == "agent"]
+    with open(os.path.join(CORE_ROOT, "rigger-defaults.json"), "rb") as handle:
+        defaults = json.loads(handle.read().decode("utf-8"))["slots"]
+    return [(path, entry.get("target")) for path, entry in slots.flatten(defaults).items()
+            if isinstance(entry, dict) and entry.get("kind") == "agent"]
+
+
+def contract(event):
+    """(slot, contract) of one SubagentStop event; the imports live here, so a missing tool costs only this field."""
+    for folder in ("slot-check", "assemble"):
+        path = os.path.join(TOOLS, folder)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    import slot_check
+    agent_type = _text(event.get("agent_type"))
+    slot = next((path for path, target in _agent_slots(_text(event.get("session_id"))) if target == agent_type), None)
+    if slot is None:
+        return "", "none"
+    message = event.get("last_assistant_message")
+    if not isinstance(message, str):   # the event text only, never the transcript (spike Q2)
+        return slot, "unread"
+    verdict = slot_check.check(slot, message, shape_only=True)
+    return slot, "ok" if verdict.ok else "refused:" + verdict.rule   # the rule id only: a reason may quote the report
+
+
 def log_stop(event, started):
     """Writes the row of one stop. started is a time.monotonic() value."""
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
@@ -116,6 +158,10 @@ def log_stop(event, started):
         row["verdict"], row["status"], row["source"], row["has_summary"] = judge(event)
     except Exception:
         row.update(verdict="error", status="", source="none", has_summary=False)
+    try:   # a missing or broken slot tool, defaults file or snapshot leaves the fields above as they are
+        row["slot"], row["contract"] = contract(event)
+    except Exception:
+        row.update(slot="", contract="error")
     if session or agent:
         key = hashlib.sha256((session + "\0" + agent).encode("utf-8", "replace")).hexdigest()[:16]
     else:
@@ -130,13 +176,13 @@ def log_stop(event, started):
 
 
 def _read_row(path):
-    """The row's agent_type, verdict and has_summary (an absent or non-bool field reads False); ValueError, OSError or
-    UnicodeDecodeError when the file is not a row."""
+    """The row's agent_type, verdict, has_summary (an absent or non-bool field reads False) and contract (None when
+    absent); ValueError, OSError or UnicodeDecodeError when the file is not a row."""
     with open(path, "rb") as handle:
         row = json.loads(handle.read().decode("utf-8").splitlines()[0])
     if not isinstance(row, dict) or not isinstance(row.get("agent_type"), str) or row.get("verdict") not in VERDICTS:
         raise ValueError("not a row")
-    return row["agent_type"], row["verdict"], row.get("has_summary") is True
+    return row["agent_type"], row["verdict"], row.get("has_summary") is True, row.get("contract")
 
 
 def summary(data):
@@ -147,14 +193,16 @@ def summary(data):
         if not name.endswith(".json"):
             continue
         try:
-            agent_type, verdict, summarised = _read_row(os.path.join(folder, name))
+            agent_type, verdict, summarised, verdict_of_contract = _read_row(os.path.join(folder, name))
         except (ValueError, IndexError, OSError):   # UnicodeDecodeError is a ValueError
             unreadable += 1
             continue
-        counts.setdefault(agent_type, dict.fromkeys(VERDICTS + ("summary",), 0))[verdict] += 1
+        counts.setdefault(agent_type, dict.fromkeys(COLUMNS, 0))[verdict] += 1
         counts[agent_type]["summary"] += summarised
+        for column, counted in CONTRACT_COUNTS:
+            counts[agent_type][column] += counted(verdict_of_contract)
     for agent_type in sorted(counts):
-        print((agent_type or "-") + "".join(" %s %d" % (key, counts[agent_type][key]) for key in VERDICTS + ("summary",)))
+        print((agent_type or "-") + "".join(" %s %d" % (key, counts[agent_type][key]) for key in COLUMNS))
     total = sum(per[verdict] for per in counts.values() for verdict in VERDICTS)
     print("# rows %d" % total)
     if unreadable:

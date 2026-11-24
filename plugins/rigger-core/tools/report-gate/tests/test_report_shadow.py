@@ -22,8 +22,12 @@ HUNG_BOUND = 6.0
 SID = "abc123def4567890"
 AID = "def456abc7890123"
 AGENT_TYPE = "rigger-core:worker"
-FIELDS = ["agent8", "agent_type", "has_summary", "ms", "sid8", "source", "status", "ts", "verdict"]
+FIELDS = ["agent8", "agent_type", "contract", "has_summary", "ms", "sid8", "slot", "source", "status", "ts", "verdict"]
 TAIL = 256 * 1024
+WAIT = 2.5   # the script's own bound; a row written later than this is never written
+REVIEWER = "rigger-core:reviewer"
+WORKER_REPORT = "STATUS: DONE\n\n## Summary\n- a\n- b\n- c\n\n## Details\nbody\n"
+SNAPSHOT_KEYS = ("format", "parts", "modules", "config", "sections", "rows", "slots", "notices")
 
 # Runs the script's main with `stub` applied first.
 DRIVER = """
@@ -78,22 +82,23 @@ class ShadowCase(unittest.TestCase):
                 handle.write((line if isinstance(line, str) else json.dumps(line)).encode("utf-8") + b"\n")
         return path
 
-    def start(self, stdin, stub=None, data="default"):
+    def start(self, stdin, stub=None, data="default", script=SCRIPT):
         env = dict(os.environ)
         env.pop("CLAUDE_PLUGIN_DATA", None)
+        env["CLAUDE_CONFIG_DIR"] = os.path.join(self.base, "config")   # never the person's own snapshots
         if data is not None:
             env["CLAUDE_PLUGIN_DATA"] = self.data if data == "default" else data
-        tail = [SCRIPT] if stub is None else ["-c", DRIVER, TOOL_DIR, stub]
+        tail = [script] if stub is None else ["-c", DRIVER, TOOL_DIR, stub]
         try:
             return subprocess.run([sys.executable, "-I", "-X", "utf8", "-S"] + tail, env=env, cwd=self.base,
                                   input=stdin, capture_output=True, timeout=KILL_AFTER)
         except subprocess.TimeoutExpired:
             self.fail("the hook was still running after %d s" % KILL_AFTER)
 
-    def run_hook(self, event, stub=None, data="default"):
+    def run_hook(self, event, stub=None, data="default", script=SCRIPT):
         """One SubagentStop. Silent and exit 0 whatever it found."""
         stdin = event if isinstance(event, bytes) else json.dumps(event).encode("utf-8")
-        proc = self.start(stdin, stub, data)
+        proc = self.start(stdin, stub, data, script)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"", b""))
 
     def files(self):
@@ -391,8 +396,8 @@ class Summaries(ShadowCase):
         proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", SCRIPT, "--summary", "--data", self.data],
                               cwd=self.base, stdin=subprocess.DEVNULL, capture_output=True, timeout=KILL_AFTER)
         self.assertEqual(proc.stdout.decode("utf-8").replace("\r\n", "\n"),
-                         "old ok 2 missing 0 bad-value 0 unread 0 error 0 summary 0\n"
-                         + AGENT_TYPE + " ok 2 missing 0 bad-value 0 unread 0 error 0 summary 1\n# rows 4\n")
+                         "old ok 2 missing 0 bad-value 0 unread 0 error 0 summary 0 contract-ok 0 contract-refused 0\n"
+                         + AGENT_TYPE + " ok 2 missing 0 bad-value 0 unread 0 error 0 summary 1 contract-ok 1 contract-refused 1\n# rows 4\n")
 
 
 class Summary(ShadowCase):
@@ -420,13 +425,13 @@ class Summary(ShadowCase):
         ]):
             self.good("r%d.json" % number, kind, verdict)
         self.assertEqual(self.summary(), (0, (
-            "reviewer ok 1 missing 0 bad-value 1 unread 1 error 0 summary 0\n"
-            "worker ok 2 missing 1 bad-value 0 unread 1 error 1 summary 0\n"
+            "reviewer ok 1 missing 0 bad-value 1 unread 1 error 0 summary 0 contract-ok 0 contract-refused 0\n"
+            "worker ok 2 missing 1 bad-value 0 unread 1 error 1 summary 0 contract-ok 0 contract-refused 0\n"
             "# rows 8\n")))
 
     def test_an_empty_agent_type_is_listed_under_a_dash(self):
         self.good("r1.json", "", "missing")
-        self.assertEqual(self.summary(), (0, "- ok 0 missing 1 bad-value 0 unread 0 error 0 summary 0\n# rows 1\n"))
+        self.assertEqual(self.summary(), (0, "- ok 0 missing 1 bad-value 0 unread 0 error 0 summary 0 contract-ok 0 contract-refused 0\n# rows 1\n"))
 
     def test_zero_rows_print_the_count_and_exit_one(self):
         self.assertEqual(self.summary(), (1, "# rows 0\n"))
@@ -447,7 +452,7 @@ class Summary(ShadowCase):
         self.put("type-number.json", {"agent_type": 5, "verdict": "ok"})
         self.put("type-missing.json", {"verdict": "ok"})
         os.mkdir(os.path.join(self.rows_dir, "dir.json"))
-        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0 summary 0\n# rows 1\n"
+        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0 summary 0 contract-ok 0 contract-refused 0\n# rows 1\n"
                                              "# unreadable 12\n"))
 
     def test_only_unreadable_files_still_exit_one(self):
@@ -457,7 +462,7 @@ class Summary(ShadowCase):
     def test_files_that_are_not_row_files_are_ignored(self):
         self.good("ok.json", "worker", "ok")
         self.put("note.txt", "hello")
-        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0 summary 0\n# rows 1\n"))
+        self.assertEqual(self.summary(), (0, "worker ok 1 missing 0 bad-value 0 unread 0 error 0 summary 0 contract-ok 0 contract-refused 0\n# rows 1\n"))
 
     def test_a_missing_data_argument_is_a_usage_error(self):
         proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", SCRIPT, "--summary"], cwd=self.base,
@@ -468,7 +473,160 @@ class Summary(ShadowCase):
     def test_the_summary_reads_the_rows_a_hook_run_wrote(self):
         self.run_hook(self.event("STATUS: DONE"))
         self.run_hook(self.event("no status", agent_id="second"))
-        self.assertEqual(self.summary(), (0, AGENT_TYPE + " ok 1 missing 1 bad-value 0 unread 0 error 0 summary 0\n# rows 2\n"))
+        self.assertEqual(self.summary(), (0, AGENT_TYPE + " ok 1 missing 1 bad-value 0 unread 0 error 0 summary 0 contract-ok 0 contract-refused 2\n# rows 2\n"))
+
+
+def reviewer_object(severity="Important", quote="this text is in no file"):
+    """A rigger.reviewer/1 object that meets every shape rule; its quote is never looked up."""
+    return {
+        "contract": "rigger.reviewer/1", "status": "DONE", "base": "a" * 40, "head": "b" * 40,
+        "findings": [{"id": "F1", "file": "src/app.py", "line": 3, "end_line": 3, "severity": severity,
+                      "quote": quote, "title": "t", "detail": "d", "pre_existing": False, "evidence": "e"}],
+        "coverage": {"in_scope": ["src/app.py"], "reviewed": ["src/app.py"], "skipped": []},
+        "shortcuts": [], "shortcuts_check": "none found",
+    }
+
+
+def reviewer_reply(obj, lead="STATUS: DONE\n\nReview notes.\n"):
+    return lead + "\n```json\n" + json.dumps(obj, indent=1) + "\n```\n"
+
+
+def slot_row(path, target, kind="agent", filled=True):
+    return {"path": path, "kind": kind, "target": target, "model": None, "source": "personal", "fillers": [],
+            "failure_mode": None, "filled": filled, "modes_differ": False}
+
+
+class Contracts(ShadowCase):
+    def contract(self, message, agent_type=AGENT_TYPE, **kwargs):
+        shutil.rmtree(self.data, ignore_errors=True)
+        row = self.row(self.event(message, agent_type=agent_type), **kwargs)
+        return row["slot"], row["contract"]
+
+    def put_snapshot(self, slots_value, fmt=2, session=SID):
+        folder = os.path.join(self.base, "config", "rigger", "state")
+        os.makedirs(folder, exist_ok=True)
+        data = {key: [] for key in SNAPSHOT_KEYS}
+        data.update(format=fmt, slots=slots_value)
+        with open(os.path.join(folder, session + ".resolved.json"), "wb") as handle:
+            handle.write(json.dumps(data).encode("utf-8"))
+
+    def test_worker_report_gets_its_contract_verdict(self):
+        self.assertEqual(self.contract(WORKER_REPORT), ("worker", "ok"))
+        self.assertEqual(self.contract("STATUS: DONE\n\n## Summary\n- a\n- b\n\nbody\n"), ("worker", "refused:summary"))
+        self.assertEqual(self.contract("Done.\n"), ("worker", "refused:status-line"))
+
+    def test_reviewer_reply_is_checked_for_shape_only(self):
+        self.assertEqual(self.contract(reviewer_reply(reviewer_object()), REVIEWER), ("reviewer", "ok"))
+        self.assertEqual(self.contract(reviewer_reply(reviewer_object(severity="Huge")), REVIEWER),
+                         ("reviewer", "refused:severity"))
+        self.assertEqual(self.contract("STATUS: DONE\nno json here\n", REVIEWER), ("reviewer", "refused:json"))
+
+    def test_an_agent_that_fills_no_slot_gets_none(self):
+        # rigger-lessons fills the lessons hook slot and rigger-core:testing a skill slot: neither is an agent slot
+        for agent_type in ("general-purpose", "Explore", "rigger-core:worker-x", "", "rigger-core:testing",
+                           "rigger-lessons"):
+            with self.subTest(agent_type=agent_type):
+                self.assertEqual(self.contract(WORKER_REPORT, agent_type), ("", "none"))
+
+    def test_an_unread_report_gets_unread(self):
+        self.assertEqual(self.contract(None), ("worker", "unread"))
+        self.assertEqual(self.contract(7), ("worker", "unread"))
+        # the shadow's verdict may come from the transcript; the contract reads the event text only (spike Q2)
+        path = self.transcript([assistant(text_block(WORKER_REPORT))])
+        shutil.rmtree(self.data, ignore_errors=True)
+        row = self.row(self.event(agent_transcript_path=path))
+        self.assertEqual((row["source"], row["slot"], row["contract"]), ("transcript", "worker", "unread"))
+
+    def test_long_and_broken_reports_get_a_row_in_time(self):
+        for size in (300 * 1024, 900 * 1024):
+            filler = ("filler line of a long report\n" * (size // 29))[:size]
+            two_blocks = reviewer_reply(reviewer_object()) + filler + reviewer_reply(reviewer_object("Huge"), "")
+            cut = reviewer_reply(reviewer_object())
+            cut = filler + cut[:len(cut) // 2]
+            cases = (
+                (REVIEWER, filler + reviewer_reply(reviewer_object(), ""), "ok"),
+                (REVIEWER, two_blocks, "refused:severity"),   # the last block is the reply's JSON
+                (REVIEWER, cut, "refused:json"),
+                (AGENT_TYPE, WORKER_REPORT + filler, "ok"),
+            )
+            for agent_type, message, contract in cases:
+                with self.subTest(size=size, contract=contract, agent_type=agent_type):
+                    self.assertGreaterEqual(len(message), size)
+                    shutil.rmtree(self.data, ignore_errors=True)
+                    row = self.row(self.event(message, agent_type=agent_type))   # exit 0, no stdout, no stderr
+                    self.assertEqual(row["contract"], contract)
+                    self.assertLess(row["ms"], WAIT * 1000)
+
+    def test_the_row_never_holds_report_text(self):
+        planted = "PLANTEDWORD7c1e"
+        for agent_type, message in ((REVIEWER, reviewer_reply(reviewer_object(severity=planted))),
+                                    (AGENT_TYPE, "STATUS: DONE\n\n## Summary\n- " + planted + "\n")):
+            with self.subTest(agent_type=agent_type):
+                shutil.rmtree(self.data, ignore_errors=True)
+                self.run_hook(self.event(message, agent_type=agent_type))
+                (name,) = self.files()
+                with open(os.path.join(self.rows_dir, name), "rb") as handle:
+                    raw = handle.read()
+                self.assertTrue(json.loads(raw)["contract"].startswith("refused:"))
+                self.assertNotIn(planted.encode(), raw)
+
+    def test_slot_table_source(self):
+        # no snapshot: the level-1 defaults name rigger-core's agents
+        self.assertEqual(self.contract(WORKER_REPORT, "acme:builder"), ("", "none"))
+        self.assertEqual(self.contract(WORKER_REPORT, "rigger-core:mapper")[0], "mapper")
+        # the session's snapshot wins over the defaults
+        table = {"rows": [slot_row("reviewer", None, kind=None, filled=False), slot_row("worker", "acme:builder"),
+                          slot_row("mapper", "acme:mapper", filled=False),
+                          slot_row("shell-guard", "acme-guard", kind="hook")],
+                 "trusted": []}
+        self.put_snapshot(table)
+        self.assertEqual(self.contract(WORKER_REPORT, "acme:builder"), ("worker", "ok"))
+        self.assertEqual(self.contract(WORKER_REPORT, AGENT_TYPE), ("", "none"))
+        self.assertEqual(self.contract(WORKER_REPORT, "acme:mapper"), ("", "none"))   # an unfilled row
+        self.assertEqual(self.contract(WORKER_REPORT, "acme-guard"), ("", "none"))   # a hook, not an agent
+        self.assertEqual(self.contract(WORKER_REPORT, "rigger-core:mapper"), ("", "none"))
+        # a format-1 snapshot, or one whose slots do not parse, falls back to the defaults
+        for label, fmt, value in (("format 1", 1, table), ("bad slots", 2, {"rows": "x", "trusted": []})):
+            with self.subTest(snapshot=label):
+                self.put_snapshot(value, fmt=fmt)
+                self.assertEqual(self.contract(WORKER_REPORT, "acme:builder"), ("", "none"))
+                self.assertEqual(self.contract(WORKER_REPORT, AGENT_TYPE), ("worker", "ok"))
+
+    def test_another_sessions_snapshot_is_not_read(self):
+        table = {"rows": [slot_row("worker", "acme:builder")], "trusted": []}
+        self.put_snapshot(table, session="another-session")
+        self.assertEqual(self.contract(WORKER_REPORT, "acme:builder"), ("", "none"))
+        self.assertEqual(self.contract(WORKER_REPORT, AGENT_TYPE), ("worker", "ok"))
+
+    def test_a_missing_slot_check_still_writes_the_row(self):
+        alone = os.path.join(self.base, "copy", "tools", "report-gate")
+        os.makedirs(alone)
+        shutil.copy(SCRIPT, alone)   # no slot-check, assemble or defaults beside it: every import fails
+        message = "STATUS: PARTIAL\n\n## Summary\n- a\n- b\n- c\n"
+        normal = self.row(self.event(message))
+        shutil.rmtree(self.data)
+        row = self.row(self.event(message), script=os.path.join(alone, "report_shadow.py"))
+        self.assertEqual((row["slot"], row["contract"]), ("", "error"))
+        self.assertEqual(sorted(row), FIELDS)
+        for name in ("ts", "ms", "slot", "contract"):
+            del row[name], normal[name]
+        self.assertEqual(row, normal)
+
+    def test_summary_counts_contract_verdicts(self):
+        os.makedirs(self.rows_dir)
+        for number, contract in enumerate(["ok", "ok", "refused:summary", "refused:json", "none", "unread", "error",
+                                           None, 7, "refusedx", "ok:x"]):
+            row = {"agent_type": "worker", "verdict": "ok"}
+            if contract is not None:
+                row["contract"] = contract
+            with open(os.path.join(self.rows_dir, "r%02d.json" % number), "wb") as handle:
+                handle.write(json.dumps(row).encode("utf-8") + b"\n")
+        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", SCRIPT, "--summary", "--data", self.data],
+                              cwd=self.base, stdin=subprocess.DEVNULL, capture_output=True, timeout=KILL_AFTER)
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+        self.assertEqual(proc.stdout.decode("utf-8").replace("\r\n", "\n"),
+                         "worker ok 11 missing 0 bad-value 0 unread 0 error 0 summary 0 contract-ok 2"
+                         " contract-refused 2\n# rows 11\n")
 
 
 if __name__ == "__main__":
