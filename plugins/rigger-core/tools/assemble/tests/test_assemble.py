@@ -914,6 +914,16 @@ class CheckTests(unittest.TestCase):
         self.assertRegex(lines[-2], r"^# check: modules 1, rules files \d+, findings 0$")
         self.assertEqual(lines[-1], "# note: only this plugin was found next to itself; pass --modules <dir>... to check the others")
 
+    def test_check_without_modules_ignores_older_cached_versions_of_itself(self):
+        base = self.tmp / "cache" / "rigger" / "rigger-core"
+        for version in ("0.4.9", "0.5.0"):
+            shutil.copytree(str(REPO_CORE), str(base / version), ignore=shutil.ignore_patterns("__pycache__"))
+        code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(base / "0.5.0"), RIGGER_MODULE_DIRS="")
+        lines = out.decode("utf-8").splitlines()
+        self.assertEqual(code, 0, out + err)
+        self.assertRegex(lines[-2], r"^# check: modules 1, rules files \d+, findings 0$")
+        self.assertTrue(lines[-1].startswith("# note: only this plugin was found"), lines)
+
     def test_doctor_rows(self):
         self.layout.rules_module()
         code, out, _ = self.layout.cli("--doctor")

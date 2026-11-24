@@ -753,12 +753,27 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
     return findings, ["# external: %s" % name for name in sorted(external)], len(modules), files
 
 
+def _same_plugin(root: Path, name: object) -> bool:
+    try:
+        other = _read_json(root / "rigger-module.json")
+    except _Unreadable:
+        return False
+    return name is not None and isinstance(other, dict) and other.get("name") == name
+
+
 def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
     inputs = _inputs(environ, {})
     if "--modules" in argv:
         dirs = [Path(arg) for arg in argv[argv.index("--modules") + 1:] if not arg.startswith("--")]
     else:
         dirs = sorted(path.parent for path in inputs.self_root.parent.glob("*/rigger-module.json"))
+        try:
+            own = _read_json(inputs.self_root / "rigger-module.json")
+        except _Unreadable:
+            own = None
+        name = own.get("name") if isinstance(own, dict) else None
+        # In an installed cache the siblings are other versions of this plugin: only the running one is checked.
+        dirs = [d for d in dirs if d == inputs.self_root or not _same_plugin(d, name)]
     findings, info, count, files = check(dirs, inputs.self_root)
     lines = info + findings
     if not findings:

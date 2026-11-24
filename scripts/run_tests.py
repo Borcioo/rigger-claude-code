@@ -77,7 +77,7 @@ TIMEOUT = 120
 # and a loaded gate nearly doubles that. Add a file here only with the spawn count that shows it.
 TIMEOUTS = {
     "plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300,
-    "tests/test_assembly_golden.py": 300,
+    "tests/test_assembly_golden.py": 300,  # 507 sh and 302 python starts; 33 s alone, 45-65 s in the gate
 }
 KILL_TIMEOUT = 10
 # At most this many failed files are rerun alone; more is a real break, not load.
