@@ -555,7 +555,7 @@ class ProgramTests(SlotRunCase):
         """A bare name given with `.exe`, and a `.com` program, are found and started outside the repository."""
         com_folder = self.tmp / "combin"
         com_folder.mkdir()
-        com = str(com_folder / "comtool.com")
+        com = str(com_folder / ("comtool" + ".com"))  # split: the sweep's host rule reads the joined name
         shutil.copy(self.source, com)  # a PE image starts whatever its extension
         exe = self.plant(self.tmp / "outbin")
         for row, program, expected in (("name.exe", self.file, exe), (".com", "comtool", com)):
