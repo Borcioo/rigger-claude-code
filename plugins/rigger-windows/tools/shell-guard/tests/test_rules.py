@@ -1227,7 +1227,7 @@ def checkout_cases(root):
         ("Bash", "(cd src; d=`cd ..; pwd`; git checkout a.py)", repo, R),
         ("Bash", "((cd src); cd docs; pwd); git checkout README.md", repo, R),
         ("Bash", "(cd docs; (cd ../src)); git checkout README.md", repo, R),
-        ("Bash", "d=`cd docs; echo \`cd ../src; pwd\``; git checkout README.md", repo, R),
+        ("Bash", "d=`cd docs; echo \\`cd ../src; pwd\\``; git checkout README.md", repo, R),
         ("Bash", "pushd docs; (popd); popd; git checkout README.md", repo, R),
         ("Bash", "pwd; d=$( (cd src); git checkout README.md)", repo, R),
         ("Bash", "pwd; d=`(cd src); git checkout README.md`", repo, R),
