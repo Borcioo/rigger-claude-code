@@ -336,10 +336,28 @@ ALWAYS_RUN = (
 )
 PASSING_TEST ="import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n\n\nunittest.main()\n"
 # The stub sweep prints the line kept next to the repository (outside it, so changing it is no change) and logs its run.
+# Given files, it is the control run: one finding per line naming the planted path (or control-line.txt), exit 1 on any.
 SWEEP_STUB = """import os, sys
 here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 with open(os.path.join(here, "sweep-calls.txt"), "a", encoding="utf-8") as calls:
     calls.write(" ".join(sys.argv[1:]) + "\\n")
+files = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+if files:
+    try:
+        with open(os.path.join(here, "control-line.txt"), encoding="utf-8") as line:
+            print(line.read().strip())
+        sys.exit(0)
+    except OSError:
+        pass
+    found = 0
+    for name in files:
+        with open(name, encoding="utf-8") as planted:
+            for number, text in enumerate(planted, 1):
+                if ":/planted/" in text:
+                    found += 1
+                    print("%s:%d: planted path" % (name, number))
+    print("# files %d, findings %d" % (len(files), found))
+    sys.exit(1 if found else 0)
 try:
     with open(os.path.join(here, "sweep-line.txt"), encoding="utf-8") as line:
         print(line.read().strip())
@@ -477,8 +495,22 @@ class ChangedModulesTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         expected = set(ALWAYS_RUN) | {self.MODULE_TESTS[name] for name in modules}
         self.assertEqual(set(self.ran), expected, output)
-        self.assertEqual(self.sweep_calls(), ["--no-denylist"], output)
+        self.expect_sweep_and_control(output)
         self.assertIn("# changed-modules: sweep files 3, findings 0\n", output)
+        self.assertIn("# changed-modules: sweep control caught 1 finding\n", output)
+
+    def expect_sweep_and_control(self, output):
+        """The sweep ran over the repository, then over one planted file outside it."""
+        calls = self.sweep_calls()
+        self.assertEqual(len(calls), 2, output)
+        self.assertEqual(calls[0], "--no-denylist", output)
+        flag, _, planted = calls[1].partition(" ")
+        self.assertEqual(flag, "--no-denylist", output)
+        planted = Path(planted)
+        self.assertEqual(planted.name, "planted.md", output)
+        self.assertNotIn(self.root, planted.parents, output)
+        self.assertFalse(planted.exists(), "the planted file outlives the run")
+        self.assertNotIn("planted path", output)   # the control's finding line stays out of the findings printout
 
     def test_classify_table(self):
         rows = {
@@ -575,6 +607,18 @@ class ChangedModulesTests(unittest.TestCase):
                 self.assertEqual(code, 1, output)
                 files, findings = line[len("# files "):].split(", findings ")
                 self.assertIn("# changed-modules: sweep files %s, findings %s\n" % (files, findings), output)
+
+    def test_a_sweep_control_that_misses_the_planted_finding_fails(self):
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        for line in ("# files 1, findings 0", "no count line"):
+            with self.subTest(line=line):
+                (self.tmp / "control-line.txt").write_text(line + "\n", encoding="utf-8")
+                (self.tmp / "sweep-calls.txt").unlink(missing_ok=True)
+                code, output = self.main()
+                self.assertEqual(code, 1, output)
+                self.assertIn("# changed-modules: sweep files 3, findings 0\n", output)
+                self.assertIn("# changed-modules: sweep control missed the planted finding\n", output)
+                self.assertEqual(len(self.sweep_calls()), 2, output)
 
     def test_git_failure_exits_two(self):
         self.write("plugins/a/tools/t/t.py", "t = 1\n")

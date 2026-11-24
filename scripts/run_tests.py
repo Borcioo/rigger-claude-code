@@ -52,8 +52,9 @@ and the `# files` line ends with `, load-only N`. One that fails again stays fai
               nothing run: only the gate says anything
               then. Otherwise it runs the test files of each changed module and of each module whose
               plugin.json dependencies reach one, plus ALWAYS_RUN, then the sweep with
-              --no-denylist. Exit 0 only when every file passed and the sweep printed
-              "# files N, findings 0" with N > 0, else 1. --fix-round, --control and --agent are
+              --no-denylist and its control (the gate's planted file, in a temp folder). Exit 0
+              only when every file passed, the sweep printed "# files N, findings 0" with N > 0
+              and the control found the planted line, else 1. --fix-round, --control and --agent are
               refused next to it.
 """
 
@@ -123,6 +124,8 @@ ALWAYS_RUN = (
     "plugins/rigger-rules/tests/test_plugin_rules.py",
 )
 MODULE_MANIFEST = "rigger-module.json"
+# The file the sweep controls of the gate and of --changed-modules must report (see plant).
+PLANTED = "planted.md"
 SWEEP_COUNT_RE = re.compile(r"^# files (\d+), findings (\d+)", re.M)
 
 RAN_RE = re.compile(r"^Ran (\d+) tests? in ", re.M)
@@ -557,9 +560,18 @@ def changed_modules(root: Path, changed: List[str]) -> Tuple[List[str], Optional
     return sorted(names | dependents(root, names)), shared
 
 
-def run_sweep(root, env, log):
-    """The sweep's (files, findings), or None when it printed no count line or could not run."""
-    command = [sys.executable, "-I", "-X", "utf8", "scripts/sweep.py", "--no-denylist"]
+def plant(out):
+    """A file the sweep must report. Built here: a literal path in this file would be a finding."""
+    path = out / PLANTED
+    path.write_text("x " + "C" + ":" + "/planted/path\n", encoding="utf-8", newline="\n")
+    return path
+
+
+def run_sweep(root, env, log, files=(), show=True):
+    """The sweep's (files, findings), or None when it printed no count line or could not run.
+
+    `files` are swept in place of the repository; `show` False keeps finding lines out of the output."""
+    command = [sys.executable, "-I", "-X", "utf8", "scripts/sweep.py", "--no-denylist"] + [str(f) for f in files]
     try:
         done = subprocess.run(
             command, cwd=str(root), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -571,10 +583,11 @@ def run_sweep(root, env, log):
     output = done.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
     counts = SWEEP_COUNT_RE.findall(output)
     if not counts:
-        for line in output.rstrip().splitlines()[-20:]:
-            tell("  | " + line, log)
+        if show:
+            for line in output.rstrip().splitlines()[-20:]:
+                tell("  | " + line, log)
         return None, done.returncode
-    if int(counts[-1][1]) > 0:
+    if show and int(counts[-1][1]) > 0:
         for line in output.splitlines():
             if not SWEEP_COUNT_RE.match(line) and line.strip():
                 tell(line, log)
@@ -619,6 +632,15 @@ def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int
         tell("# changed-modules: sweep printed no count (exit %d)" % sweep_exit, log)
         return 1
     tell("# changed-modules: sweep files %d, findings %d" % counts, log)
+    folder = tempfile.mkdtemp(prefix="changed-modules-control-")   # outside the repository: no change to it
+    try:
+        control, _control_exit = run_sweep(root, env, log, [plant(Path(folder))], show=False)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    if control is None or control[1] < 1:
+        tell("# changed-modules: sweep control missed the planted finding", log)
+        return 1
+    tell("# changed-modules: sweep control caught %d finding%s" % (control[1], "" if control[1] == 1 else "s"), log)
     if code != 0 or sweep_exit != 0 or counts[0] < 1 or counts[1] != 0:
         return 1
     return 0
