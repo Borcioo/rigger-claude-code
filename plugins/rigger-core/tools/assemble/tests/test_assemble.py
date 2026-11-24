@@ -64,6 +64,7 @@ class Layout:
         write(self.core / "agents" / "implementer.md", "---\nname: implementer\nomitClaudeMd: true\n---\nx\n")
         write(self.core / "agents" / "mapper.md", "---\nname: mapper\nomitClaudeMd: true\n---\nx\n")
         write(self.core / "agents" / "worker.md", "---\nname: worker\n---\nx\n")
+        write(self.core / "agents" / "reviewer.md", "---\nname: reviewer\n---\nx\n")
         for skill in ("git-workflow", "testing"):
             write(self.core / "skills" / skill / "SKILL.md", "---\nname: %s\n---\n" % skill)
 
@@ -99,6 +100,19 @@ class Layout:
         }
         base.update(files)
         return self.module("rigger-rules", base)
+
+    def plain_plugin(self, name):
+        """A RIGGER_MODULE_DIRS entry with a plugin.json and no manifest: an enabled plugin, not a module (D39)."""
+        root = self.plugins / name
+        write_json(root / ".claude-plugin" / "plugin.json", {"name": name})
+        self.dirs.append(str(root))
+        return root
+
+    def manifest_set(self, root, **values):
+        path = root / "rigger-module.json"
+        data = json.loads(path.read_bytes())
+        data.update(values)
+        write_json(path, data)
 
     def personal(self, name, data):
         write(self.config / "rigger" / "rules.d" / name, data)
@@ -172,9 +186,9 @@ class LayerTests(Base):
         acme = self.layout.module("acme", {"rules/tests.md": ("## Tests\n\ncompany tests\n", "both"),
                                            "rules/extra.md": ("## Extra\n\nextra rule\n", "both")}, layer="company")
         found = self.layout.assemble()
-        self.assertEqual(self.ids(found), ["state-file.state-file", "tests.tests", "git.git", "plans.plans",
-                                           "skills.skill-triggers", "extra.extra"])
-        tests = found.sections[1]
+        self.assertEqual(self.ids(found), ["state-file.state-file", "slots.slots", "tests.tests", "git.git",
+                                           "plans.plans", "skills.skill-triggers", "extra.extra"])
+        tests = found.sections[2]
         self.assertEqual((tests["layer"], tests["module"], tests["file"]), ("company", "acme", "rules/tests.md"))
         block = [b for b in found.blocks if b[2] == "tests.tests"][0]
         self.assertEqual(block[1], b"## Tests\n\ncompany tests\n")
@@ -207,7 +221,7 @@ class PersonalTests(Base):
         block = [b for b in found.blocks if b[2] == "tests.tests"][0]
         self.assertEqual(block[1], b"## Tests\n\nmy tests\n")
         self.assertEqual(block[0], assemble.root_text(self.layout.plugins / "rigger-rules"))
-        self.assertEqual(self.ids(found)[1], "tests.tests")
+        self.assertEqual(self.ids(found)[2], "tests.tests")  # after state-file and slots, as without rules.d
 
     def test_personal_repeated_id_keeps_every_section(self):
         # I2: rules_extra.sh printed rules.d files whole; two headings with one slug both stay.
@@ -221,7 +235,7 @@ class PersonalTests(Base):
         self.assertLess(text.index(b"unit words"), text.index(b"e2e words"))
         self.assertEqual(found.notices, ["rigger: rules.d/tests.md replaces rule tests.tests"])
         ids = self.ids(found)
-        self.assertEqual(ids[1], "tests.tests")  # the first occurrence replaces in place
+        self.assertEqual(ids[2], "tests.tests")  # the first occurrence replaces in place
         self.assertLess(ids.index("tests.tests"), ids.index("notes.testing"))
         self.assertNotIn(b"run the tests", text)
 
@@ -329,6 +343,7 @@ class SelectionTests(Base):
                  "section": "skills.skill-triggers", "requires": ["os:" + OTHER_OS]},
                 {"id": "rigger-rules.with-slot", "before": "slot row", "load": ["x:y"],
                  "section": "skills.skill-triggers", "requires": ["slot:testing"]}]
+        self.layout.plain_plugin("x")  # the rows load x:y, which D39 keeps only while x is enabled
         self.layout.rules_module(**{
             "rules/os.md": ("## Other OS\n\nother os words\n", "both", ["os:" + OTHER_OS]),
             "rules/plugin.md": ("## Plugin\n\nplugin words\n", "both", ["plugin:not-enabled"]),
@@ -353,7 +368,7 @@ class SelectionTests(Base):
     def test_drop_by_basename_heading_and_id(self):
         self.layout.rules_module()
         found = self.layout.assemble(HARNESS_RULES_DROP="tests.md;## Plans; git.git ")
-        self.assertEqual(self.ids(found), ["state-file.state-file", "skills.skill-triggers"])
+        self.assertEqual(self.ids(found), ["state-file.state-file", "slots.slots", "skills.skill-triggers"])
         kept = self.layout.assemble(HARNESS_RULES_DROP="## Git ({{skill:x:y}})")
         self.assertIn("git.git", self.ids(kept))
         dropped = self.layout.assemble(HARNESS_RULES_DROP="## Git (`x:y`)")
@@ -663,6 +678,14 @@ class FullLayoutTests(unittest.TestCase):
         self.assertNotIn(b"rules_extra: left out", b"".join(session))
         self.assertIn(b"## a.md", b"".join(session))
 
+    def test_slots_section_for_the_default_layout_is_under_1200_bytes(self):
+        # D50: ## Slots has its own cap of 1,200 bytes for the default set (11 rows on Windows, 10 elsewhere).
+        block = [b for b in self.layout.assemble().blocks if b[2] == "slots.slots"]
+        self.assertEqual(len(block), 1)
+        rows = [line for line in block[0][1].splitlines() if line.startswith(b"| ") and not line.startswith(b"| Slot ")]
+        self.assertEqual(len(rows), 11 if os.name == "nt" else 10)
+        self.assertLessEqual(len(block[0][1]), 1200)
+
     def test_emitted_part_stays_under_the_hook_cap(self):
         stdin = self.layout.hook_input(hook_event_name="SubagentStart", agent_type="general-purpose")
         outputs = [self.layout.part(i) for i in range(1, 7)]
@@ -680,18 +703,18 @@ class FullLayoutTests(unittest.TestCase):
 
 
 class ConfigTests(Base):
-    def test_config_row_for_an_absent_section_gives_a_notice(self):
-        row = {"before": "lost row", "load": ["x:y"], "section": "nope.table"}
+    def test_a_config_row_of_any_section_goes_into_the_one_table(self):
+        # D38: `section` is ignored, so a row naming a table nobody prints still shows, with no notice.
+        self.layout.plain_plugin("x")
         path = self.layout.config / "rigger" / "config.json"
-        write_json(path, {"schema": 1, "triggers": {"p.lost": row}})
-        found = self.layout.assemble()  # rigger-rules absent: core rows give no notice
-        self.assertEqual(found.notices, ["rigger: trigger p.lost from %s not shown: no table nope.table" % path])
-        write_json(path, {"schema": 1, "triggers": {"p.lost": row, "p.kept": {"before": "kept row", "load": ["x:y"]}}})
+        write_json(path, {"schema": 1, "triggers": {
+            "p.other": {"before": "other section row", "load": ["x:y"], "section": "nope.table"},
+            "p.kept": {"before": "kept row", "load": ["x:y"]}}})
         self.layout.rules_module()
         found = self.layout.assemble()
-        self.assertEqual(len(found.notices), 1)
-        self.assertIn(b"| kept row |", self.text(found))
-        self.assertNotIn(b"lost row", self.text(found))
+        self.assertEqual(found.notices, [])
+        self.assertIn(b"| other section row | `x:y` |\n", self.text(found))
+        self.assertIn(b"| kept row | `x:y` |\n", self.text(found))
 
     def test_clean_layout_has_no_notices(self):
         self.layout.rules_module()
@@ -737,6 +760,356 @@ class ConfigTests(Base):
         self.layout.personal("tests.md", "## Tests\n\nmy tests\n")
         first = self.layout.part(1)
         self.assertTrue(first.startswith(b"rigger: rules.d/tests.md replaces rule tests.tests\n"))
+
+
+def sh_quoted(text):
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def command_line(core, session):
+    """The one line under ## Slots when a slot is a command (D36, spike Q3: the Bash tool runs it)."""
+    root = Path(str(core)).as_posix()
+    return ("Run a command slot with the Bash tool: `sh %s %s <slot> --session %s --base <base revision>`"
+            % (sh_quoted(root + "/bin/py.sh"), sh_quoted(root + "/tools/slot-run/slot_run.py"), session))
+
+
+def shown_argv(argv):
+    """D53's form, written out here from its definition: ASCII JSON cut to 200, its size and 12 hex of sha256."""
+    import hashlib
+    line = json.dumps(argv, ensure_ascii=True)
+    return "%s … (%d bytes, sha256:%s)" % (line[:200], len(line), hashlib.sha256(line.encode("ascii")).hexdigest()[:12])
+
+
+class SlotWiringTests(Base):
+    """The assembler resolves slots (Task 15): ## Slots, its notices, the trust filter and the merged table."""
+
+    def config_file(self):
+        return self.layout.config / "rigger" / "config.json"
+
+    def project_file(self):
+        return self.layout.project / ".claude" / "rigger.json"
+
+    def startup(self, session, **fields):
+        return self.layout.hook_input(session_id=session, source="startup", **fields)
+
+    def compact(self, session):
+        return self.layout.hook_input(session_id=session, source="compact")
+
+    def section_text(self, found, section_id):
+        return b"".join(block[1] for block in found.blocks if block[2] == section_id)
+
+    def test_slots_section_closes_core_and_is_main_only(self):
+        self.layout.manifest_set(self.layout.core, rules=[{"file": "rules/state-file.md", "audience": "main"},
+                                                          {"file": "rules/second.md", "audience": "both"}])
+        write(self.layout.core / "rules" / "second.md", "## Second\n\nsecond core words\n")
+        self.layout.rules_module()
+        found = self.layout.assemble()
+        self.assertEqual(self.ids(found)[:4], ["state-file.state-file", "second.second", "slots.slots", "tests.tests"])
+        block = [b for b in found.blocks if b[2] == "slots.slots"][0]
+        self.assertEqual(block[0], assemble.root_text(self.layout.core))
+        self.assertTrue(block[1].startswith(b"## Slots\n\n| Slot | Kind | Target | Model | From |\n"), block[1][:80])
+        self.assertIn(b"| worker | agent | rigger-core:worker | by-rule | default |\n", block[1])
+        sub = self.layout.assemble("subagent")
+        self.assertNotIn("slots.slots", self.ids(sub))
+        self.assertIn("second.second", self.ids(sub))  # control: core's own rules reach the subagent
+        self.assertNotIn(b"## Slots", self.layout.render("--subagent"))
+
+    def test_a_personal_section_cannot_replace_slots(self):
+        self.layout.rules_module()
+        self.layout.personal("slots.md", "## Slots\n\nmy own slots\n")
+        found = self.layout.assemble()
+        self.assertIn("rigger: rule id slots.slots in rigger-core and rules.d/slots.md; kept rigger-core",
+                      found.notices)
+        self.assertNotIn("rigger: rules.d/slots.md replaces rule slots.slots", found.notices)
+        self.assertNotIn(b"my own slots", self.text(found))
+        self.assertIn(b"| Slot | Kind | Target | Model | From |", self.section_text(found, "slots.slots"))
+
+    def test_drop_by_heading_drops_slots(self):
+        self.layout.rules_module()
+        self.assertIn("slots.slots", self.ids(self.layout.assemble()))  # control
+        for drop in ("## Slots", "slots.slots"):
+            found = self.layout.assemble(HARNESS_RULES_DROP=drop)
+            self.assertNotIn("slots.slots", self.ids(found), drop)
+            self.assertNotIn(b"| Slot | Kind |", self.text(found), drop)
+
+    def test_default_install_without_superpowers_is_quiet(self):
+        # Review Focus 5: no notice per empty process slot, no superpowers skill named, the four rows empty.
+        self.layout.rules_module(**{"rules/tdd.md": ("## TDD only\n\ntdd words\n", "both", ["slot:process.tdd"])})
+        self.layout.manifest_set(self.layout.plugins / "rigger-rules", triggers=[
+            {"id": "rigger-rules.tdd-row", "before": "tdd row", "load": ["rigger-core:git-workflow"],
+             "requires": ["slot:process.tdd"]}])
+        found = self.layout.assemble()
+        self.assertEqual(found.notices, [])
+        text = self.text(found)
+        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-core:testing` |\n",
+                      text)
+        self.assertNotIn(b"superpowers:", text)
+        self.assertNotIn(b"new behaviour, a spec or a plan", text)  # its every entry is a superpowers skill
+        self.assertNotIn(b"tdd words", text)  # `requires: slot:process.tdd` reads the resolved, empty slot
+        self.assertNotIn(b"| tdd row |", text)
+        self.assertIn(b"plan rule", text)  # control: the other rigger-rules sections print
+        slots_text = self.section_text(found, "slots.slots")
+        for path in ("process.brainstorm", "process.plans", "process.tdd", "process.debug"):
+            self.assertIn(("| %s | — | — | — | default |\n" % path).encode("utf-8"), slots_text, path)
+
+    def test_a_second_table_prints_nothing_with_a_notice(self):
+        # D38: the first {{triggers:…}} of the assembly holds every row; a later one, in another module, prints none.
+        self.layout.rules_module()
+        # Modules outside a marketplace come in name order (D9): rigger-zz is read after rigger-rules.
+        self.layout.module("rigger-zz", {"rules/more.md": ("## More\n\nmore words\n{{triggers:other.table}}\n", "both")})
+        found = self.layout.assemble()
+        self.assertEqual(found.notices, ["rigger: second trigger table in rigger-zz/rules/more.md not shown; the first "
+                                         "one holds every row"])
+        self.assertEqual(self.section_text(found, "more.more"), b"## More\n\nmore words\n")
+        self.assertEqual(self.text(found).count(b"| Before | Skill |"), 1)
+
+    def test_slot_cells_are_printed_as_built(self):
+        # The table is generated: a model text that looks like a placeholder stays as written.
+        write_json(self.config_file(), {"schema": 1, "slots": {"worker": {"model": "{{skill:a:b}}"}}})
+        self.layout.rules_module()
+        self.assertIn(b"| worker | agent | rigger-core:worker | {{skill:a:b}} | default |\n",
+                      self.section_text(self.layout.assemble(), "slots.slots"))
+
+    def test_a_personal_slot_changes_the_row_the_cell_and_the_placeholder(self):
+        self.layout.plain_plugin("sp")
+        write_json(self.config_file(), {"schema": 1, "slots": {"testing": {"target": "sp:my-testing"}}})
+        self.layout.rules_module()
+        found = self.layout.assemble()
+        self.assertEqual(found.notices, [])
+        self.assertIn(b"| testing | skill | sp:my-testing | \xe2\x80\x94 | personal |\n",
+                      self.section_text(found, "slots.slots"))
+        text = self.text(found)
+        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `sp:my-testing` |\n", text)
+        self.assertIn(b"run the tests with `sp:my-testing`\n", text)
+        self.assertNotIn(b"rigger-core:testing", text)
+
+    def test_an_entry_that_fails_falls_back_in_the_row_the_cell_and_the_placeholder(self):
+        # D34: the fallback, not the plain merge, is what every reader of a slot sees.
+        write_json(self.project_file(), {"schema": 1, "slots": {"testing": {"target": "nope:x"}}})
+        self.layout.rules_module()
+        found = self.layout.assemble()
+        self.assertEqual(found.notices, ["rigger: slot testing from %s ignored: plugin nope is not enabled; using default"
+                                         % self.project_file()])
+        text = self.text(found)
+        self.assertIn(b"run the tests with `rigger-core:testing`\n", text)
+        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-core:testing` |\n", text)
+        self.assertIn(b"| testing | skill | rigger-core:testing | \xe2\x80\x94 | default |\n",
+                      self.section_text(found, "slots.slots"))
+        self.assertNotIn(b"nope:x", text)
+
+    def test_project_command_without_trust_prints_the_line_and_keeps_the_agent(self):
+        self.layout.rules_module(**{"rules/review.md": ("## Review\n\nreview with {{slot:reviewer}}\n", "both")})
+        write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",
+                                                                             "target": ["rv", "{out}"]}}})
+        first = self.layout.part(1, stdin=self.startup("pc1"))
+        notice = ("rigger: .claude/rigger.json may not set a command for slot reviewer; add it to "
+                  "trust.project_commands in %s to allow it\n" % self.config_file()).encode("utf-8")
+        self.assertTrue(first.startswith(notice), first[:300])
+        self.assertIn(b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n", first)
+        self.assertIn(b"review with `rigger-core:reviewer`\n", first)
+        self.assertNotIn(b"runs the project's command", first)
+        self.assertNotIn(b"Run a command slot", first)
+
+    def test_trusted_project_command_prints_its_argv(self):
+        # D53: the notice at startup and again after compact; another argv gives another text.
+        self.layout.rules_module()
+        write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["reviewer"]}})
+        texts = []
+        for session, argv in (("tc1", ["rv", "{out}"]), ("tc2", ["rv", "--deep", "{out}"])):
+            write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command", "target": argv}}})
+            notice = ("rigger: slot reviewer runs the project's command %s (trusted in %s)\n"
+                      % (shown_argv(argv), self.config_file())).encode("utf-8")
+            started = self.layout.part(1, stdin=self.startup(session))
+            self.assertIn(notice, started)
+            self.assertIn(b"| reviewer | command | rv \xe2\x80\xa6 | by-rule | project |\n", started)
+            self.assertIn(command_line(self.layout.core, session).encode("utf-8") + b"\n", started)
+            write_json(self.project_file(), {"schema": 1})  # the compaction must print the session's text
+            self.assertIn(notice, self.layout.part(1, stdin=self.compact(session)))
+            texts.append(notice)
+        self.assertNotEqual(texts[0], texts[1])
+        self.assertIn(b'["rv", "{out}"] \xe2\x80\xa6 (15 bytes, sha256:', texts[0])
+
+    def test_project_command_notice_stays_inside_the_part_budget(self):
+        # D53: the most validation allows, 32 arguments of 500 characters; part 1 keeps its rules and the notice.
+        self.layout.rules_module()
+        argv = ["p" * 500] + ["a" * 495 + "{out}"] + [chr(ord("b") + n % 20) * 500 for n in range(30)]
+        write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["reviewer"]}})
+        write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command", "target": argv}}})
+        found = self.layout.assemble()
+        self.assertEqual(len([n for n in found.notices if "runs the project's command" in n]), 1)
+        first = self.layout.part(1, stdin=self.startup("pb1"))
+        self.assertLess(len(first), 9500)
+        self.assertIn(b"rigger: slot reviewer runs the project's command " + shown_argv(argv).encode("utf-8"), first)
+        self.assertIn(b"keep a state file", first)
+
+    def test_two_fillers_line_at_startup_and_after_compact(self):
+        # Review Focus 6: one line naming both, at startup and after compact; both names in the row.
+        for name in ("mod-a", "mod-b"):
+            root = self.layout.module(name, {"rules/%s.md" % name: ("## %s\n\n%s words\n" % (name, name), "both")})
+            self.layout.manifest_set(root, fills="lessons")
+        self.layout.rules_module()
+        line = b"rigger: slot lessons is filled by mod-a and mod-b; disable one with claude plugin disable <name>\n"
+        started = b"".join(self.layout.part(i, stdin=self.startup("tf1")) for i in range(1, 7))
+        self.assertEqual(started.count(line), 1)
+        self.assertIn(b"| lessons | hook | mod-a + mod-b (failure mode: undeclared) | \xe2\x80\x94 | default |\n",
+                      started)
+        compacted = b"".join(self.layout.part(i, stdin=self.compact("tf1")) for i in range(1, 7))
+        self.assertEqual(compacted.count(line), 1)
+        self.assertNotIn(b"snapshot missing", compacted)
+
+    def test_format_one_snapshot_is_read_again(self):
+        # Review Focus 8: a snapshot of release 0.5.0 (format 1) is read as missing, and replaced.
+        self.layout.rules_module()
+        self.layout.part(1, stdin=self.startup("f1"))
+        path = self.layout.config / "rigger" / "state" / "f1.resolved.json"
+        data = json.loads(path.read_bytes())
+        self.assertEqual(data["format"], 2)
+        data["format"] = 1
+        write_json(path, data)
+        again = self.layout.part(1, stdin=self.compact("f1"))
+        self.assertTrue(again.startswith(b"rigger: snapshot missing; rules read again\n"), again[:80])
+        self.assertEqual(json.loads(path.read_bytes())["format"], 2)
+        self.assertNotIn(b"snapshot missing", self.layout.part(1, stdin=self.compact("f1")))
+
+    def test_snapshot_holds_the_resolved_slot_table(self):
+        # D44: the snapshot's slots are the filtered rows and the trusted list, never the plain merge.
+        self.layout.rules_module()
+        write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["process.tdd"]}})
+        write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",
+                                                                             "target": ["rv", "{out}"]}}})
+        self.layout.part(1, stdin=self.startup("sn1"))
+        data = json.loads((self.layout.config / "rigger" / "state" / "sn1.resolved.json").read_bytes())
+        self.assertEqual(sorted(data["slots"]), ["rows", "trusted"])
+        self.assertEqual(data["slots"]["trusted"], ["process.tdd"])
+        reviewer = [row for row in data["slots"]["rows"] if row["path"] == "reviewer"][0]
+        self.assertEqual((reviewer["kind"], reviewer["target"], reviewer["source"]),
+                         ("agent", "rigger-core:reviewer", "default"))
+
+    def test_compact_without_a_snapshot_applies_the_trust_filter_again(self):
+        self.layout.rules_module()
+        write_json(self.project_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",
+                                                                             "target": ["rv", "{out}"]}}})
+        again = self.layout.part(1, stdin=self.compact("nc1"))
+        self.assertTrue(again.startswith(b"rigger: snapshot missing; rules read again\n"), again[:80])
+        self.assertIn(b"rigger: .claude/rigger.json may not set a command for slot reviewer;", again)
+        self.assertIn(b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n", again)
+
+    def test_every_part_packs_the_same_text_with_slots(self):
+        self.layout.rules_module()
+        write_json(self.config_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",
+                                                                            "target": ["rv", "{out}"]}}})
+        parts = b"".join(self.layout.part(i, stdin=self.startup("ep1")) for i in range(1, 7))
+        rendered = self.layout.render("--session-id", "ep1")
+        self.assertIn(b"## Slots\n", rendered)
+        self.assertIn(command_line(self.layout.core, "ep1").encode("utf-8"), rendered)
+        self.assertEqual(without_root_lines(parts), without_root_lines(rendered))
+
+    def test_command_line_holds_the_session_id(self):
+        self.layout.rules_module()
+        write_json(self.config_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",
+                                                                            "target": ["rv", "{out}"]}}})
+        started = self.layout.part(1, stdin=self.startup("Ab_9-z"))
+        self.assertIn(b"| reviewer | command | rv \xe2\x80\xa6 | by-rule | personal |\n", started)
+        self.assertIn(command_line(self.layout.core, "Ab_9-z").encode("utf-8") + b"\n", started)
+        self.assertIn(command_line(self.layout.core, "<session id>").encode("utf-8") + b"\n", self.layout.render())
+        for unusable in ("../x", "a b", "x" * 129):
+            self.assertIn(command_line(self.layout.core, "<session id>").encode("utf-8"),
+                          self.layout.render("--session-id", unusable), unusable)
+
+    def test_command_line_quotes_a_root_with_a_quote_and_a_space(self):
+        # The line goes to a shell: a plugin root holding a quote or a space stays one word.
+        tricky = self.tmp / "it's here" / "rigger-core"
+        shutil.copytree(str(self.layout.core), str(tricky))
+        self.layout.core = tricky
+        self.layout.rules_module()
+        write_json(self.config_file(), {"schema": 1, "slots": {"reviewer": {"kind": "command",
+                                                                            "target": ["rv", "{out}"]}}})
+        rendered = self.layout.render("--session-id", "q1").decode("utf-8")
+        line = command_line(tricky, "q1")
+        self.assertIn(line, rendered)
+        self.assertIn("it'\\''s here", line)
+
+
+def cap_rows(count, before, loads, load_len):
+    """The rows of the RV1 cap probes: CAPROW<n> rows loading x:<letters>, at or below the D28 caps."""
+    rows = {}
+    for i in range(count):
+        rows["r%02d" % i] = {"before": ("CAPROW%02d " % i) + "b" * (before - 9),
+                             "load": ["x:" + chr(97 + k) * (load_len - 2) for k in range(loads)]}
+    return rows
+
+
+class TableFitWiringTests(unittest.TestCase):
+    """Ruling RV1 Important 1 through the assembler: project rows at the caps cannot push the Skill triggers
+    table, its heading or a module row out of the session (the review's two cap probes, as test rows)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.layout = Layout(self.tmp)
+        self.layout.core = REPO_CORE
+        self.layout.dirs = [str(REPO / "plugins" / "rigger-rules")]
+        self.layout.plain_plugin("x")  # x enabled: D39 cannot drop the rows, only the fit can
+
+    def tearDown(self):
+        shutil.rmtree(str(self.tmp), ignore_errors=True)
+
+    def test_probe_scenarios_keep_the_table_heading_and_core_row_in_one_part(self):
+        scenarios = [
+            ("control", {}, 0),
+            ("50 rows at the caps", cap_rows(50, 300, 4, 200), None),
+            ("10 rows at the caps", cap_rows(10, 300, 4, 200), None),
+            ("50 moderate rows", cap_rows(50, 120, 2, 40), None),
+            ("10 moderate rows", cap_rows(10, 120, 2, 40), 10),
+        ]
+        for name, rows, shown in scenarios:
+            with self.subTest(name):
+                write_json(self.layout.project / ".claude" / "rigger.json", {"schema": 1, "triggers": rows})
+                found = self.layout.assemble()
+                bodies = assemble.part_bodies(found, False)
+                holding = [body for body in bodies if b"## Skill triggers" in body]
+                self.assertEqual(len(holding), 1, [len(body) for body in bodies])
+                self.assertIn(b"| `rigger-core:testing` |", holding[0])
+                joined = b"".join(bodies)
+                self.assertNotIn(b"rules left out over the hook cap", joined)
+                if shown is None:  # the precondition: these rows overflow a part, so the fit had to drop some
+                    self.assertIn(b"rigger: left out ", holding[0])
+                    self.assertGreater(joined.count(b"CAPROW"), 0)
+                else:
+                    self.assertNotIn(b"rigger: left out ", joined)
+                    self.assertEqual(joined.count(b"CAPROW"), shown)
+
+    def test_a_subagent_table_is_measured_as_its_escaped_bytes(self):
+        # A row of quotes doubles in the subagent's JSON: the fit must measure what the subagent part holds.
+        rows = {"q%02d" % i: {"before": "Q%02d " % i + '"' * 295, "load": ["x:a"]} for i in range(50)}
+        write_json(self.layout.project / ".claude" / "rigger.json", {"schema": 1, "triggers": rows})
+        found = self.layout.assemble("subagent", agent_type="general-purpose")
+        bodies = assemble.part_bodies(found, True)
+        holding = [body for body in bodies if b"## Skill triggers" in body]
+        self.assertEqual(len(holding), 1, [len(body) for body in bodies])
+        self.assertIn(b"| `rigger-core:testing` |", holding[0])
+        self.assertIn(b"rigger: left out ", holding[0])  # the precondition: the rows overflow once escaped
+        self.assertNotIn(b"rules left out over the hook cap", b"".join(bodies))
+
+    def test_a_dropped_project_override_brings_back_the_module_row(self):
+        # The fit restores the row a dropped config row replaced, read before the merge overwrote it.
+        intro = "".join("- intro line %04d keeps this section close to one hook part\n" % n for n in range(130))
+        (self.tmp / "own").mkdir()
+        lay = Layout(self.tmp / "own")  # a fixture core and rigger-rules whose table section is nearly full
+        lay.plain_plugin("x")
+        lay.rules_module(**{"rules/skills.md": ("## Skill triggers\n\n" + intro + "\n{{triggers:skills.skill-triggers}}\n",
+                                                "both")})
+        lay.manifest_set(lay.plugins / "rigger-rules", triggers=[
+            {"id": "rigger-rules.other-os", "before": "other os module row", "load": ["x:y"],
+             "requires": ["os:" + OTHER_OS]}])
+        big = {"before": "my own git way " + "g" * 285, "load": ["x:" + chr(97 + k) * 198 for k in range(4)]}
+        other = dict(big, before="my own other row " + "o" * 283)
+        write_json(lay.project / ".claude" / "rigger.json", {"schema": 1, "triggers": {
+            "rigger-core.git-workflow": big, "rigger-rules.other-os": other}})
+        text = b"".join(assemble.part_bodies(lay.assemble(), False))
+        self.assertIn(b"rigger: left out 2 of the trigger rows from ", text)  # neither override fits
+        self.assertNotIn(b"my own", text)
+        self.assertIn(b"| branching and committing | `rigger-core:git-workflow` |\n", text)
+        self.assertNotIn(b"other os module row", text)  # a replaced row whose requires is unmet stays out
 
 
 class OptionTests(Base):
@@ -861,6 +1234,47 @@ class CheckTests(unittest.TestCase):
                 self.assertEqual(code, 1, out + err)
                 self.assertIn(line, out.decode("utf-8").splitlines())
 
+    def test_check_slot_and_table_findings(self):
+        # Task 15's --check findings, one planted fixture each, each with its exact line (D37, D38, D47).
+        lay = self.layout
+        good = lay.module("mod-a", {"rules/tests.md": ("## Tests\n\nuse {{slot:testing}}\n", "both"),
+                                    "rules/skills.md": ("## Skill triggers\n\n{{triggers:skills.skill-triggers}}\n",
+                                                        "both")})
+        defaults = lay.core / "rigger-defaults.json"
+        clean = defaults.read_bytes()
+
+        def broken_default():
+            data = json.loads(clean)
+            data["slots"]["worker"]["target"] = "rigger-core:nope"
+            write_json(defaults, data)
+            return []
+
+        rows = [
+            ("level-1 default", broken_default, "slot worker: rigger-core has no agent nope"),
+            ("second table", lambda: [lay.module("mod-b", {"rules/more.md": (
+                "## More\n\n{{triggers:skills.skill-triggers}}\n", "both")})],
+             "second trigger table in mod-b/rules/more.md"),
+            ("absent slot plugin", lambda: [lay.module("mod-c", {"rules/p.md": (
+                "## P\n\nload {{slot:process.plans}} first\n", "both")})],
+             "{{slot:process.plans}} in mod-c/rules/p.md names a slot an absent plugin fills"),
+            ("tdd before testing", lambda: [lay.module("mod-d", {"rules/d.md": ("## D\n\nd\n", "both")}, triggers=[
+                {"id": "mod-d.t", "before": "b", "load": ["slot:process.tdd", "slot:testing"]}])],
+             "trigger mod-d.t loads process.tdd without testing before it"),
+        ]
+        code, out, err = self.check(lay.core, good)
+        self.assertEqual(code, 0, out + err)  # control: the base set, with one table and a filled slot, is clean
+        self.assertTrue(out.decode("utf-8").splitlines()[-1].endswith("findings 0"))
+        for name, plant, line in rows:
+            with self.subTest(name):
+                extra = plant()
+                try:
+                    code, out, err = self.check(lay.core, good, *extra)
+                finally:
+                    defaults.write_bytes(clean)
+                lines = out.decode("utf-8").splitlines()
+                self.assertEqual(code, 1, out + err)
+                self.assertEqual([l for l in lines if not l.startswith("#")], [line])
+
     def test_check_orphan_override_by_file_stem(self):
         # D22: a company file whose stem matches a general file overrides that file's sections.
         lay = self.layout
@@ -952,7 +1366,7 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 0)
         fields = out.decode("utf-8").splitlines()[0].split("\t")
         self.assertEqual(fields[:3], ["CHECK", "rules-assembly", "OK"])
-        self.assertRegex(fields[3], r"^modules 2, sections 5$")
+        self.assertRegex(fields[3], r"^modules 2, sections 6$")  # ## Slots is a section of rigger-core
         self.assertEqual(len(fields), 5)
 
     def test_each_expects_row_gets_its_own_fix(self):

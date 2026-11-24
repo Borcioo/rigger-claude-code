@@ -18,19 +18,20 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import slots  # noqa: E402
 import snapshot  # noqa: E402
 from config import Resolved, _shown, defaults_path, load_level, resolve  # noqa: E402
 from discover import INLINE, PERSONAL, Discovery, _read_json, _Unreadable, discover, root_text  # noqa: E402,F401
-from manifest import CORE, UNSAFE, ManifestError, Module, TriggerRow, load_manifest  # noqa: E402
+from manifest import CORE, SLOT_PATHS, UNSAFE, ManifestError, Module, TriggerRow, load_manifest  # noqa: E402
 from parts import PART_CAP, SESSION_PARTS, SUBAGENT_PARTS, Block, pack  # noqa: E402
-from render import DEFAULT_SECTION, RenderContext, _slot_target, collect_rows, render  # noqa: E402
+from render import SECOND_TABLE, RenderContext, _slot_target, collect_rows, fits_part, render  # noqa: E402
 from sections import slug, split  # noqa: E402
 
 import unicodedata  # noqa: E402
@@ -52,7 +53,12 @@ LANGUAGE_DEFAULT = ("the language of Claude Code's `language` setting (the user'
 TALK_DEFAULTS = {"reply_language": LANGUAGE_DEFAULT, "reply_lines": "5", "report_lines": "15"}
 DUPLICATE = "rigger: rule id {id} in {a} and {b}; kept {a}"
 OVERRIDE = "rigger: {file} replaces rule {id}"
-NO_TABLE = "rigger: trigger {id} from {file} not shown: no table {section}"
+SECOND_TABLE_NOTICE = "rigger: second trigger table in {where} not shown; the first one holds every row"
+SLOTS_ID = "slots.slots"
+# Names the Bash tool: the PowerShell tool finds no `sh` to run it.
+COMMAND_LINE = ("Run a command slot with the Bash tool: `sh {py} {tool} <slot> --session {session} "
+                "--base <base revision>`")
+NO_SESSION = "<session id>"
 EXPECTS = ("rigger: this project expects {name}, which is not installed and enabled; "
            "run: claude plugin install {name}")
 SNAPSHOT_MISSING = "rigger: snapshot missing; rules read again"
@@ -64,7 +70,7 @@ MORE_NOTICES = "rigger: {count} more notices not shown; assemble.py --render pri
 LEFT_OUT = "rules_extra: left out over the hook cap: {names}"
 CANNOT_READ = "rules_extra: cannot read {name}"
 _CONTROL = bytes(range(0, 9)) + bytes(range(11, 32))  # rules_extra.sh: tr -d '\000-\010\013-\037'
-_TRIGGERS = re.compile(r"^[ \t]*\{\{triggers:([^{}\s]+)\}\}[ \t]*$", re.M)
+_SLOT_PLACEHOLDER = re.compile(r"\{\{slot:([^{}\s]+)\}\}")
 _OMIT = re.compile(r"omitClaudeMd:[ \t]*true[ \t]*")
 _DIGITS = re.compile(r"[0-9]+")
 _ANY_PLACEHOLDER = re.compile(r"\{\{[^{}\s]*\}\}")
@@ -76,6 +82,7 @@ class Inputs:
     project_dir: Path
     environ: Mapping[str, str]
     self_root: Path
+    session_id: str = ""  # from the hook input or --session-id; only the ## Slots command line uses it
 
 
 @dataclass
@@ -87,6 +94,8 @@ class Assembly:
     resolved: Optional[Resolved]
     discovery: Discovery
     skipped: bool = False
+    slot_rows: List[slots.Row] = field(default_factory=list)
+    trusted: FrozenSet[str] = frozenset()
 
 
 @dataclass
@@ -102,6 +111,7 @@ class _Entry:
     owner: Optional[Module] = None  # whose root line the text prints under (D3)
     empty: bool = False
     line: bool = False  # a rules_extra line (cannot read, left out), not a section
+    generated: bool = False  # ## Slots: printed as built, and no later layer may replace it (D36)
 
     @property
     def personal(self) -> bool:
@@ -325,10 +335,42 @@ def _personal_entries(personal: Module, subagent: bool) -> Tuple[List[Tuple[str,
 
 # --- assembly ------------------------------------------------------------------------------------
 
+def _personal_config(inputs: Inputs) -> Path:
+    return inputs.config_dir / "rigger" / "config.json"
+
+
+def _sh_word(text: str) -> str:
+    """text as one POSIX shell word: single quotes, each quote in it closed, escaped and reopened."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def _command_line(core: Module, session_id: str) -> str:
+    root = root_text(core.root)
+    session = session_id if snapshot.SESSION_ID.fullmatch(session_id) else NO_SESSION
+    return COMMAND_LINE.format(py=_sh_word(root + "/bin/py.sh"), tool=_sh_word(root + "/tools/slot-run/slot_run.py"),
+                               session=session)
+
+
+def _table_inputs(resolved: Resolved, modules: List[Module], rows: List[TriggerRow], targets: dict,
+                  enabled: FrozenSet[str]) -> Tuple[Dict[str, str], Dict[str, TriggerRow]]:
+    """Each config row's level, and the module or level-1 row it replaced: what the table fit drops and restores.
+
+    The merge has already overwritten a replaced level-1 row, so it is read again from level 1's own data.
+    """
+    sources = {}  # type: Dict[str, str]  render.DROP_ORDER picks the levels that may leave the table
+    for row in rows:
+        source = resolved.sources.get(("triggers", row.id, "before"))
+        if source:
+            sources[row.id] = source
+    level_one = resolved.levels[0][1] if resolved.levels else {}
+    base = {row.id: row for row in collect_rows(modules, level_one) if _requires_met(row.requires, targets, enabled)}
+    return sources, {row_id: base[row_id] for row_id in sources if row_id in base}
+
+
 def _config(inputs: Inputs, discovery: Discovery, modules: List[Module]) -> Tuple[Resolved, List[str]]:
     core = next((m for m in modules if m.name == CORE), None)
     paths = {1: defaults_path(core.root if core is not None else inputs.self_root),
-             3: inputs.config_dir / "rigger" / "config.json",
+             3: _personal_config(inputs),
              4: inputs.project_dir / ".claude" / "rigger.json"}
     notices = []
     levels = {}
@@ -360,7 +402,7 @@ def _place(entries: List[_Entry], index: Dict[str, int], entry: _Entry, notices:
         index[entry.id] = len(entries)
         entries.append(entry)
         return
-    if LAYER_RANK[old.layer] >= LAYER_RANK[entry.layer]:
+    if old.generated or LAYER_RANK[old.layer] >= LAYER_RANK[entry.layer]:
         notices.append(DUPLICATE.format(id=entry.id, a=old.label, b=entry.label))
         return
     if entry.personal:
@@ -386,7 +428,13 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     for name in expects if isinstance(expects, list) else ():
         if name not in discovery.enabled:
             notices.append(EXPECTS.format(name=_shown(name)))
-    slots = effective.get("slots") if isinstance(effective.get("slots"), dict) else {}
+    enabled = discovery.enabled
+    # The only reader of slots: the plain merge in `effective` has not been through the trust filter (D33).
+    slot_rows, trusted, found = slots.resolve_slots(resolved.levels, modules, enabled, _this_os(),
+                                                    str(_personal_config(inputs)))
+    notices.extend(found)
+    targets = slots.slot_targets(slot_rows)
+    core = next((m for m in modules if m.name == CORE), None)
 
     entries = []  # type: List[_Entry]
     index = {}  # type: Dict[str, int]
@@ -404,6 +452,10 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
                 for section in split(_stem(rule.file), data):
                     _place(entries, index, _Entry(section.id, layer, module, rule.file, section.text, rule.audience,
                                                   section.heading, rule.requires), notices)
+            if layer == "general" and module is core:  # D36: ## Slots closes rigger-core's rules
+                table = slots.table(slot_rows, _command_line(core, inputs.session_id))
+                _place(entries, index, _Entry(SLOTS_ID, layer, core, "", table, "main", "## Slots", generated=True),
+                       notices)
 
     extra = []  # type: List[_Entry]
     personal = next((m for m in discovery.modules if m.origin == PERSONAL), None)
@@ -422,26 +474,18 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
                                               "main" if main_only else "both", section.heading), notices)
     ordered = entries + extra  # the left-out line ends the personal text
 
-    enabled = discovery.enabled
-    rows = [row for row in collect_rows(modules, effective) if _requires_met(row.requires, slots, enabled)]
-    by_section = {}  # type: Dict[str, List[TriggerRow]]
-    for row in rows:
-        by_section.setdefault(row.section or DEFAULT_SECTION, []).append(row)
-    tables = set()
-    for entry in entries:
-        if not entry.personal:
-            tables.update(_TRIGGERS.findall(entry.text.decode("utf-8", "replace")))
-    for row in rows:
-        section = row.section or DEFAULT_SECTION
-        source = resolved.sources.get(("triggers", row.id, "before"), "")
-        if section not in tables and source[:3] in ("L3:", "L4:"):
-            notices.append(NO_TABLE.format(id=_shown(row.id), file=_shown(source[3:], 300), section=_shown(section)))
+    rows = [row for row in collect_rows(modules, effective) if _requires_met(row.requires, targets, enabled)]
+    row_sources, replaced = _table_inputs(resolved, modules, rows, targets, enabled)
+    seen = []  # type: List[str]  one table per assembly: every later placeholder renders nothing (D38)
 
     values = read_options(inputs.config_dir, modules)
     drop = {item.strip() for item in re.split(r"[;\n]", inputs.environ.get(DROP, "")) if item.strip()}
+    encode = _json_body if subagent else _identity
 
-    def context(module: Module) -> RenderContext:
-        return RenderContext(slots=slots, rows_by_section=by_section, vars=values, module=module.name)
+    def context(module: Module, root: str) -> RenderContext:
+        return RenderContext(slots=targets, rows_by_section={}, vars=values, module=module.name, rows=rows,
+                             enabled=enabled, table_seen=seen, row_sources=row_sources, replaced=replaced,
+                             fits=fits_part(root, encode))
 
     blocks = []  # type: List[Block]
     sections = []  # type: List[dict]
@@ -452,22 +496,28 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
             text = entry.text
             root = "personal" if mark_personal else (root_text(entry.owner.root) if entry.owner else "")
         else:
-            if not _requires_met(entry.requires, slots, enabled):
+            if not _requires_met(entry.requires, targets, enabled):
                 continue
-            ctx = context(entry.module)
+            root = root_text(entry.owner.root)
+            ctx = context(entry.module, root)
             if drop:
                 heading = render(entry.heading.encode("utf-8"), ctx)[0].decode("utf-8", "replace").strip() \
                     if entry.heading is not None else None
                 if entry.file.rsplit("/", 1)[-1] in drop or entry.id in drop or (heading and heading in drop):
                     continue
-            text = render(entry.text, ctx)[0]
-            root = root_text(entry.owner.root)
+            if entry.generated:
+                text = entry.text
+            else:
+                text, unknown = render(entry.text, ctx)
+                if SECOND_TABLE in unknown:
+                    notices.append(SECOND_TABLE_NOTICE.format(where="%s/%s" % (_shown(entry.module.name),
+                                                                              _shown(entry.file, 300))))
         blocks.append((root, text, entry.id))
         if not entry.line:
             sections.append({"id": entry.id, "layer": entry.layer,
                              "module": entry.module.name if entry.module is not None else PERSONAL,
                              "file": entry.file, "audience": entry.audience})
-    return Assembly(blocks, notices, sections, rows, resolved, discovery)
+    return Assembly(blocks, notices, sections, rows, resolved, discovery, slot_rows=slot_rows, trusted=trusted)
 
 
 def part_bodies(found: Assembly, subagent: bool, count: Optional[int] = None) -> List[bytes]:
@@ -525,7 +575,7 @@ def _snapshot_data(inputs: Inputs) -> Tuple[dict, List[bytes]]:
         "sections": main.sections,
         "rows": [{"id": r.id, "before": r.before, "load": list(r.load), "section": r.section,
                   "requires": list(r.requires)} for r in main.rows],
-        "slots": resolved.effective.get("slots"),
+        "slots": slots.as_snapshot(main.slot_rows, main.trusted),
         "notices": main.notices,
         "skip": sorted(skip_set(modules)),
     }, part_bodies(main, False)
@@ -559,7 +609,8 @@ def _inputs(environ: Mapping[str, str], hook: dict) -> Inputs:
     project = _usable_dir(hook.get("cwd")) or _usable_dir(environ.get("CLAUDE_PROJECT_DIR")) or Path(os.getcwd())
     plugin_root = environ.get("CLAUDE_PLUGIN_ROOT", "")
     self_root = Path(plugin_root) if plugin_root else HERE.parent.parent
-    return Inputs(config_dir=config_dir, project_dir=project, environ=environ, self_root=self_root)
+    return Inputs(config_dir=config_dir, project_dir=project, environ=environ, self_root=self_root,
+                  session_id=_text(hook, "session_id") or "")
 
 
 def _hook(data: bytes) -> dict:
@@ -637,7 +688,7 @@ def _render(argv: List[str], environ: Mapping[str, str]) -> bytes:
     subagent = "--subagent" in argv
     source = _option_value(argv, "--source")
     session = _option_value(argv, "--session-id") or ""
-    hook = {"cwd": None}
+    hook = {"cwd": None, "session_id": session}
     inputs = _inputs(environ, hook)
     if source is not None and source not in SOURCES:
         return b""
@@ -696,13 +747,24 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
     l1, notices = load_level(defaults_path(core.root if core is not None else self_root), 1)
     findings.extend(notices)
     effective = resolve(l1, [], {}, {}, {}).effective
-    slots = effective.get("slots") if isinstance(effective.get("slots"), dict) else {}
+    defaults = effective.get("slots") if isinstance(effective.get("slots"), dict) else {}
     rows = collect_rows(modules, effective)
-    by_section = {}  # type: Dict[str, List[TriggerRow]]
-    for row in rows:
-        by_section.setdefault(row.section or DEFAULT_SECTION, []).append(row)
     values = read_options(None, modules)
     names = {m.name: m for m in modules}
+    external = set()
+    for path, entry in slots.flatten(defaults).items():
+        if path not in SLOT_PATHS or entry is None:
+            continue
+        target = entry.get("target") if isinstance(entry, dict) else None
+        plugin = target.partition(":")[0] if isinstance(target, str) and ":" in target else None
+        enabled = frozenset(names)
+        if plugin and plugin not in names:  # a plugin outside the checked set is external (D18)
+            external.add(plugin)
+            enabled = enabled | {plugin}
+        problem = slots.entry_problem(path, entry, modules, enabled)
+        if problem:
+            findings.append("slot %s: %s" % (path, problem))
+    tables = []  # type: List[str]  modules whose {{triggers:…}} printed the one table
     files = 0
     seen = {}  # type: Dict[str, Tuple[str, str]]  id -> (layer, module)
     general_stems = {}  # type: Dict[str, List[str]]  file stem -> general section ids, in file order
@@ -716,7 +778,8 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
                 if layer == "general":
                     general_stems.setdefault(_stem(rule.file), [])
                 data = (module.root / rule.file).read_bytes()
-                ctx = RenderContext(slots=slots, rows_by_section=by_section, vars=values, module=module.name)
+                ctx = RenderContext(slots=defaults, rows_by_section={}, vars=values, module=module.name, rows=rows,
+                                    table_seen=tables)
                 for section in split(_stem(rule.file), data):
                     if section.heading is not None and not slug(section.heading):
                         findings.append("empty heading slug in %s:%d" % (where, section.line))
@@ -735,13 +798,21 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
                         seen[section.id] = (layer, module.name)
                     text, unknown = render(section.text, ctx)
                     for placeholder in dict.fromkeys(unknown):
-                        findings.append("unknown placeholder %s in %s" % (placeholder, where))
+                        if placeholder == SECOND_TABLE:
+                            findings.append("second trigger table in %s" % where)
+                        else:
+                            findings.append("unknown placeholder %s in %s" % (placeholder, where))
+                    for path in dict.fromkeys(_SLOT_PLACEHOLDER.findall(section.text.decode("utf-8", "replace"))):
+                        target = _slot_target(defaults, path)
+                        if target is not None and target.partition(":")[0] not in names:  # D37
+                            findings.append("{{slot:%s}} in %s names a slot an absent plugin fills" % (path, where))
                     if len(text) > PART_CAP:
                         findings.append("section %s in %s is over %d bytes" % (section.id, where, PART_CAP))
-    external = set()
     for row in rows:
+        if "slot:process.tdd" in row.load and "slot:testing" not in row.load[:row.load.index("slot:process.tdd")]:
+            findings.append("trigger %s loads process.tdd without testing before it" % row.id)  # D47
         for entry in row.load:
-            target = _slot_target(slots, entry[len("slot:"):]) if entry.startswith("slot:") else entry
+            target = _slot_target(defaults, entry[len("slot:"):]) if entry.startswith("slot:") else entry
             plugin, _, skill = (target or "").partition(":")
             if not plugin or not skill:
                 findings.append("trigger %s load %s resolves to nothing" % (row.id, entry))

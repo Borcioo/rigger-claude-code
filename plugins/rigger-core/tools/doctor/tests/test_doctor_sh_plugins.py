@@ -370,8 +370,6 @@ class DoctorShTests(DoctorShCase):
             {
                 "config-inactive leak_guard.denylist": (
                     "INFO", "leak_guard.denylist in %s: no effect in this release" % shown, "assemble.py --doctor"),
-                "config-inactive slots.reviewer.model": (
-                    "INFO", "slots.reviewer.model in %s: no effect in this release" % shown, "assemble.py --doctor"),
             },
         )
         self.assertRow(result, "rules-assembly", "OK")
