@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "rigger-lessons",
   "layer": "general",
-  "fills": null,
+  "fills": "lessons",
   "rules": [
     {
       "file": "rules/lessons.md",
@@ -18,6 +18,8 @@
     "paths": [
       "tests/"
     ],
-    "contract": []
+    "contract": [
+      "lessons"
+    ]
   }
 }

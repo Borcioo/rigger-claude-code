@@ -115,7 +115,26 @@ class ManifestTests(unittest.TestCase):
                 module = manifest.load_manifest(root, "rigger", "installed")
                 self.assertEqual(module.name, root.name)
                 self.assertEqual(module.layer, "general")
-                self.assertIsNone(module.fills)
+
+    def test_slot_fields_of_each_manifest(self):
+        guard = {"kind": "hook", "target": "rigger-windows", "rule_checker": "tools/shell-guard/lessons_guard.py"}
+        expected = {
+            "rigger-core": (None, None, {}, ["reviewer", "worker", "implementer", "mapper"]),
+            "rigger-lessons": ("lessons", None, {}, ["lessons"]),
+            "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
+            "rigger-rules": (None, None, {}, []),
+            "rigger-talk": (None, None, {}, []),
+            "rigger-wp": (None, None, {}, []),
+            "rigger-panel": (None, None, {}, []),
+        }
+        roots = sorted(path.parent for path in ROOT.glob("plugins/*/rigger-module.json"))
+        self.assertEqual(sorted(root.name for root in roots), sorted(expected))
+        for root in roots:
+            with self.subTest(plugin=root.name):
+                module = manifest.load_manifest(root, "rigger", "installed")
+                got = (module.fills, module.failure_mode, module.provides, module.tests.get("contract"))
+                self.assertEqual(got, expected[root.name])
+                self.assertIn("fills", load_json(root / "rigger-module.json"))
 
     def test_rules_lists_every_rules_file_once(self):
         checked = 0
