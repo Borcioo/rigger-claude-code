@@ -24,14 +24,14 @@ Disable: remove the `SubagentStop` entry from the plugin's `hooks/hooks.json`.
 | `status` | the word when `ok`, else `""` |
 | `source` | `event` (`last_assistant_message`), `transcript` (last assistant text in the last 256 KB of `agent_transcript_path`), `none` |
 | `has_summary` | `true` when `## Summary` with 3 to 5 bullets follows the STATUS line |
-| `slot` | the slot whose agent target is `agent_type`, `""` when none is |
+| `slot` | the slot whose agent target is `agent_type`, `""` when none or more than one is |
 | `contract` | `ok` or `refused:<rule id>`: `slot_check.py --shape-only` on `last_assistant_message` (no git, so a reviewer's anchors and scope are not checked); `none`: the agent fills no slot; `unread`: the event holds no report text (the transcript is not read for this field); `error`: the check could not run |
 | `ms` | milliseconds the run took |
 
 The slot table is the session's snapshot (`<config dir>/rigger/state/<session id>.resolved.json`);
 when it is missing, of another format or unreadable, the level-1 defaults in `rigger-defaults.json`.
-Only filled slots of kind `agent` take part. If two slots name the same agent, the first in the
-table counts.
+Only filled slots of kind `agent` take part. If two slots name the same agent, the row's `contract`
+is `none` and its `slot` is `""`.
 
 ## Summary
 
