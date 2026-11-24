@@ -563,7 +563,8 @@ else
   check worktree-root OK 'unset: app setting or .claude/worktrees/' "$how_settings env"
 fi
 
-# -- rules-assembly, rule-override, expects, config-inactive (assemble.py --doctor) -----------------
+# -- rules-assembly, rule-override, expects, config-inactive, slot, slot-checker, slot-order, rules-d-table
+#    (assemble.py --doctor)
 # Only the assembler's own rows pass, one whole CHECK or FIX line each; anything else leaves one WARN row.
 how_assembly='assemble.py --doctor'
 if [ -z "$python_ok" ]; then
@@ -585,6 +586,9 @@ else
         CHECK"$tab"rules-assembly"$tab"?*"$tab"?*"$tab"?*) passed=1 ;;
         CHECK"$tab"rule-override\ ?*"$tab"?*"$tab"?*"$tab"?* | CHECK"$tab"expects\ ?*"$tab"?*"$tab"?*"$tab"?*) ;;
         CHECK"$tab"config-inactive\ ?*"$tab"?*"$tab"?*"$tab"?* | FIX"$tab"expects\ ?*"$tab"?*) ;;
+        CHECK"$tab"slot\ ?*"$tab"?*"$tab"?*"$tab"?* | FIX"$tab"slot\ ?*"$tab"?*) ;;
+        CHECK"$tab"slot-checker\ ?*"$tab"?*"$tab"?*"$tab"?* | CHECK"$tab"slot-order\ ?*"$tab"?*"$tab"?*"$tab"?*) ;;
+        CHECK"$tab"rules-d-table\ ?*"$tab"?*"$tab"?*"$tab"?*) ;;
         *) continue ;;
       esac
       printf '%s\n' "$line"

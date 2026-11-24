@@ -18,6 +18,10 @@ said yes.
 Each `CHECK` line is name, status (OK, MISSING, WARN, or INFO: information only, never with a FIX),
 detail, how checked; each `FIX` line is the command for a row that is MISSING or WARN. Without
 Python both scripts still run: the `python` row says so and `rules-assembly` is WARN, not checked.
+With Python, `slot` rows name what fills each slot and `slot-order` rows name a trigger row that
+loads `process.tdd` before `testing`. A `rules-d-table` row ends with the JSON of that file's trigger
+table: show it in its own code block and offer to merge it into `triggers` of the config file the
+row names and to delete the table from the `rules.d` file, both only on the user's yes.
 
 Check two more rows yourself:
 
