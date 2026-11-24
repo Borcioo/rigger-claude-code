@@ -17,8 +17,7 @@ prints the `## Slots` section and the merged table. Three pull requests: the tes
 phase 1 backlog second, the slot work third.
 
 **Tech Stack:** Python 3.9+ stdlib only (run through `bin/py.sh` with `-I -X utf8`), POSIX `sh`
-launchers, `unittest`, `git` 2.24+ for `--end-of-options`,
-`plugins/rigger-rules/tests/stub_api.py` for `claude -p` runs.
+launchers, `unittest`, `git`, `plugins/rigger-rules/tests/stub_api.py` for `claude -p` runs.
 
 **Spec:** `docs/superpowers/specs/2026-11-23-modular-architecture-design.md`. This plan covers §13
 "Phase 2" with §7.4, §9.3, §10 and §12. It also takes the phase 1 backlog and
@@ -203,22 +202,33 @@ part 1: Rigger rules not loaded: the assembler exited 3 (run /rigger-core:doctor
 part 2: (no output)   part 3: (no output)   part 2 --subagent: (no output)
 $ five core_check.sh starts in sequence, 3 rounds
 523 ms, 533 ms, 512 ms
+$ the planned folder line, `case $0 in *[\\/]*) here=${0%[\\/]*} ;; *) here=. ;; esac`, in a probe script
+Git Bash sh: forward-slash path -> its folder; all-backslash path -> its folder; bare name -> .
+dash (WSL):  ./name -> . ; bare name -> . ; absolute path -> its folder
 ```
 
 Slot contracts against today's default fillers:
 
 ```text
-$ shell_guard.py --only-narrow on {"tool_name":"Bash","tool_input":{"command":"ls"}}, 5 runs through py.sh
-327, 293, 331, 331, 320 ms       (a bare `sh -c 'exit 0'` on the same machine: 82, 81, 92 ms)
 $ grep -n '"if"' plugins/rigger-windows/hooks/hooks.json
 7 Bash handlers, each behind an `if` filter; the PowerShell handler (--pwsh-all) has none
+$ shell_guard.py --pwsh-all on {"tool_name":"PowerShell","tool_input":{"command":"Get-ChildItem"}}, 5 runs through py.sh
+399, 347, 364, 345, 355 ms, no output      (a bare `sh -c 'exit 0'` on the same machine: 82, 81, 92 ms)
+$ shell_guard.py --only-narrow on a Bash `ls` event, started directly (in a session its `if` filter starts no process)
+327, 293, 331, 331, 320 ms
 $ shell_guard.py:3338-3343
 {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
  "permissionDecisionReason": "shell-guard: <message> (False positive or intended? Add a trailing `# <marker>`.)"}}
-$ lessons_start.py:107
+$ lessons_start.py:108
 "Lessons inbox: %s: %d entries"
 $ git -c core.quotepath=off --no-pager diff --no-ext-diff --no-textconv --no-color --no-renames --name-status -z 42ae774 1f1e204
 M\0CHANGELOG.md\0        (git version 2.53.0.windows.1)
+$ git rev-parse --verify "<rev>^{commit}" in a one-commit repository with a tag on a blob
+HEAD -> the commit id, exit 0
+--output=x -> fatal: Needed a single revision, exit 128, no file x written
+-p -> fatal: Needed a single revision, exit 128
+blobtag -> error: blobtag^{commit}: expected commit type, but the object dereferences to blob type, exit 128
+no-such-rev -> fatal: Needed a single revision, exit 128
 ```
 
 The lines the spec asks to reword, checked with `cat -n`:
@@ -249,6 +259,12 @@ sentence), `plugins/rigger-core/tests/test_core_wiring.py` (reads `reviewer.md`)
 `test_doctor_sh_plugins.py:369-373` (`slots` above level 1 is inactive),
 `tests/test_assembly_golden.py` (three tables), `test_stub_session.py` and `test_reinject.py:117`
 (19 sections).
+
+Tests that pin the count of rules files, 19 today and 18 once `windows-skills.md` is deleted:
+`tests/test_repo.py:130` (`assertEqual(checked, 19)`, the sum of manifest rules entries),
+`plugins/rigger-core/tools/assemble/tests/test_sections.py:69` and
+`plugins/rigger-rules/tests/test_rules_hooks.py:318` (`assertGreaterEqual(len(files), 19)` over
+`plugins/*/rules/*.md`), and `RULES_MIN_FILES = 19` at `test_plugin_rules.py:38`.
 
 ## Review Focus
 
@@ -309,21 +325,21 @@ Phase 1 used D1–D24. Each task below follows these.
 | D31 | The five `core_check.sh` handlers get the matcher `startup|clear|compact` if spike Q1 shows that a line already printed at startup arrives again after `/compact`. If Q1 shows it is dropped, the matcher stays `startup|clear` and the release notes say why. | Backlog item RV4 M5. With an old rigger-core the rules are missing after a compaction as well, and the startup line is summarised away. The cost is 5 `sh` starts per compaction with no Python: 512–533 ms in sequence here, about 0.12–0.15 s each in parallel (phase 1 review), next to a compaction that already starts 8 or more handlers (6 parts, `compact_guard.py`, `worktree_root.sh`) and one model call. |
 | D32 | `slots` at levels 2–4 and `trust` at level 3 become active. `review`, `shell_guard`, `company` and `leak_guard` stay recorded-only, and doctor keeps listing them as `config-inactive`. | Spec §13 phase 2. Their readers ship in phases 3 and 4. |
 | D33 | The trust filter works on provenance. For each slot path (`reviewer`, `process.tdd`) it compares the entry merged from levels 1–3 with the entry merged from levels 1–4. If the second has `kind: command` and level 4 set `kind` or `target` for that path, and the path is not in level 3's `trust.project_commands`, the whole level-4 value for that path is dropped, `model` included, with the line of spec §7.4 carrying the real config path. A level-4 `null` and a level-4 `model` alone are allowed. `trust` set at level 4 is already refused by the level table. A level-2 command (a company module the person installed) is allowed. | Spec §7.4 says "may not set `kind: command`", but an L4 `target` alone would rewrite an L3 argv. Review Focus 1. |
-| D34 | Validation walks down the levels: the entry merged from levels 1–4 (after D33), then 1–3, 1–2, then 1. The first that validates fills the slot. A failed entry set above level 1 gives one notice, `rigger: slot <path> from <file or module> ignored: <reason>; using <level name>` or `…; the slot is empty`. A level-1 default that does not validate because its plugin is not enabled leaves the slot empty with no session notice; doctor lists it as INFO. | Spec §7.3 step 5 gives one notice per fallback. Superpowers is optional, so four notices in every session without it would be noise about a supported setup (Review Focus 5). |
+| D34 | Validation walks down the levels: the entry merged from levels 1–4 (after D33), then 1–3, 1–2, then 1. The first that validates fills the slot. A failed entry set above level 1 gives one notice, `rigger: slot <path> from <file or module> ignored: <reason>; using <level name>` or `…; the slot is empty`. A level-1 default that does not validate because its plugin is not enabled leaves the slot empty with no session notice; doctor lists it as INFO. A `null` for one slot path empties that slot. A `null` for `slots` itself or for the `process` group, at any level above 1, is ignored with the notice `rigger: config <file> may not set <key> to null; set a single slot to null instead`. | Spec §7.3 step 5 gives one notice per fallback. Superpowers is optional, so four notices in every session without it would be noise about a supported setup (Review Focus 5). `config.py:130-131` passes a `null` through for any key, and `merge` then removes the key: one line in a cloned repository would empty every slot without a word. |
 | D35 | A `hook` slot is filled by every enabled module whose manifest has `fills: <slot>`. rigger-windows gets `fills: "shell-guard"`, `failure_mode: "open"` and `provides.shell-guard.rule_checker: "tools/shell-guard/lessons_guard.py"`; rigger-lessons gets `fills: "lessons"`. The config entry is the expected filler: when it is set above level 1 and that plugin is not enabled, one notice names it. Two fillers give `rigger: slot <slot> is filled by <A> and <B>; disable one with claude plugin disable <name>`. The assembler prints that line as a notice at `startup`, `clear` and `compact`; `harness_start.py` is not changed. | Spec §10.2 places the two-filler check in `harness_start.py`, which runs at `startup` only and would resolve modules a second time. One resolver, one place for notices (phase 1's D13). |
 | D36 | `## Slots` is a generated section, id `slots.slots`, printed for the main session only, under rigger-core's root line, after core's rules files. One row per slot path whose `requires` is met: `Slot`, `Kind`, `Target`, `Model`, `From` (`default`, `company:<module>`, `personal`, `project`). An empty slot shows `—` as its target. A hook row shows its fillers joined with ` + ` and the failure mode, `rigger-windows (fails open)`. One line follows the table only when a slot is a command: how to run `slot_run.py`, with the core root and the session id filled in (Q3 decides its exact form). A `rules.d` section with the id `slots.slots` does not replace it: it is a duplicate, with the usual notice. `HARNESS_RULES_DROP` drops it like any section. | Spec §10.1. The override ban keeps the table true: a personal text must not be able to show a filler that is not the one in effect. |
 | D37 | Rules text gets one new construct: `{{if <items>}}` … `{{end}}`, where `<items>` is one or more `requires` items separated by one space (`slot:<path>`, `plugin:<name>`, `os:<name>`). The region may span lines, cannot nest, and is removed with its markers unless every item is met (a slot counts as met when it is filled). An unclosed or nested marker prints as written and is a `--check` finding. A `{{slot:<path>}}` of an empty slot outside a region prints as written and is a `--check` finding; a `{{skill:<plugin>:<skill>}}` renders its name whether or not the plugin is enabled, as today. | Spec §9.2 says a sentence's `requires` drops it, and §10.4 that an empty role drops its `{{slot:…}}` sentences, but rules text has no way to mark a sentence. One use today: `plans-main.md:3-4`. |
 | D38 | The merged table lives in `plugins/rigger-core/rules/skills.md` (audience `both`), moved from rigger-rules with `git mv`, so its id stays `skills.skill-triggers`. Its intro becomes `- Load the skill before the first step of its kind:`. `windows-skills.md` is deleted with its manifest entry. `wp-skills.md` keeps its two-line sentence under the new heading `## WordPress site copies` and loses its placeholder. `{{triggers:<id>}}` renders every row whatever the id, and `section` in a row is ignored but stays valid. A second `{{triggers:…}}` placeholder renders nothing, with a notice, and is a `--check` finding. Row order is spec §9.3: module rows in module order, then config rows. | With the table in rigger-rules, a setup with rigger-core and rigger-wp but no rigger-rules would lose the wp rows it prints today. Today's order (core 5, slot rows 3, windows 3, wp 2) becomes core 5, windows 3, wp 2, slot rows 3. Question 7. |
 | D39 | A `load` entry is dropped when its plugin is not in `Discovery.enabled` or its slot is empty. A row is dropped when no entry is left or its `requires` is unmet. `Discovery.enabled` also gets the `plugin.json` name of a `RIGGER_MODULE_DIRS` entry that holds `.claude-plugin/plugin.json` but no `rigger-module.json`, with no notice; an entry with neither file keeps today's notice. | Spec §9.3. Without the second sentence a plugin loaded with `--plugin-dir` that is not a module (superpowers in a stub run, an eval or a developer session) can never count as enabled, and its rows would vanish in every such run. Spec §6.1 gives that entry a notice today. No eval case names a superpowers skill or a table heading (`git grep` over the 15 `plugins/*/evals/*/prompt.md` files: 0 hits), so the evals, which stage no superpowers, lose nothing they grade. Question 6. |
-| D40 | The golden test keeps comparing with `34e7713` and gets a fixed list of allowed differences: the rigger-rules list loses the `## Skill triggers` piece; the rigger-core list gains one with the new intro and the merged table; the rigger-windows list loses its table piece; the rigger-wp piece is its sentence under the new heading; the rigger-core list gains `## Slots` (main session); and `plans-main.md` is compared after the `{{if}}` region renders. Every other piece stays byte-equal. A new test compares the merged table's rows, as a list of row lines, with the 13 rows cut from the frozen fixture files. The golden layout gains an enabled stub plugin named `superpowers` (a `plugin.json` only). | The brief's equality requirement and the exit criterion "renders every row of today's three tables". The expected rows come from the frozen fixture, never from `collect_rows`, so a bug in row collection cannot shrink both sides. |
+| D40 | The golden test keeps comparing with `34e7713` and gets a fixed list of allowed differences: the rigger-rules list loses the `## Skill triggers` piece; the rigger-core list gains one with the new intro and the merged table; the rigger-windows list loses its table piece; the rigger-wp piece is its sentence under the new heading; the rigger-core list gains `## Slots` (main session); the subagent root-line set gains rigger-core's root, because core now prints `skills.md` to subagents; and the `## Plans: main session` piece is the new `plans-main.md` wording. Every other piece stays byte-equal. The expected `## Slots` piece is written by hand in the test for each case it can meet, never taken from `slots.table`: Windows with rigger-windows (11 rows, `shell-guard` filled, `fails open`), Windows without it (11 rows, `shell-guard` shown `—`), and any other system (10 rows, no `shell-guard` row). A new test compares the merged table's rows, as a list of row lines, with the 13 rows cut from the frozen fixture files. The golden layout gains an enabled stub plugin named `superpowers` (a `plugin.json` only). | The brief's equality requirement and the exit criterion "renders every row of today's three tables". The expected rows come from the frozen fixture, never from `collect_rows`, so a bug in row collection cannot shrink both sides. |
 | D41 | `slot_check.py <slot> <file>` prints one line, `slot-check: ok <slot>` (for the reviewer `slot-check: ok reviewer <n> findings`) or `slot-check: refused: <rule id>: <reason>`, and exits 0 or 2. Any exception is a refusal with the rule id `internal`. A reviewer agent ends its reply with the JSON in the last fenced `json` block; `slot_check.py` reads a file that is either a JSON object or a reply holding such a block, and does not accept a Markdown form (open point 3). Unknown keys in the JSON are ignored. Fixtures live in the filling module at `tests/contract/<slot>/`, as `pass*` files and one `fail-<rule id>*` file per rule. `tests/test_module_contracts.py` runs every fixture of every manifest's `tests.contract` through rigger-core's `slot_check.py`. | Spec §10.4 and §12. A module's own tests cannot reach rigger-core by path, so the fixture run sits in the repository-level contract test. |
-| D42 | `review_scope.py` in phase 2 lists every path of `git diff --name-status` between two commits and marks it `review`, `skip: deleted` or `skip: binary`. Generated, vendored and lockfile reasons are phase 3 (spec §13). Both revisions are resolved to commit ids with `git rev-parse --verify --end-of-options <rev>^{commit}` before any diff, and the diff runs with `git -c core.quotepath=off --no-pager diff --no-ext-diff --no-textconv --no-color --no-renames --name-status -z`. It never skips a test file. | Spec §10.5 and phase 3's description. `--no-renames` lists a rename as a deleted and an added path, so the new path is always reviewed. Review Focus 4. |
+| D42 | `review_scope.py` in phase 2 lists every path of `git diff --name-status` between two commits and marks it `review`, `skip: deleted` or `skip: binary`. Generated, vendored and lockfile reasons are phase 3 (spec §13). A revision that starts with `-` is refused in Python; both revisions are then resolved to commit ids with `git rev-parse --verify <rev>^{commit}` before any diff, only those ids reach the diff, and the diff runs with `git -c core.quotepath=off --no-pager diff --no-ext-diff --no-textconv --no-color --no-renames --name-status -z`. It never skips a test file. | Spec §10.5 and phase 3's description. `--no-renames` lists a rename as a deleted and an added path, so the new path is always reviewed. Review Focus 4. |
 | D43 | `slot_run.py <slot> --session <id> [--base REV] [--head REV] [--repo DIR]` reads the slot only from that session's snapshot and never resolves config itself. It refuses when the snapshot is missing or of another format, when the slot is not a command, when a level-4 command is not in the snapshot's trusted list, when `argv[0]` does not resolve on the stripped `PATH`, and (per Q4) when it resolves to a batch file. It writes the scope list and the output file under a fresh folder in the temp directory, runs the argv with no shell from the repository root with `CLAUDE_*`, `HARNESS_*` and `RIGGER_MODULE_DIRS` removed, bounds it at 900 s and 1 MB of console output, and checks the output file with `slot_check.py`. Its last line is `slot-run: ok <slot> <n> findings` or `slot-run: refused: <reason>`; the line before it names the output file. Exit 0 or 2. | Spec §9.4 ("hooks that need a slot read the snapshot") and §10.3. The session id comes on the command line because a Bash tool process may not know it (Q3). The 900 s and 1 MB bounds are the reviewer contract's; `ANTHROPIC_*` stays, since an external reviewer may need its own key. |
 | D44 | The snapshot's `slots` value becomes the resolved table (D36 rows plus `trusted`, the level-3 list), and `SNAPSHOT_FORMAT` becomes 2. | Phase 1's D21: a snapshot of another format is read as missing. Review Focus 8. |
 | D45 | The report shadow checks shape only: it runs the contract of the slot whose target is the stopped agent's type with no git and no file read besides the report, inside the existing 2.5 s bound. Its row gains `slot` and `contract` (`ok`, `refused:<rule id>`, `none` when the type fills no slot, `unread`). The row still never holds report text. | Spec §13 asks for verdicts "before anything is enforced". Anchors and scope need git and the reviewed commit, which the orchestrator's own `slot_check.py` call has. Q2 decides where the slot table comes from. |
 | D46 | `coordinate.md:16` stays as it is. The other ten references are reworded to name a slot or the Skill triggers table (Task 16 gives each text). | Line 16 names `rigger-core:orchestrating-subagents`, which no slot covers: the command and the skill are both fixed core (spec §1). A command file cannot hold a placeholder. |
 | D47 | "Every row that loads `slot:process.tdd` loads `slot:testing` before it" becomes a `--check` finding and a doctor WARN row for config rows. `TestingSkillTriggerTests` reads row data, not table text. | Spec §10.4, the `testing` contract. A config row can break the rule without any module changing. The contract's other clause, that the filling module ships the commit-time test guards, becomes checkable only when phase 3 moves them out of rigger-core. |
-| D48 | The `shell-guard` contract in phase 2 checks (a) a hook reply that is empty, or one JSON object with `permissionDecision: "deny"` and a non-empty reason, or one with `additionalContext`; (b) the declared failure mode; and (d) that a named rule checker loads and has `RULES` and `rule_guard_problem`. (c), the 50 ms bound, is measured and printed by the contract test and not enforced. The `lessons` contract checks (a), the `SessionStart` line; (b) stays `test_inbox_lint.py`; (c) arrives with the lesson targets of phase 4. | Measured above: today's default filler has no rule id in its deny reason, and its PowerShell handler takes about 320 ms here, of which a bare `sh` start is about 85 ms. Questions 2 and 3. |
+| D48 | The `shell-guard` contract in phase 2 checks (a) a hook reply that is empty, or one JSON object with `permissionDecision: "deny"` and a non-empty reason, or one with `additionalContext`; (b) the declared failure mode; and (d) that a named rule checker loads and has `RULES` and `rule_guard_problem`. (c), the 50 ms bound, is measured and printed by the contract test and not enforced. The `lessons` contract checks (a), the `SessionStart` line; (b) stays `test_inbox_lint.py`; (c) arrives with the lesson targets of phase 4. | Measured above: today's default filler has no rule id in its deny reason, and its PowerShell handler, the only one without an `if` filter, took 345–399 ms on a command that matches no rule, of which a bare `sh` start is about 85 ms. Questions 2 and 3. |
 | D49 | Of the five review ideas, three enter phase 2 because the reviewer contract carries them: the coverage report (`coverage` and the rules on it), hardened `git diff` flags (in `review_scope.py` and one sentence of `reviewer.md`), and the behaviour-change question (one sentence of `reviewer.md` and an optional `behaviour_changes` key that is shape-checked only when present). Strict finding dismissal and per-path rules are listed under phase 3. | The test was whether an idea needs a field or a check in `rigger.reviewer/1`. Question 4 covers the optional key. |
 | D50 | `RulesSizeTests` keeps one ceiling for rules-file text, set in Task 16 to the measured sum after the merge, which must not exceed 27,708. `## Slots` is counted on its own: at most 1,200 bytes for the default set. | Spec §3 fixes 27,708 for rules text and §13 expects about 600 bytes of slots. Eleven rows with five columns do not fit 600. Question 5. |
 | D51 | The phase 2 spikes are Q1–Q4, recorded in `docs/superpowers/spikes/phase-2/`. S6 and S7 of the spec stay with phases 5 and 3. | Their names must not collide with the spec's. |
@@ -338,8 +354,10 @@ Each has a default, and the plan continues on it.
    full suite on macOS and Windows. **Default:** leave CI alone (D27). The mode is the local gate
    for a module-only change and gets its CI use when phase 3 has module-only pull requests.
 2. **The 50 ms bound of the shell-guard contract (§10.4 (c)).** The default filler's PowerShell
-   handler measured 293–331 ms here; a bare `sh` start is 81–92 ms, so no Python hook can meet 50 ms
-   on Windows. **Default:** measure and report, do not enforce (D48). The bound is restated for
+   handler (`--pwsh-all`, started for every PowerShell command) measured 345–399 ms here on a
+   command that matches no rule. A bare `sh` start is 81–92 ms, so no hook started through `sh` can
+   meet 50 ms on Windows. The Bash handlers sit behind `if` filters and add nothing to a command
+   that matches none. **Default:** measure and report, do not enforce (D48). The bound is restated for
    `rigger-SHELLWISE` in phase 3, where a native binary can meet it.
 3. **"A deny reason names a rule id and a fix" (§10.4 (a)).** rigger-windows' reason is prose with
    an allow marker and no rule id. **Default:** the phase 2 contract asks for a non-empty reason
@@ -392,16 +410,16 @@ Each has a default, and the plan continues on it.
 | B | 5 | 2 | the `core_check.sh` copies, five `hooks.json` and two test files; nothing else touches them |
 | — | pull requests 1 and 2 merge; `feature/modular-phase-2` is cut from `main` | 1–5 | — |
 | C | 9, 10, 11, 12, 13 | the merge above | 9: `manifest.py`, three manifests, `ManifestTests`. 10: two new files. 11: `render.py`, `discover.py` and their tests. 12: two new files. 13: new files, plus `tests/test_module_contracts.py`. Tasks 10 and 13 read Task 9's manifest fields only through the Interfaces block. |
-| D | 14, 15 | 9–13; 14 also needs Q3 and Q4 | 14 writes two new files and reads the snapshot shape from Task 10's Interfaces. 15 is the only task that edits `assemble.py`, `config.py` and `snapshot.py`. |
-| E | 16, 17 | 15 | 16 writes rules, manifests, agent and skill text and their tests. 17 writes only `report-gate/`. |
+| D | 15 (serial) | 9–13, and Q3 | It is the only task that edits `assemble.py`, `config.py` and `snapshot.py`, and it sets the snapshot format that Tasks 14 and 17 read. |
+| E | 14, 16, 17 | 15; 14 also needs Q3 and Q4, 17 needs Q2 | 14 writes two new files under `slot-run/`. 16 writes rules, manifests, agent and skill text and their tests. 17 writes only `report-gate/`. |
 | F | 18, 19, 20 | 16 (the tree is red on the table pieces between Tasks 15 and 16) | 18 writes `_doctor` in `assemble.py`, the filter in `doctor.sh` and the doctor tests. 19 writes one test file. 20 writes tools of two other plugins. |
 | G | 21, then 22 | all | — |
 
-Parallel: 1, 2, 3, 4, 6, 7 and 8; then 9–13; then 14 and 15; then 16 and 17; then 18, 19 and 20.
-Serial: 5 after 2, the merge of pull requests 1 and 2, 21 and 22. No two tasks of one wave write
-the same file, `scripts/run_tests.min` and `tests/test_repo.py` included: the first belongs to
-Task 15, the second to Task 5 (line 548) and then Task 9 (`ManifestTests`), which are in different
-waves.
+Parallel: 1, 2, 3, 4, 6, 7 and 8; then 9–13; then 14, 16 and 17; then 18, 19 and 20. Serial: 5
+after 2, the merge of pull requests 1 and 2, 15, 21 and 22. No two tasks of one wave write the same
+file, `scripts/run_tests.min` and `tests/test_repo.py` included: the first belongs to Task 15, the
+second to Task 5 (line 548), then Task 9 (`ManifestTests`), then Task 16 (line 130), which are in
+different waves.
 
 ---
 ## Pull request 1: the test mode (wave A)
@@ -441,7 +459,7 @@ waves.
   - `test_fix_round_next_to_it_is_refused`.
 - [ ] **Step 2: Run** `python -I -X utf8 tests/test_run_tests.py -v`. Expected: `FAILED`, each new test on its own assertion or on `unrecognized arguments: --changed-modules`.
 - [ ] **Step 3: Implement.** Match paths by their segments, never with `fnmatch` (its `*` crosses `/`). The sweep runs as `[sys.executable, "-I", "-X", "utf8", "scripts/sweep.py", "--no-denylist"]` from `root` with the cleaned environment. Add the mode to the module docstring's usage.
-- [ ] **Step 4: Run** the file. Expected: `OK`. Then run the mode on the real repository with only this task's change in the tree: expected `changed-modules: shared file CLAUDE.md; run the gate`, or another of this task's files, and exit 2.
+- [ ] **Step 4: Run** the file. Expected: `OK`. Then run the mode on the real repository with only this task's change in the tree: expected `changed-modules: shared file scripts/run_tests.py; run the gate` and exit 2 (`CLAUDE.md` and `CONTRIBUTING.md` are documentation under D26, so the first shared path in sorted order is the script).
 - [ ] **Step 5: Red runs** (shared infrastructure, one per branch): remove the `plugins/*/bin/py.sh` row, and `test_classify_table` fails on that row; return 0 for a shared file, and the exit-two test fails; drop `dependents`, and the module test fails on `b`; skip the sweep's count check, and the sweep test fails on `# files 0`; turn a git failure into a full run, and the git test fails.
 - [ ] **Step 6: Sweep and commit.** `python -I scripts/sweep.py --no-denylist CONTRIBUTING.md CLAUDE.md`, expected `# files 2, findings 0`. `feat(tests): run_tests.py --changed-modules gates a module-only change`
 - [ ] **Step 7: Gate and pull request.** Run the full gate (this task changes `scripts/`), `--verify` it, push `feature/changed-modules` and open the pull request to `main`. Its body gives the classify table, the gate pass line and question 1.
@@ -689,7 +707,8 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
   - `test_l4_command_without_trust_is_dropped_with_the_line`: the exact notice, and the row stays `rigger-core:reviewer` from `default`.
   - `test_l4_command_with_trust_applies`: `trust.project_commands: ["reviewer"]` at level 3 gives kind `command`, source `project`.
   - `test_l4_target_alone_cannot_rewrite_a_command` (Review Focus 1): level 3 sets the command, level 4 sets only `target`; the level-3 argv stays and the notice prints.
-  - `test_l4_model_alone_and_null_are_allowed`: no notice for either.
+  - `test_l4_model_alone_and_null_are_allowed`: no notice for either; the `null` leaves `reviewer` empty.
+  - `test_null_for_all_slots_or_for_a_group_is_ignored_with_a_notice` (D34): level 4 with `"slots": null`, and level 4 with `"slots": {"process": null}`. Every slot stays as the lower levels set it, and each case gives the one notice naming the file and the key.
   - `test_dropped_l4_value_takes_its_model_with_it`.
   - `test_trust_names_the_slot_path`: trusting `reviewer` does not trust `process.tdd`, and `trust.project_commands` holding a number or an unknown path is ignored with one notice.
   - `test_l2_command_is_allowed`.
@@ -704,7 +723,7 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 - [ ] **Step 2: Run** `test_slots.py`. Expected: `FAILED` (no module).
 - [ ] **Step 3: Implement.** A command cell shows the program name followed by ` …`, never the whole argv. `os_name` is passed in, so no test depends on the machine it runs on.
 - [ ] **Step 4: Run.** Expected: `OK`.
-- [ ] **Step 5: Red runs** (full). The trust filter, each branch once: ignore a level-4 `kind`; ignore a level-4 `target`; treat every path as trusted; compare the trusted list with the first path segment only; keep `model` of a dropped value; apply the filter to level 2. Validation: remove each rule of the table once and see its row fail. Fallback: start the walk at level 1. Quiet rule: print a notice for a level-1 default. Fillers: report only the first of two.
+- [ ] **Step 5: Red runs** (full). The trust filter, each branch once: ignore a level-4 `kind`; ignore a level-4 `target`; treat every path as trusted; compare the trusted list with the first path segment only; keep `model` of a dropped value; apply the filter to level 2. Validation: remove each rule of the table once and see its row fail. Fallback: start the walk at level 1. Quiet rule: print a notice for a level-1 default. Null rule: let `"slots": null` through, then `"process": null`. Fillers: report only the first of two.
 - [ ] **Step 6: Commit.** `feat(rigger-core): resolve, validate and trust-filter slots`
 
 ### Task 11: `{{if}}` regions, the merged table and non-module roots
@@ -746,7 +765,7 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 **Interfaces:**
 - Produces:
   - `class ScopeError(Exception)`
-  - `resolve_commit(repo: Path, rev: str) -> str`: the 40-character commit id. It refuses, before git runs, a `rev` that is empty, starts with `-`, or holds whitespace or a control character; then `git rev-parse --verify --end-of-options <rev>^{commit}`.
+  - `resolve_commit(repo: Path, rev: str) -> str`: the 40-character commit id. It refuses, before git runs, a `rev` that is empty, starts with `-`, or holds whitespace or a control character; then `git rev-parse --verify <rev>^{commit}`. Only the ids it returns are passed to `git diff`.
   - `scope(repo: Path, base: str, head: str) -> List[Tuple[str, str]]`: `(path, verdict)` sorted by path, the verdict being `review`, `skip: deleted` or `skip: binary` (D42).
   - `GIT_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")`, used for the `--name-status -z` call and for the `--numstat -z` call that finds binary files. Git runs with `-c core.quotepath=off --no-pager`, a 60 s bound, and an environment without `GIT_EXTERNAL_DIFF` and `GIT_DIFF_OPTS`.
   - CLI: `review_scope.py --base REV [--head REV] [--repo DIR]` (`--head` defaults to `HEAD`, `--repo` to the working directory). One line per path, `<verdict><TAB><path>`, then `# review-scope: files <n>, review <r>, skipped <s>`; exit 0. A refusal prints `review-scope: refused: <reason>` and exits 2: a revision that does not resolve, a folder that is not a repository, a git failure, or a path that holds a tab or a line break.
@@ -754,13 +773,13 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 - [ ] **Step 1: Write the failing tests.** The fixture is a temp repository with two commits. The second one edits `a.py`, deletes `b.py`, adds `c.bin` (bytes with a NUL), renames `d.py` to `e.py`, adds `zażółć ą.py` and adds `tests/test_x.py`.
   - `test_lists_every_changed_path_with_its_verdict`: the expected list is written by hand: `a.py` review, `b.py` skip: deleted, `c.bin` skip: binary, `d.py` skip: deleted, `e.py` review, `tests/test_x.py` review, `zażółć ą.py` review.
   - `test_a_test_file_is_never_skipped`.
-  - `test_revision_that_looks_like_an_option_is_refused` (Review Focus 4): rows `--output=<tmp>/x`, `-p`, the empty string, `a b`, `no-such-rev` and a tag that points at a blob. Each gives exit 2 with a reason, and `<tmp>/x` does not exist afterwards.
+  - `test_revision_that_looks_like_an_option_is_refused` (Review Focus 4): rows `--output=<tmp>/x`, `-p`, the empty string, `a b`, `no-such-rev` and a tag that points at a blob. Each gives exit 2 with a reason, and `<tmp>/x` does not exist afterwards. For the first four rows `subprocess.run` is patched to fail the test if git is started.
   - `test_drivers_of_the_repository_do_not_run`: the fixture's git config sets `diff.external` and a `textconv` driver to a script that writes a marker file. Control first: a plain `git diff <base> <head>` in that repository writes the marker. Then `scope()` gives the true list and writes no marker.
   - `test_same_commit_gives_zero_files`, `test_not_a_repository_refuses`, `test_cli_lines_and_summary`.
 - [ ] **Step 2: Run.** Expected: `FAILED` (no module).
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: `OK`, on Windows and under WSL.
-- [ ] **Step 5: Red runs** (full): drop the leading-`-` refusal; drop `--end-of-options`; drop `^{commit}` (the blob tag row fails); drop `--no-renames` (the rename test fails on `d.py`); drop the numstat pass; drop `--no-ext-diff`, then `--no-textconv`. If one of the last two stays green because `--name-status` and `--numstat` start no driver, report it as a surviving mutant with the control's output and keep the flag: spec §13 fixes it.
+- [ ] **Step 5: Red runs** (full): drop the leading-`-` refusal (measured above, `git rev-parse --verify` refuses `--output=x` by itself, so this mutant may stay green: the test then also asserts that git was not started for that row, which the mutant fails); pass the given revision to `git diff` in place of the resolved id; drop `^{commit}` (the blob tag row fails); drop `--no-renames` (the rename test fails on `d.py`); drop the numstat pass; drop `--no-ext-diff`, then `--no-textconv`. If one of the last two stays green because `--name-status` and `--numstat` start no driver, report it as a surviving mutant with the control's output and keep the flag: spec §13 fixes it.
 - [ ] **Step 6: Commit.** `feat(rigger-core): review_scope lists what a review must cover`
 
 ### Task 13: `slot_check.py` and the contract fixtures
@@ -795,7 +814,7 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 
 - [ ] **Step 1: Write the fixtures and the failing tests.**
   - `tests/test_module_contracts.py` `test_every_contract_fixture`: for each manifest and each slot in its `tests.contract`, the folder exists and holds at least one `pass*` file. Every `pass*` file gives `ok`. Every `fail-<rule>` file is refused with exactly that rule id. Every id in `RULES[slot]` has a `fail-` file. The test fails when it read 0 fixtures.
-  - The same file, `test_default_fillers_meet_their_contracts`: rigger-windows' real PreToolUse command, run on an `ls` command, gives a reply that passes `shell-guard`; `lessons_start.py` run with a scratch inbox gives a text that passes `lessons`; the rule checker named in rigger-windows' manifest loads and has `RULES` and `rule_guard_problem`. It prints `# shell-guard latency median <ms> ms over 5 runs` and asserts no bound (D48).
+  - The same file, `test_default_fillers_meet_their_contracts`: rigger-windows' PowerShell handler, the `--pwsh-all` command read from its `hooks/hooks.json` (the one handler with no `if` filter), run through `sh` on a `PowerShell` event whose command is `Get-ChildItem`, gives a reply that passes `shell-guard`; `lessons_start.py` run with a scratch inbox gives a text that passes `lessons`; the rule checker named in rigger-windows' manifest loads and has `RULES` and `rule_guard_problem`. It prints `# shell-guard latency median <ms> ms over 5 runs` and asserts no bound (D48).
   - `test_slot_check.py`:
     - `test_finding_path_outside_the_repository_is_refused_unread` (Review Focus 2): rows `../outside.txt`, an absolute POSIX path, a path with a drive letter and one with a backslash; each gives `path`, with `subprocess.run` patched to fail the test if git is called for that finding.
     - `test_anchor_normalises_whitespace_and_line_endings` (Review Focus 2): a CRLF file, a tab-indented line quoted with spaces, a quote spanning two lines; and a file with a byte that is not UTF-8 gives `anchor`, not `internal`.
@@ -814,7 +833,10 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 
 ---
 
-## Pull request 3: running and wiring (wave D)
+## Pull request 3: running and wiring (waves D–E)
+
+Task 15 runs first, alone (wave D). Task 14 follows it in wave E: its tests write a format-2
+snapshot and expect a format-1 file to be refused, and Task 15 sets that format.
 
 ### Task 14: `slot_run.py`
 
@@ -921,6 +943,8 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 - Modify tests:
   - `tests/test_assembly_golden.py` and `tests/golden_baseline.py`: the allowed differences of D40 as one named table `ALLOWED`, applied to the baseline side before the comparison; the layout gains the `superpowers` stub (installed and enabled, and as a dirs entry in the `RIGGER_MODULE_DIRS` scenario).
   - `plugins/rigger-rules/tests/test_plugin_rules.py`: `SkillTableTests`, `TestingSkillTriggerTests`, `RULES_CEILING_BYTES`, and the count of table placeholders.
+  - The four rules-file counts, 19 to 18: `tests/test_repo.py:130`, `plugins/rigger-core/tools/assemble/tests/test_sections.py:69`, `plugins/rigger-rules/tests/test_rules_hooks.py:318` and `RULES_MIN_FILES` (`test_plugin_rules.py:38`). A phrase search does not find these.
+  - The golden test's subagent root-line set and its per-case `## Slots` piece (D40).
   - `plugins/rigger-core/tools/coord-state/tests/test_coordinate_wiring.py:99`, `plugins/rigger-core/tests/test_core_wiring.py`, `plugins/rigger-rules/tests/test_reinject.py:117`, `plugins/rigger-wp/tests/test_outbound_block.py`, and the drift-lint baseline.
 
 **Interfaces:**
@@ -928,7 +952,7 @@ Wave C tasks merge into `feature/modular-phase-2` in task order, so Task 13 land
 - Produces: the behaviour changes 1–5.
 
 - [ ] **Step 1: Baseline.** Run the golden test and `test_plugin_rules.py`. Expected: red only on the pieces Task 15 reported (`## Slots`, the three tables, the two notices).
-- [ ] **Step 2: Find every pin.** For each old phrase above, `git grep -n -F "<phrase>" -- '*.py' '*.ps1' '*.json'`, and add any test not listed to this task's report before editing.
+- [ ] **Step 2: Find every pin.** For each old phrase above, `git grep -n -F "<phrase>" -- '*.py' '*.ps1' '*.json'`, and add any test not listed to this task's report before editing. For the counts, `git grep -n -E "\b19\b" -- 'tests/*.py' 'plugins/*/tests/*.py' 'plugins/*/tools/*/tests/*.py'` and read each hit: the four above count rules files; `test_reinject.py:117` and `test_stub_session.py` count main-session sections, which stay 19 (rigger-windows loses one, rigger-core gains `## Slots`; its `## Skill triggers` only moves) and are recounted from `--render`; `test_assembly_golden.py:402` counts the frozen baseline's handlers and does not change.
 - [ ] **Step 3: Rewrite the tests first.**
   - `test_merged_table_holds_every_row_of_the_three_tables` (golden file): the expected list is the 13 row lines cut from the three frozen files under `tests/fixtures/golden-34e7713/` (8, 3 and 2, asserted). With all seven modules and the stub, the merged table's rows equal that list as a multiset, for the main session and for a `general-purpose` subagent. A second assertion pins the order of D38: the fixture's five rigger-core rows, the three windows rows, the two wp rows, then the fixture's three slot rows.
   - `test_overrides_of_merged_table_sections` (Review Focus 7): a `rules.d/skills.md` with `## Skill triggers` replaces the table and prints `rigger: rules.d/skills.md replaces rule skills.skill-triggers`; a `rules.d/windows-skills.md` with the old heading prints as a personal section.
