@@ -2,6 +2,7 @@
 
 Usage: python -I scripts/run_tests.py [--no-claude] [--min-files N] [--jobs N] [--agent]
                                       [--fix-round [--base REV]] [--control]
+       python -I scripts/run_tests.py --changed-modules [--base REV] [--no-claude] [--jobs N]
 
 Discovers tests/test_*.py, plugins/*/tests/test_*.py and plugins/*/tools/*/tests/test_*.py and
 runs each as `<python> -I -X utf8 <file>` from the repo root, in an environment without CLAUDE_*
@@ -43,12 +44,23 @@ and the `# files` line ends with `, load-only N`. One that fails again stays fai
 --base        the change starts at the merge base with this revision (default: main).
 --control     run only the planted failing file tests/control/failing_control.py; exit 0 only
               when it is reported failed.
+--changed-modules
+              a fast local pre-check for a change inside one module's folder, never a gate: a pull
+              request and a release still need scripts/gate.py. It maps each changed path (as
+              --fix-round reads them) to shared, documentation or a module. A shared path, or a git
+              failure, prints one line and exits 2 with nothing run: only the gate says anything
+              then. Otherwise it runs the test files of each changed module and of each module whose
+              plugin.json dependencies reach one, plus ALWAYS_RUN, then the sweep with
+              --no-denylist. Exit 0 only when every file passed and the sweep printed
+              "# files N, findings 0" with N > 0, else 1. --fix-round and --control are refused next
+              to it.
 """
 
 import argparse
 import contextlib
 import hashlib
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -59,6 +71,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PATTERNS = (
@@ -101,6 +114,15 @@ SERIAL = (
 DROPPED_PREFIXES = ("CLAUDE_", "HARNESS_")
 # Other RIGGER_* names are red-run knobs of existing tests and pass through.
 DROPPED_NAMES = ("RIGGER_MODULE_DIRS",)
+# --changed-modules runs these whatever changed: each reads files of every module.
+ALWAYS_RUN = (
+    "tests/test_module_contracts.py",
+    "tests/test_repo.py",
+    "tests/test_plugin_refs.py",
+    "plugins/rigger-rules/tests/test_plugin_rules.py",
+)
+MODULE_MANIFEST = "rigger-module.json"
+SWEEP_COUNT_RE = re.compile(r"^# files (\d+), findings (\d+)", re.M)
 
 RAN_RE = re.compile(r"^Ran (\d+) tests? in ", re.M)
 RESULT_RE = re.compile(r"^(OK|FAILED)(?: \(([^)]*)\))?[ \t]*$", re.M)
@@ -461,6 +483,136 @@ def fix_round_groups(files, root, base, log):
     return [first, rest]
 
 
+def classify(path: str, root: Path) -> Tuple[str, Optional[str]]:
+    """("shared", None), ("docs", None) or ("module", <name>) for a repository-relative path with "/"."""
+    parts = path.split("/")
+    if parts[0] == "docs" and len(parts) > 1:
+        return "docs", None
+    if len(parts) == 1 and (path.endswith(".md") or path.startswith(("LICENSE", "NOTICE"))):
+        return "docs", None
+    if parts[0] != "plugins" or len(parts) < 3:
+        return "shared", None
+    name, inner = parts[1], parts[2:]
+    if not (root / "plugins" / name / MODULE_MANIFEST).is_file():
+        return "shared", None
+    if inner[0] == "rules" and len(inner) > 1:
+        return "shared", None
+    if inner in (["bin", "py.sh"], ["hooks", "core_check.sh"]):
+        return "shared", None
+    if name == "rigger-core" and inner == ["rigger-defaults.json"]:
+        return "shared", None
+    return "module", name
+
+
+def module_names(root):
+    plugins = root / "plugins"
+    if not plugins.is_dir():
+        return []
+    return sorted(path.name for path in plugins.iterdir() if (path / MODULE_MANIFEST).is_file())
+
+
+def declared_dependencies(root, name):
+    """The plugin names `name`'s plugin.json depends on; None when it cannot be read as a list of names."""
+    try:
+        data = json.loads((root / "plugins" / name / ".claude-plugin" / "plugin.json").read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    dependencies = data.get("dependencies", [])
+    if not isinstance(dependencies, list) or not all(isinstance(entry, str) for entry in dependencies):
+        return None
+    return {entry.split("@", 1)[0] for entry in dependencies}
+
+
+def dependents(root: Path, names: Set[str]) -> Set[str]:
+    """Modules whose plugin.json dependencies reach a name, transitively; an unreadable one depends on everything."""
+    reached = set(names)
+    found = set()
+    declared = {name: declared_dependencies(root, name) for name in module_names(root)}
+    grew = True
+    while grew:
+        grew = False
+        for name, needs in declared.items():
+            if name in found or not reached:
+                continue
+            if needs is None or needs & reached:
+                found.add(name)
+                reached.add(name)
+                grew = True
+    return found
+
+
+def changed_modules(root: Path, changed: List[str]) -> Tuple[List[str], Optional[str]]:
+    """The changed modules with their dependents, sorted, and the first shared path or None."""
+    names = set()
+    shared = None
+    for path in changed:
+        kind, name = classify(path, root)
+        if kind == "shared" and shared is None:
+            shared = path
+        elif kind == "module":
+            names.add(name)
+    return sorted(names | dependents(root, names)), shared
+
+
+def run_sweep(root, env, log):
+    """The sweep's (files, findings), or None when it printed no count line or could not run."""
+    command = [sys.executable, "-I", "-X", "utf8", "scripts/sweep.py", "--no-denylist"]
+    try:
+        done = subprocess.run(
+            command, cwd=str(root), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, timeout=TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        tell("# changed-modules: sweep did not run: %s" % error, log)
+        return None, 1
+    output = done.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+    counts = SWEEP_COUNT_RE.findall(output)
+    if not counts:
+        for line in output.rstrip().splitlines()[-20:]:
+            tell("  | " + line, log)
+        return None, done.returncode
+    return (int(counts[-1][0]), int(counts[-1][1])), done.returncode
+
+
+def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int:
+    """A local pre-check, not a gate: the tests of the changed modules, their dependents and ALWAYS_RUN, then the sweep."""
+    spec = importlib.util.spec_from_file_location("select_tests", Path(__file__).with_name("select_tests.py"))
+    selector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(selector)
+    try:
+        changed = selector.changed_files(root, base)
+    except (OSError, subprocess.SubprocessError) as error:
+        detail = (getattr(error, "stderr", None) or "").strip() or str(error)
+        tell("changed-modules: git failed: %s; run the gate" % " ".join(detail.split()), log)
+        return 2
+    names, shared = changed_modules(root, changed)
+    if shared is not None:
+        tell("changed-modules: shared file %s; run the gate" % shared, log)
+        return 2
+    tell(
+        "# changed-modules: base %s, changed %d, modules %s" % (base, len(changed), ", ".join(names) or "none"),
+        log,
+    )
+    selected = set(names)
+    files = []
+    for path in discover(root):
+        rel = path.relative_to(root).as_posix()
+        parts = rel.split("/")
+        if rel in ALWAYS_RUN or (parts[0] == "plugins" and parts[1] in selected):
+            files.append(path)
+    code = run_suite([files], env, root, jobs, 1, log)
+    counts, sweep_exit = run_sweep(root, env, log)
+    if counts is None:
+        tell("# changed-modules: sweep printed no count (exit %d)" % sweep_exit, log)
+        return 1
+    tell("# changed-modules: sweep files %d, findings %d" % counts, log)
+    if code != 0 or sweep_exit != 0 or counts[0] < 1 or counts[1] != 0:
+        return 1
+    return 0
+
+
 def run_suite(groups, env, root, jobs, minimum, log, stop_at_failure=False):
     totals = {"executed": 0, "failed": 0, "skipped": 0}
     timings = []
@@ -544,7 +696,13 @@ def main(argv=None, root=ROOT):
     parser.add_argument("--fix-round", action="store_true", help="affected files, failed first, stop at a failure")
     parser.add_argument("--base", default="main", help="the change starts at the merge base with this revision")
     parser.add_argument("--control", action="store_true", help="run only the planted failing test file")
+    parser.add_argument(
+        "--changed-modules", action="store_true", help="local pre-check: the changed modules' tests, never a gate"
+    )
     args = parser.parse_args(argv)
+    for flag, value in (("--fix-round", args.fix_round), ("--control", args.control)):
+        if args.changed_modules and value:
+            parser.error("--changed-modules cannot be combined with %s" % flag)
     env = clean_env(os.environ, no_claude=args.no_claude)
 
     if args.control:
@@ -563,6 +721,8 @@ def main(argv=None, root=ROOT):
         print("# --jobs must be at least 1")
         return 1
     jobs = args.jobs if args.jobs is not None else min(JOBS, os.cpu_count() or 1)
+    if args.changed_modules:
+        return run_changed_modules(root, args.base, env, jobs, None)
     minimum = args.min_files if args.min_files is not None else read_min(root)
     if minimum is None and not args.fix_round:
         print("# cannot read a positive integer from %s" % MIN_FILE)

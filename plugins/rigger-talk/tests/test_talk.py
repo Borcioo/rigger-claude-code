@@ -115,7 +115,7 @@ class TalkTests(unittest.TestCase):
     def test_no_hook_of_this_plugin_prints_the_rules(self):
         # The only hook says so when rigger-core is too old to print talk.md; the rules come from the core.
         self.assertEqual(load_json(PLUGIN / "hooks" / "hooks.json"), {"hooks": {"SessionStart": [{
-            "matcher": "startup|clear", "hooks": [{
+            "matcher": "startup|clear|compact", "hooks": [{
                 "type": "command", "timeout": 10,
                 "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-talk'}]}]}})
         self.assertEqual(sorted(path.name for path in (PLUGIN / "hooks").iterdir()),

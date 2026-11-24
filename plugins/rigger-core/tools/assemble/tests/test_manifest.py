@@ -121,6 +121,21 @@ class ManifestTests(unittest.TestCase):
                     manifest.load_manifest(root, marketplace, "installed")
                 self.assertIn(fragment, str(caught.exception))
 
+    def test_load_entry_length(self):
+        at_cap, over = "x:" + "a" * 198, "x:" + "a" * 199
+        self.assertEqual((len(at_cap), len(over)), (200, 201))
+        data = base_manifest()
+        data["triggers"] = [{"id": "demo.one", "before": "a", "load": [at_cap]}]
+        try:
+            got = manifest.load_manifest(self.make(data), "rigger", "installed").triggers[0].load
+        except manifest.ManifestError as error:
+            got = str(error)
+        self.assertEqual(got, (at_cap,))
+        data["triggers"] = [{"id": "demo.one", "before": "a", "load": ["x:y", over]}]
+        with self.assertRaises(manifest.ManifestError) as caught:
+            manifest.load_manifest(self.make(data), "rigger", "installed")
+        self.assertEqual(str(caught.exception), "trigger demo.one: load entry over 200 characters")
+
     def test_bom_prefixed_file_loads(self):
         body = b"\xef\xbb\xbf" + json.dumps(base_manifest()).encode("utf-8")
         root = self.make(None, raw=body)

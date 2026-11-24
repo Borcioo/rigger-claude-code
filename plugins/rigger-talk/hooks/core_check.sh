@@ -21,8 +21,8 @@
 name=${1:-}
 [ -n "$name" ] || exit 0
 
-here=${0%/*}
-[ "$here" != "$0" ] || here=.
+# The folder of this script, cut at the last / or \: a Windows host may pass the path with backslashes.
+case $0 in *[\\/]*) here=${0%[\\/]*} ;; *) here=. ;; esac
 own=$(cd "$here/.." 2>/dev/null && pwd -P) || exit 0
 
 config=${CLAUDE_CONFIG_DIR:-}

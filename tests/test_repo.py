@@ -545,7 +545,7 @@ class DuplicateHookTests(unittest.TestCase):
         # One script in five plugins: rigger-core's startup check would tell the user to disable plugins.
         found = self.plugin_handlers()
         checks = sorted((item.source, item.event, item.matcher) for item in found if item.identity[1] == "core_check.sh")
-        self.assertEqual(checks, sorted(("plugin " + name, "SessionStart", "startup|clear")
+        self.assertEqual(checks, sorted(("plugin " + name, "SessionStart", "startup|clear|compact")
                                         for name in PLUGINS_WITH_CORE_CHECK))
         self.assertEqual(harness_start.duplicate_warnings(found), [])
 

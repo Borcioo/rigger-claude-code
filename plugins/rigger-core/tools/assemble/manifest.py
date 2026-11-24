@@ -22,6 +22,7 @@ SUBAGENT_RULES = ("none", "all")
 MAX_DEPTH = 32
 BEFORE_MAX = 300
 LOAD_MAX = 4
+LOAD_ENTRY_MAX = 200
 # Control, format, line and paragraph separators, lone surrogates and private use. Not "Cn": what is
 # unassigned depends on the running Python's Unicode data, so a newer emoji would be refused.
 UNSAFE = ("Cc", "Cf", "Zl", "Zp", "Cs", "Co")
@@ -163,6 +164,8 @@ def row_problem(row) -> Optional[str]:
         problem = line_problem(entry)
         if problem:
             return "load entry " + problem
+        if len(entry) > LOAD_ENTRY_MAX:
+            return "load entry over %d characters" % LOAD_ENTRY_MAX
     try:
         _requires(row.get("requires"), "requires")
     except ManifestError as error:

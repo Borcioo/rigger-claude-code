@@ -11,7 +11,7 @@
         ]
       },
       {
-        "matcher": "startup|clear",
+        "matcher": "startup|clear|compact",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\" rigger-lessons", "timeout": 10 }
         ]

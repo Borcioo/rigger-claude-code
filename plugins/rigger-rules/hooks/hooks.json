@@ -8,7 +8,7 @@
         ]
       },
       {
-        "matcher": "startup|clear",
+        "matcher": "startup|clear|compact",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\" rigger-rules", "timeout": 10 }
         ]
