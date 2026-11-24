@@ -153,6 +153,32 @@ class ResolutionTests(SlotsTestCase):
         self.assertIn("rigger: slot testing from rigger-defaults.json ignored: rigger-core has no skill testing; "
                       + EMPTY_SLOT, notices)
 
+    def test_levels_without_slots_are_quiet(self):
+        defaults, _, _, _ = self.resolve()
+        rows, _, _, notices = self.resolve(l3={"schema": 1, "expects": ["rigger-wp"]}, l4={"schema": 1})
+        self.assertEqual((rows, notices), (defaults, []))
+        rows, _, _, notices = self.resolve(l4=["slots"])
+        self.assertEqual((rows, notices), (defaults, []))
+
+    def test_level_labels_are_checked(self):
+        for label in ("L5:x", "nolabel", "l1:x"):
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    slots.resolve_slots([(label, {})], self.modules, ENABLED, "windows", L3_FILE)
+
+    def test_model_is_kept_for_agents_and_commands_only(self):
+        rows, _, _, _ = self.resolve(l3=level({"testing": {"model": "opus"}, "lessons": {"model": "opus"},
+                                               "worker": {"model": "opus"}}))
+        self.assertEqual((rows["testing"].model, rows["lessons"].model, rows["worker"].model), (None, None, "opus"))
+
+    def test_slot_missing_at_level_one_with_a_failing_entry_above_is_empty(self):
+        l1_slots = copy.deepcopy(DEFAULT_SLOTS)
+        del l1_slots["mapper"]
+        rows, _, _, notices = self.resolve(l1=level(l1_slots), l3=level({"mapper": {"target": "rigger-core:nobody"}}))
+        self.assertEqual((rows["mapper"].filled, rows["mapper"].source), (False, "personal"))
+        self.assertEqual(notices, ["rigger: slot mapper from %s ignored: kind null not allowed for mapper; "
+                                   "the slot is empty" % L3_FILE])
+
     def test_null_empties_one_slot(self):
         rows, _, _, notices = self.resolve(l3=level({"mapper": None}))
         self.assertEqual((rows["mapper"].filled, rows["mapper"].source), (False, "personal"))
@@ -172,6 +198,10 @@ class ResolutionTests(SlotsTestCase):
                 self.assertEqual(notices, ["rigger: %s; set a single slot to null instead" % head])
         rows, _, _, notices = self.resolve(l1=level(None))
         self.assertFalse(rows["worker"].filled)
+        self.assertEqual(notices, [])
+        l1_slots = dict(copy.deepcopy(DEFAULT_SLOTS), process=None)
+        rows, _, _, notices = self.resolve(l1=level(l1_slots))
+        self.assertEqual((rows["worker"].filled, rows["process.tdd"].filled), (True, False))
         self.assertEqual(notices, [])
 
     def test_unknown_slot_paths_are_ignored_with_one_notice_per_file(self):
@@ -364,8 +394,9 @@ class FillerTests(SlotsTestCase):
         self.assertEqual(notices, [])
         rows, _, _, notices = self.resolve(enabled=ENABLED - {"rigger-lessons"})
         self.assertEqual((rows["lessons"].fillers, rows["lessons"].filled), ((), False))
-        rows, _, _, _ = self.resolve(l4=level({"lessons": None}))
+        rows, _, _, notices = self.resolve(l4=level({"lessons": None}))
         self.assertEqual((rows["lessons"].fillers, rows["lessons"].filled), (("rigger-lessons",), True))
+        self.assertEqual(notices, [])
 
     def test_two_fillers_give_one_line_naming_both(self):
         other = self.module("other-guard", fills="shell-guard", failure_mode="open")

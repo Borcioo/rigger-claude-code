@@ -170,7 +170,7 @@ def trust_filter(lower: Dict[str, dict], project: Dict[str, object], trusted: Fr
     for path, value in project.items():
         if isinstance(value, dict) and ("kind" in value or "target" in value) and path not in trusted:
             merged = _merge(lower.get(path), value)
-            if isinstance(merged, dict) and merged.get("kind") == "command":
+            if merged.get("kind") == "command":
                 notices.append(_command_notice(path, config_file))
                 continue
         kept[path] = value
@@ -213,9 +213,10 @@ def _level_slots(group: int, data: dict, where: str, notices: List[str]) -> Dict
     if not isinstance(slots, dict):
         return {}
     slots = dict(slots)
-    if group > 1 and "process" in slots and slots["process"] is None:
-        notices.append("rigger: config %s may not set slots.process to null; set a single slot to null instead"
-                       % where)
+    if "process" in slots and slots["process"] is None:
+        if group > 1:
+            notices.append("rigger: config %s may not set slots.process to null; set a single slot to null "
+                           "instead" % where)
         del slots["process"]
     flat = flatten(slots)
     unknown = [path for path in flat if path not in SLOT_PATHS]
@@ -251,8 +252,6 @@ def _walk(path: str, touches: list, modules: List[Module], enabled: FrozenSet[st
           notices: List[str]) -> Tuple[Optional[dict], str]:
     """Validate the merge of levels 1-4, then 1-3, 1-2, 1 (D34); return (entry or None, source)."""
     groups = sorted({group for group, _, _, _ in touches}, reverse=True)
-    if 1 not in groups:
-        groups.append(1)
     failed = None  # (where, reason, group) of the highest entry that did not validate
     chosen = None  # (entry, source, landing name)
     for group in groups:
@@ -309,11 +308,7 @@ def resolve_slots(levels: List[Tuple[str, dict]], modules: List[Module], enabled
             item[3], found = trust_filter(merged, flat, trusted, config_file)
             notices.extend(found)
         for path, value in item[3].items():
-            entry = _merge(merged.get(path), value)
-            if entry is None:
-                merged.pop(path, None)
-            else:
-                merged[path] = entry
+            merged[path] = _merge(merged.get(path), value)
 
     rows = []
     entries = {}
