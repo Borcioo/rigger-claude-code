@@ -33,10 +33,11 @@ The command is split into words and simple commands (quotes, PowerShell here-str
 `command`, `time`, `nohup` and `exec` in front of a program are dropped). A commit is a simple command whose
 program is git and whose subcommand is `commit`; `cd`, `Set-Location` and `git -C` before it set the folder. In a
 folder or `-F` path, a variable the command sets to a literal before (bash `NAME=value` alone or after `export`,
-PowerShell `$name = value`, `$env:NAME = value`) is replaced by it when that is the only place that may set it
-and it runs whenever the git step does (top level, after `;`, a newline, or `&&` in the step's own chain; not piped
-or in the background), a Git Bash `/<d>/` or `/tmp` path is read as Windows names it. `wsl [options] git ...` is a
-git step in the Windows folder WSL starts in, its `--cd` or `-C` (`/mnt/<d>/...` read as the drive). Every
+PowerShell `$name = value`, `$env:NAME = value`) is replaced by it when every other appearance of the name is a
+plain read (`$name`, `${name}`) and it runs whenever the git step does (top level, after `;`, a newline, or `&&` in
+the step's own chain; not piped or in the background), a Git Bash `/<d>/` or `/tmp` path is read as Windows names
+it. `wsl [options] git ...` is a git step in the Windows folder WSL starts in, its `--cd` or `-C` (`/mnt/<d>/...`
+read as the drive, after `..` and a doubled leading slash are resolved). Every
 commit of the command is read (a `--dry-run` is none): their staging adds up, and the index is diffed once against
 HEAD (`HEAD~1` when the first one amends). When the command also stages (`git add`/`git rm` before a commit,
 `commit -a`, `-i <paths>`), those are replayed on a copy of the index; a single `git commit <paths>` without `-i`
@@ -70,9 +71,11 @@ runs, after `sudo`, `eval` or `timeout`, inside a substitution, or only named in
 denied. A staged path that names no file and no index entry yet
 is a new file the command makes, and is left out of the replay.
 
-Unchecked by design: a commit in the arguments of `ssh`, or a `wsl` git step whose folder is in the Linux file
-system (`~`, an absolute path outside `/mnt/<d>`), works on a repository the hook cannot read, so it passes unread
-(a substitution in those arguments runs here and is still denied; `wsl bash -c "..."` is denied as unread).
+Unchecked by design: a commit in the arguments of `ssh`, or a `wsl` git commit surely in the Linux file system
+(an absolute path outside `/mnt/<d>`, or `~`/`~/x` with no `..`; only options before the subcommand that choose no
+repository; no GIT_* name in the command), also in a `wsl bash -c|-lc` script, works on a repository the hook
+cannot read, so it passes unread. Any other `wsl` commit outside a Windows folder is denied (a substitution in
+those arguments runs here and is denied too).
 
 Fails open: no commit, `cd` without a
 folder, an interactive add, staging outside the repository, another program that writes files (`python x.py`),
@@ -84,6 +87,7 @@ Usage: python -I -S weak_test_guard.py   (event JSON on stdin)
 """
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -678,29 +682,58 @@ def _assignments(words, powershell):
 
 
 OPENS, CLOSES = ("if", "for", "while", "until", "case", "select", "{"), ("fi", "done", "esac", "}")
+WORD_START = ("", ";", "&", "|", "(", ")", "{", "}", "'", '"', "=", ",", ":")   # a shell word may start after these
+WORD_END = ("", ";", "&", "|", "(", ")", "{", "}", "'", '"', "=", "[", "+", ",")
 
 
-def _assigned_count(command, name, powershell):
-    """How many places in the command text may set `name`: assignments in any form, `read`, `for` and the like."""
-    if powershell:
-        n = re.escape(name)
-        patterns = (r"\$\{?" + n + r"\}?\s*(?:[-+*/%]|\?\?)?=(?!=)", r"\bforeach\s*\(\s*\$" + n + r"\b",
-                    r"(?:-OutVariable|-ov|-PipelineVariable|-pv)\s*:?\s*['\"]?\+?" + n + r"\b",
-                    r"\b(?:Set-Variable|sv|New-Variable|nv)\b[^;|\n]*\b" + re.escape(name.split(":")[-1]) + r"\b")
-        return sum(len(re.findall(p, command, re.I)) for p in patterns)
-    n = r"(?<![\w$./-])" + re.escape(name)
-    patterns = (n + r"\+?=", r"\b(?:read|mapfile|readarray|getopts|printf|for|select|unset)\b[^;&|\n]*?" + n + r"\b")
-    return sum(len(re.findall(p, command)) for p in patterns)
+def _only_read(command, name, powershell, own):
+    """True when `name` stands in the command text once as its assignment (bash `name=`, alone or after `export`;
+    PowerShell `$name =`) and everywhere else only as a plain read (`$name` or `${name}`, in PowerShell an argument
+    or part of a string). Any other appearance as a shell word (`[`, `+=`, `declare`, a scope prefix, `read`,
+    `for`, `Remove-Variable`, the bare name) leaves it unresolved. Text inside the assignment's own value (`own`,
+    the span from its `=`) and the name inside a longer word (`my-repo`, `x\\repo`) are no appearance."""
+    assigned = 0
+    for m in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", command, re.I if powershell else 0):
+        if own[0] <= m.start() < own[1]:
+            continue
+        before, after = command[:m.start()], command[m.end():]
+        if before.endswith("${") and after.startswith("}"):
+            lead, rest = before[:-2], after[1:]
+        elif before.endswith("$"):
+            lead, rest = before[:-1], after
+        elif (before[-1:] not in WORD_START and not before[-1:].isspace()
+              or after[:1] not in WORD_END and not after[:1].isspace()):
+            continue   # inside a longer word: a path or a name, not the variable
+        elif not powershell and after.startswith("=") and re.search(r"(?:^|[;&|\n])[ \t]*(?:export[ \t]+)?$", before):
+            assigned += 1
+            continue
+        else:
+            return False
+        if powershell and re.match(r"\s*=(?!=)", rest) and lead[-1:] in ("", " ", "\t", "\n", ";"):
+            assigned += 1
+            continue
+        if powershell and (lead[-1:] not in ("", " ", "\t", "\n", '"', ",", "=", ";")
+                           or not re.match(r"(?:$|[\s\"',;)}|&\\/])", rest)
+                           or re.match(r"\s*(?:[-+*/%]|\?\?)=", rest)):
+            return False
+    return assigned == 1
 
 
 def _trusted(parsed, command, powershell):
     """{index of a simple command that assigns: its `&&` chain, or None} for the assignments the guard trusts: at the
     top level (no subshell, group, loop or if block), after the start, `;`, a newline or `&&`, not piped or sent to
-    the background, and the only place in the command that may set the name (a value with `$` or a backtick is
+    the background, and the name's one assignment, every other appearance a plain read (a value with `$` or a backtick is
     kept as written, so a folder holding it stays unresolved). An
     assignment after `&&` holds only for steps of the same `&&` chain, which run only when it ran. Also
     {index: chain} of every simple command."""
     trusted, chains, depth, chain = {}, {}, 0, 0
+
+    def own(simple):
+        """The span of an assignment's value: from its first `=` to the end of the simple command."""
+        start, end = simple.spans[0]
+        eq = command.find("=", start, end)
+        return (eq, end) if eq >= 0 else (0, 0)
+
     for k, simple in enumerate(parsed):
         seps = re.sub(r"\s", "", simple.before.replace("&&", "A").replace("||", "O"))
         if seps != "A":
@@ -713,7 +746,7 @@ def _trusted(parsed, command, powershell):
         after = parsed[k + 1].before.replace("&&", "").replace("||", "") if k + 1 < len(parsed) else ""
         pairs = _assignments(simple.words, powershell)
         if (pairs and depth == 0 and set(seps) <= set("A;") and not set(after) & set("|&")
-                and all(_assigned_count(command, name, powershell) == 1 for name, _ in pairs)):
+                and all(_only_read(command, name, powershell, own(simple)) for name, _ in pairs)):
             trusted[k] = chain if "A" in seps else None
         if not powershell and first in OPENS:
             depth += 1
@@ -772,6 +805,10 @@ FOLDER_WHY = "the folder of a git step is named by a variable or `~` the command
 FOLDER_HINT = ("Name the folder literally in `cd` or `git -C`, or set the variable once, to a literal path, at the "
                "start of the same command (`;`, `&&` or a newline before the git step, not inside a block)")
 REMOTE = ("ssh",)   # a commit it runs works on a repository the hook cannot read: unchecked
+WSL_WHY = "a `wsl` git commit works in a repository the guard cannot place"
+WSL_HINT = ("Name the WSL folder literally: `/mnt/<d>/...` for a Windows repository, an absolute Linux path or "
+            "`~/...` without `..` for a Linux one, with no `--git-dir`, `--work-tree`, `--namespace`, other `-c` "
+            "settings or GIT_* variables")
 LINUX_ONLY = object()   # a `wsl` git step in the Linux file system, which the hook cannot read: unchecked
 WSL_VALUE = ("-d", "--distribution", "-u", "--user", "--shell-type")
 
@@ -781,22 +818,61 @@ def _program(word):
     return re.sub(r"\.exe$", "", word.replace("\\", "/").rsplit("/", 1)[-1].lower())
 
 
+class LinuxPath(str):
+    """A folder in the WSL Linux file system, as WSL resolves it."""
+
+
+UNPLACED = object()   # a WSL folder the guard cannot place
+SAFE_GLOBAL = ("--no-pager", "-P", "-p", "--paginate", "--no-optional-locks", "--literal-pathspecs",
+               "--no-replace-objects")   # git options before the subcommand that never choose the repository
+SAFE_CONFIG = ("user.", "commit.", "color.", "advice.", "gpg.", "i18n.", "pager.")   # `-c` keys that choose none
+
+
 def _wsl_folder(path, folder):
-    """The Windows folder a WSL path names (`/mnt/<d>/...`, a Windows or relative path), or LINUX_ONLY for one in the
-    Linux file system (`~`, any other absolute path). Off Windows a path is local as written."""
-    if folder is LINUX_ONLY or path == "~" or path.startswith("~/"):
-        return LINUX_ONLY
-    mount = re.match(r"/mnt/([A-Za-z])(?=/|$)(.*)", path)
-    if mount and os.name == "nt":
-        return mount.group(1) + ":" + (mount.group(2) or "/")
-    if path.startswith("/") and not mount:
-        return LINUX_ONLY if os.name == "nt" else path
+    """The folder a WSL path names from `folder`: a Windows folder for `/mnt/<d>/...` or a Windows or relative path
+    from one; a LinuxPath for an absolute path outside `/mnt/<d>` (read as WSL does: `..` resolved, a doubled
+    leading slash collapsed) or `~`/`~/x` with no `..`; UNPLACED for anything else. Off Windows an absolute path
+    is local as written."""
+    if folder is UNPLACED or "$" in path or "`" in path:
+        return UNPLACED
+    if isinstance(folder, LinuxPath) and not path.startswith(("/", "~")):
+        path = posixpath.join(folder, path)
+    if path == "~" or path.startswith("~/"):
+        return LinuxPath(path) if ".." not in path.split("/") else UNPLACED
+    if path.startswith("/"):
+        norm = "/" + posixpath.normpath(path).lstrip("/")
+        if os.name != "nt":
+            return norm
+        mount = re.match(r"/mnt/([A-Za-z])(?=/|$)(.*)", norm)
+        return mount.group(1) + ":" + (mount.group(2) or "/") if mount else LinuxPath(norm)
     return path if folder is None else os.path.join(folder, path)
 
 
-def _through_wsl(words, folder):
+def _wsl_git(words, base):
+    """For git words WSL runs from `base`: (the folder they choose, whether every option before the subcommand is
+    one that chooses no repository, the index of the subcommand)."""
+    j, sure = 1, True
+    while j < len(words) and words[j].startswith("-"):
+        if words[j] == "-C" and j + 1 < len(words):
+            base = _wsl_folder(words[j + 1], base)
+        elif words[j] == "-c" and j + 1 < len(words):
+            sure = sure and words[j + 1].split("=", 1)[0].lower().startswith(SAFE_CONFIG)
+        elif words[j] not in SAFE_GLOBAL:
+            sure = False
+        j += 2 if words[j] == "-C" or words[j] in GIT_VALUE_GLOBAL else 1
+    return base, sure, j
+
+
+def _linux_only(base, sure, command):
+    """True when a WSL git step surely works in the Linux file system: its folder is there, no option before the
+    subcommand can choose another repository, and the command names no GIT_* variable."""
+    return isinstance(base, LinuxPath) and sure and not re.search("GIT_", command, re.I)
+
+
+def _through_wsl(words, folder, command):
     """`wsl [options] git ...` as the git words it runs, with the Windows folder as `-C` (WSL starts in the Windows
-    folder); LINUX_ONLY when that repository is in the Linux file system; None when it runs no plain git."""
+    folder); LINUX_ONLY when that repository is surely in the Linux file system; (UNPLACED, subcommand) when the
+    guard cannot place it; None when it runs no plain git."""
     i, base = 1, folder
     while i < len(words) and words[i].startswith("-"):
         if words[i] in WSL_VALUE:
@@ -812,23 +888,24 @@ def _through_wsl(words, folder):
             return None
     rest = words[i:]
     if len(rest) > 2 and _program(rest[0]) in ("bash", "sh") and rest[1] in ("-c", "-lc"):
-        return LINUX_ONLY if _linux_only_script(rest[2], base) else None
+        return LINUX_ONLY if _linux_only_script(rest[2], base, command) else None
     if not rest or _program(rest[0]) != "git":
         return None
-    out, j = [], 1
-    while j < len(rest) and rest[j].startswith("-"):
-        if rest[j] == "-C" and j + 1 < len(rest):
-            base, j = _wsl_folder(rest[j + 1], base), j + 2
-            continue
-        out += rest[j:j + 2] if rest[j] in GIT_VALUE_GLOBAL else rest[j:j + 1]
-        j += 2 if rest[j] in GIT_VALUE_GLOBAL else 1
-    if base is LINUX_ONLY:
+    base, sure, j = _wsl_git(rest, base)
+    if _linux_only(base, sure, command):
         return LINUX_ONLY
+    if base is UNPLACED or isinstance(base, LinuxPath):
+        return UNPLACED, (rest[j:j + 1] or [""])[0]
+    out, k = [], 1
+    while k < j:
+        width = 2 if rest[k] == "-C" or rest[k] in GIT_VALUE_GLOBAL else 1
+        out += [] if rest[k] == "-C" else rest[k:k + width]
+        k += width
     return ["git"] + ([] if base is None else ["-C", base]) + out + rest[j:]
 
 
-def _linux_only_script(script, folder):
-    """True when a bash script `wsl` runs from `folder` commits only in the Linux file system (after its `cd` and
+def _linux_only_script(script, folder, command):
+    """True when a bash script `wsl` runs from `folder` commits only where `_linux_only` holds (after its `cd` and
     `-C`) and holds no other `git ... commit` the parse cannot place."""
     try:
         parsed = split_command(script, False)
@@ -839,15 +916,11 @@ def _linux_only_script(script, folder):
         words = _command_words(simple.words, False)
         if words and words[0] in CD:
             targets = [w for w in words[1:] if not w.startswith("-")]
-            here = _wsl_folder(targets[-1], here) if targets else LINUX_ONLY   # a bare `cd` goes home
+            here = _wsl_folder(targets[-1], here) if targets else LinuxPath("~")   # a bare `cd` goes home
         elif words and _program(words[0]) == "git":
-            base, j = here, 1
-            while j < len(words) and words[j].startswith("-"):
-                if words[j] == "-C" and j + 1 < len(words):
-                    base = _wsl_folder(words[j + 1], base)
-                j += 2 if words[j] == "-C" or words[j] in GIT_VALUE_GLOBAL else 1
+            base, sure, j = _wsl_git(words, here)
             if words[j:j + 1] == ["commit"]:
-                if base is not LINUX_ONLY:
+                if not _linux_only(base, sure, command):
                     return False
                 read.append(simple)
     try:
@@ -968,17 +1041,18 @@ def read_command(command, cwd, powershell):
     simples = [(_command_words(simple.words, powershell), simple) for simple in parsed]
 
     def runs_git(words, folder):
-        """The words of a `wsl` git step as git runs them, LINUX_ONLY, or the words as they stand."""
+        """The words of a `wsl` git step as git runs them, LINUX_ONLY, (UNPLACED, subcommand), or the words as
+        they stand."""
         if words and _program(words[0]) == "wsl":
-            return _through_wsl(words, folder) or words
+            return _through_wsl(words, folder, command) or words
         return words
 
     read = []
     for words, simple in simples:
         words = runs_git(words, cwd)
-        if words is LINUX_ONLY or words and (_program(words[0]) in REMOTE
-                                             or (_git_parts(words, cwd, powershell) or "--")[1] == "commit"):
-            read.append(simple)
+        if words is LINUX_ONLY or isinstance(words, tuple) or words and (
+                _program(words[0]) in REMOTE or (_git_parts(words, cwd, powershell) or "--")[1] == "commit"):
+            read.append(simple)   # an unplaced `wsl` step is refused below, with its own reason
     _unread_commit(command, read, powershell)
     trusted, chains = _trusted(parsed, command, powershell)
     folder = cwd
@@ -996,6 +1070,11 @@ def read_command(command, cwd, powershell):
                 variables.update((name, (value, trusted[k])) for name, value in assigned)
             continue
         words = runs_git(words, folder)
+        if isinstance(words, tuple):   # a `wsl` git step the guard cannot place
+            if words[1] == "commit":
+                raise Unclear(WSL_WHY, WSL_HINT)
+            vague = vague or words[1] in ("add", "rm")
+            continue
         if not words or words is LINUX_ONLY:
             continue
         head = words[0].lower()
