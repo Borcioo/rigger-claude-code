@@ -88,7 +88,7 @@ def fill(argv: List[str], values: Dict[str, str]) -> List[str]:
 
 def _inside(path: str, root: str) -> bool:
     """`path` lies in `root`, compared both as given and with links resolved on each side."""
-    return any(review_scope._inside(candidate, base)
+    return any(review_scope.inside(candidate, base)
                for candidate in (os.path.abspath(path), os.path.realpath(path))
                for base in (os.path.abspath(root), os.path.realpath(root)))
 

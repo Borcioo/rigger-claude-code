@@ -33,7 +33,7 @@ class ScopeError(Exception):
     pass
 
 
-def _inside(folder, root):
+def inside(folder, root):
     folder = os.path.normcase(os.path.abspath(folder))
     root = os.path.normcase(os.path.abspath(str(root)))
     return folder == root or folder.startswith(root.rstrip(os.sep) + os.sep)
@@ -52,7 +52,7 @@ def find_program(name, repo, exts):
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not os.path.isabs(entry):
             continue
-        if _inside(entry, repo) or _inside(entry, cwd):
+        if inside(entry, repo) or inside(entry, cwd):
             continue
         for ext in exts:
             candidate = os.path.join(os.path.abspath(entry), name + ext)
