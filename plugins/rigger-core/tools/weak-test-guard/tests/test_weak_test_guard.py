@@ -613,6 +613,9 @@ def heredoc_commit(body, delimiter="'EOF'"):
 
 class SubstitutionTests(unittest.TestCase):
     def test_a_heredoc_message_is_the_word_bash_passes(self):
+        major = subprocess.run([shell()], input=b"echo ${BASH_VERSINFO:-0}\n", stdout=subprocess.PIPE).stdout.strip()
+        if major == b"3":
+            self.skipTest("bash 3 (macOS /bin/sh) misreads a heredoc inside $(...), so it is no oracle here")
         for body in HEREDOC_BODIES:
             with self.subTest(body=body):
                 command = heredoc_commit(body)
