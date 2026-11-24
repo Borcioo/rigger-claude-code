@@ -432,6 +432,22 @@ class PatternTests(unittest.TestCase):
         self.assertEqual(GUARD.findings(diff), ["test file renamed to a name no runner collects: "
                                                 "src/sum.test.js -> src/sum.test.disabled.js"])
 
+    def test_a_short_name_after_folding_covers_no_test(self):
+        # `__lt__` folds to `lt`, which is part of `testrequestdefault`: too short to say which test covered it.
+        removed_test = file_diff("tests/test_req.py", ("def test_request_default():", "    assert make() == 1"))
+        alone = GUARD.findings(removed_test)
+        self.assertEqual(alone, ["removed test `test_request_default` in tests/test_req.py",
+                                 "assertions in test files: 1 removed, 0 added"])
+        for line in ("    def __eq__(self, other):", "    def __lt__(self, other):", "def _____(x):"):
+            with self.subTest(line=line):
+                self.assertEqual(GUARD.findings(file_diff("src/model.py", (line,)) + removed_test), alone)
+
+    def test_a_test_file_of_each_js_extension_is_read(self):
+        for path in ("src/a.test.mts", "src/a.spec.cts", "src/a.test.mjs", "src/a.test.ts"):
+            with self.subTest(path=path):
+                found = GUARD.findings(file_diff(path, ("it('adds', () => {", "  expect(1).toBe(1);", "});")))
+                self.assertEqual(found, ["removed test `adds` in %s" % path, "assertions in test files: 1 removed, 0 added"])
+
     def test_a_removed_local_variable_covers_no_test(self):
         diff = file_diff("src/a.py", ("    result = (a, b)", "    const value = compute(1)")) + file_diff(
             "tests/test_a.py", ("def test_result_value():", "    print(result, value)"))
@@ -481,6 +497,17 @@ class ReasonTests(unittest.TestCase):
         self.assertIsNotNone(reason_of(run_hook('git commit -m "Test-change: x" -m "body text long"', repo.root)))
         (repo.root / "msg.txt").write_text("fix: x\n\nTest-change: x\nmore body text here\n", encoding="utf-8")
         self.assertIsNotNone(reason_of(run_hook("git commit -F msg.txt", repo.root)))
+
+    def test_an_apostrophe_inside_a_word_does_not_end_the_reason(self):
+        repo = self.weakened()
+        self.assertIsNone(reason_of(run_hook('git commit -m "fix" -m "Test-change: it\'s obsolete since v2 removed parse"',
+                                             repo.root)))
+        (repo.root / "msg.txt").write_text("fix\n\nTest-change: it's obsolete since the v2 parser\n", encoding="utf-8")
+        self.assertIsNone(reason_of(run_hook("git commit -F msg.txt", repo.root)))
+        (repo.root / "quoted.txt").write_text("fix\n\nTest-change: 'x' and \"y\" are gone with the parser\n",
+                                              encoding="utf-8")   # no quoting in a file: a quote ends nothing
+        self.assertIsNone(reason_of(run_hook("git commit -F quoted.txt", repo.root)))
+        self.assertIsNotNone(reason_of(run_hook("git commit -m 'Test-change: x' -m 'body text long'", repo.root)))
 
     def test_a_reused_message_counts(self):
         repo = self.weakened(stage=False)
@@ -1047,6 +1074,20 @@ class DiffSourceTests(unittest.TestCase):
                 repo = Repo(self, BASE)
                 repo.change(WEAK, stage=stage)
                 self.assertIsNotNone(reason_of(run_hook(command, repo.root, tool=tool)))
+
+    def test_a_long_option_git_accepts_abbreviated_is_read(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK)
+        for command in ("git commit --mes x", "git commit --messa=x"):
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
+        self.assertIsNone(reason_of(run_hook("git commit --mes x --dry", repo.root)))   # --dry-run
+        git(repo.root, "commit", "-q", "-m", "weaken")
+        reason = reason_of(run_hook("git commit --amen --no-edit", repo.root))
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
 
     def test_a_dry_run_is_no_commit(self):
         repo = Repo(self, BASE)

@@ -80,12 +80,12 @@ TRAILER = "Test-change:"
 REASON_MIN = 10
 MAX_DIFF = 32 << 20
 GIT_TIMEOUT = 4.0
-DEADLINE = 8.0   # all git calls of one event together; the hook's own timeout is 10 s
+DEADLINE = 8.0   # all git calls of one event together; the hook's own timeout is 20 s
 _deadline = [0.0]
 SHOWN = 8   # findings listed in a denial
 SYMBOL_MIN = 5   # shorter defined names (`get`, `user`, `init`) say nothing about which test covered them
 
-CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".go")
+CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".php", ".go")
 TEST_DIRS = frozenset(("test", "tests", "__tests__", "spec", "specs", "e2e"))
 THIRD_PARTY = frozenset(("vendor", "node_modules", "vendor_prefixed", "third_party", "third-party", "bower_components"))
 TEST_FILE = re.compile(r"^test_.*\.py$|_test\.(?:py|go)$|\.(?:test|spec|cy)\.[cm]?[jt]sx?$|Test\.php$")
@@ -133,6 +133,16 @@ FILE_WRITERS = {"rm": "all", "del": "all", "erase": "all", "ri": "all", "rd": "a
 NO_FILE = frozenset(("/dev/null", "$null", "nul"))
 CD = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
 READERS = frozenset(("cat", "get-content", "gc", "type"))   # a file piped into `git commit -F -`
+# Every long option of `git commit` (`git commit --git-completion-helper-all`): git takes any unique prefix of one.
+COMMIT_LONG = tuple(
+    "quiet verbose file author date message reedit-message reuse-message fixup squash reset-author trailer signoff "
+    "template edit cleanup status gpg-sign all include interactive patch unified inter-hunk-context only no-verify "
+    "dry-run short branch ahead-behind porcelain long null amend no-post-rewrite untracked-files pathspec-from-file "
+    "pathspec-file-nul allow-empty allow-empty-message verify post-rewrite no-quiet no-verbose no-file no-author "
+    "no-date no-message no-reedit-message no-reuse-message no-fixup no-squash no-reset-author no-signoff no-template "
+    "no-edit no-cleanup no-status no-gpg-sign no-all no-include no-interactive no-patch no-only no-dry-run no-short "
+    "no-branch no-ahead-behind no-porcelain no-long no-null no-amend no-untracked-files no-pathspec-from-file "
+    "no-pathspec-file-nul no-allow-empty no-allow-empty-message".split())
 COMMIT_VALUE_LONG = frozenset(("message", "file", "reuse-message", "reedit-message", "author", "date", "template",
                                "cleanup", "trailer", "fixup", "squash", "pathspec-from-file"))
 # The hook runs before the command is approved: no fsmonitor program, and a ref from the command is never an option.
@@ -258,7 +268,7 @@ def findings(diff_text):
                         name = next(group for group in match.groups() if group).lower()
                         (defined_added if sign == "+" else defined_removed).add(name)
     gone_stems = {stem(f.path) for f in code if f.deleted}
-    symbols = {s for s in (defined_removed - defined_added) | gone_stems if len(s) >= SYMBOL_MIN}
+    symbols = {s for s in (defined_removed - defined_added) | gone_stems if len(re.sub(r"[^a-z0-9]", "", s)) >= SYMBOL_MIN}
 
     per_file, added_names = [], set()
     removed_lines, added_lines = [], []
@@ -678,6 +688,8 @@ def _commit_options(commit, args):
             return
         if word.startswith("--"):
             name, eq, attached = word[2:].partition("=")
+            named = [option for option in COMMIT_LONG if option.startswith(name)]
+            name = name if name in COMMIT_LONG or len(named) != 1 else named[0]
             if name in COMMIT_VALUE_LONG and not eq:
                 attached, i = value, i + 1
             if name in ("message", "file"):
@@ -831,16 +843,17 @@ def _unread_commit(command, read, powershell):
                 break
 
 
-def has_reason(text):
+def has_reason(text, quoted=True):
     """True when a line holds `Test-change:` (or `Test-change=`, as `--trailer` takes it) and at least
-    REASON_MIN characters after it, up to a quote that ends the value it stands in."""
+    REASON_MIN characters after it; in command text (`quoted`) up to a quote that ends the value it stands in, where an
+    apostrophe inside a word (`it's`) ends nothing."""
     for line in (text or "").splitlines():
         at = max(line.find(TRAILER), line.find(TRAILER[:-1] + "="))
         if at < 0:
             continue
         reason = line[at + len(TRAILER):]
-        cut = min([k for k in (reason.find('"'), reason.find("'"), reason.find("`")) if k >= 0] or [len(reason)])
-        if len(reason[:cut].strip()) >= REASON_MIN:
+        end = re.search(r"[\"`]|'(?!\w)", reason) if quoted else None
+        if len(reason[:end.start() if end else len(reason)].strip()) >= REASON_MIN:
             return True
     return False
 
@@ -936,16 +949,16 @@ def _stated(commit, command):
 def _stated_one(commit):
     """True when the commit's message states a reason (read without git where it can be)."""
     if commit.message_file == "-":
-        return any(has_reason(_read(path)) for path in commit.message_sources)
+        return any(has_reason(_read(path), quoted=False) for path in commit.message_sources)
     if commit.message_file:
         text = _read(os.path.join(commit.folder, commit.message_file))
         if text is None:
             raise RuntimeError("message file unreadable")   # the same command may still write it: fail open
-        return has_reason(text)
+        return has_reason(text, quoted=False)
     ref = commit.reuse or ("HEAD" if commit.amend and not commit.new_message else None)
     if ref and not ref.startswith("-"):
         return has_reason(_git(["log", "-1", "--no-show-signature", "--format=%B", ref, "--"],
-                               commit.folder).decode("utf-8", "replace"))
+                               commit.folder).decode("utf-8", "replace"), quoted=False)
     return False
 
 
