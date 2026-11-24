@@ -495,6 +495,42 @@ class DoctorShTests(DoctorShCase):
             "personal.mine-2": {"before": "meeting notes", "load": ["notes:style"]},
         }})
 
+    def test_the_old_rigger_rules_table_moves_whole_under_the_shipped_ids(self):
+        """Spec section 13, migration: the table release 0.5.0 shipped, copied into rules.d, fits uncut."""
+        old = REPO_PLUGINS.parent / "tests" / "fixtures" / "golden-34e7713" / "plugins" / "rigger-rules" / "rules" / "skills.md"
+        self.write_file(self.config / "rigger" / "rules.d" / "skills.md", old.read_bytes().decode("utf-8"))
+        result = self.run_assembly()
+        text = self.table_json(result.checks["rules-d-table rules.d/skills.md"][1], self.config / "rigger" / "config.json")
+        rows = json.loads(text)["triggers"]  # a cut JSON would not parse
+        self.assertEqual({row_id: row["load"] for row_id, row in rows.items()}, {
+            "rigger-core.orchestrating-subagents": ["rigger-core:orchestrating-subagents"],
+            "rigger-core.git-workflow": ["rigger-core:git-workflow"],
+            "rigger-core.web-ui-traps": ["rigger-core:web-ui-traps"],
+            "rigger-core.e2e-playwright-speed": ["rigger-core:e2e-playwright-speed"],
+            "rigger-core.stack-tooling": ["rigger-core:stack-tooling"],
+            "rigger-core.plans": ["superpowers:brainstorming", "superpowers:writing-plans"],
+            "rigger-core.testing": ["rigger-core:testing", "superpowers:test-driven-development"],
+            "rigger-core.debugging": ["superpowers:systematic-debugging"],
+        })
+        self.assertEqual(rows["rigger-core.debugging"]["before"], "a bug, a failing test or unexpected behaviour")
+
+    def test_empty_slot_rows_say_why_above_level_one(self):
+        self.personal_config({"slots": {"testing": None, "lessons": {"kind": "hook", "target": "rigger-rules"}}})
+        result = self.run_assembly()
+        self.assertRow(result, "slot testing", "INFO", "empty: personal config leaves it empty")
+        self.assertRow(result, "slot lessons", "INFO", "empty: rigger-rules does not fill it")
+
+    def test_two_fillers_win_over_a_missing_expected_filler(self):
+        self.personal_config({"slots": {"lessons": {"kind": "hook", "target": "mod-absent"}}})
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", self.module("zz-lessons", "lessons"))
+        self.assertRow(result, "slot lessons", "WARN", "filled by rigger-lessons and zz-lessons")
+        self.assertEqual(result.fixes["slot lessons"], ["claude plugin disable zz-lessons"])
+
+    def test_a_command_slot_shows_its_program_and_source(self):
+        self.personal_config({"slots": {"reviewer": {"kind": "command", "target": ["reviewer-cli", "--out", "{out}"]}}})
+        result = self.run_assembly()
+        self.assertRow(result, "slot reviewer", "OK", "reviewer-cli … (personal)")
+
     def test_a_long_rules_d_table_is_cut_at_1500_characters(self):
         lines = "".join("| step %02d %s | `a:b` |\n" % (i, "w" * 60) for i in range(40))
         self.write_file(self.config / "rigger" / "rules.d" / "long.md", "| Before | Skill |\n|---|---|\n" + lines)

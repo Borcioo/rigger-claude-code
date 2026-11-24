@@ -870,12 +870,13 @@ _Row = Tuple[str, str, str, Optional[str]]
 
 
 def _empty_reason(row: slots.Row, level_one: dict, modules: List[Module], enabled: FrozenSet[str]) -> str:
+    if row.kind == "hook" and isinstance(row.target, str):
+        target = _shown(row.target)
+        return "%s does not fill it" % target if row.target in enabled else "plugin %s is not enabled" % target
     if row.source != "default":
         return "%s config leaves it empty" % _shown(row.source)
     if row.kind == "hook":
-        if not isinstance(row.target, str):
-            return "no default"
-        return "no enabled plugin fills it" if row.target in enabled else "plugin %s is not enabled" % _shown(row.target)
+        return "no default"
     entry = level_one.get(row.path)
     problem = slots.entry_problem(row.path, entry, modules, enabled) if entry is not None else None
     return _shown(problem, 300) if problem else "no default"
@@ -946,7 +947,8 @@ def _table_rows(text: str) -> List[Tuple[str, List[str]]]:
             inside = False
         else:  # the |---|---| line holds no skill name and is skipped as an empty row
             before, _, skill = line.strip("|").partition("|")
-            load = _SKILL_NAME.findall(skill)
+            # Split first: findall over a long cell with no colon rescans the rest of it at every position.
+            load = [word for word in re.split(r"[\s`,;()]+", skill) if _SKILL_NAME.fullmatch(word)]
             if before.strip() and load:
                 found.append((before.strip(), load))
     return found
