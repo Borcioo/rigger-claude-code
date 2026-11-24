@@ -3,7 +3,7 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-24
 
 ### Migration
 
@@ -76,6 +76,13 @@ Update every Rigger plugin in one go, then check the machine:
 - `/rigger-core:doctor` rows: `rules-assembly`, `rule-override`, `expects` (with
   `claude plugin install <name>`), `config-inactive`; on macOS the `python` FIX names both
   `xcode-select --install` and `brew install python`.
+
+### Fixed
+
+- The weak-test guard checks every `git commit` in a command, including a heredoc message that
+  holds `"`, commits behind wrappers (`env`, `eval`, `bash -c`) and commits after steps that change
+  files or the index. When it cannot tell what a commit commits, it denies with a fix hint instead
+  of allowing. Not checked: `ssh` commits and `wsl` commits on Linux-only paths.
 
 ## [0.4.0] - 2026-11-23
 
