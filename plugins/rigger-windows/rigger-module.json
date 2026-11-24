@@ -2,7 +2,15 @@
   "schema": 1,
   "name": "rigger-windows",
   "layer": "general",
-  "fills": null,
+  "fills": "shell-guard",
+  "failure_mode": "open",
+  "provides": {
+    "shell-guard": {
+      "kind": "hook",
+      "target": "rigger-windows",
+      "rule_checker": "tools/shell-guard/lessons_guard.py"
+    }
+  },
   "rules": [
     {
       "file": "rules/windows.md",
@@ -44,6 +52,8 @@
       "tools/*/tests/",
       "tools/mem-check/"
     ],
-    "contract": []
+    "contract": [
+      "shell-guard"
+    ]
   }
 }

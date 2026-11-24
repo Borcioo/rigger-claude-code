@@ -19,6 +19,11 @@ LAYERS = ("general", "company")
 AUDIENCES = ("main", "subagent", "both")
 OS_NAMES = ("windows", "macos", "linux")
 SUBAGENT_RULES = ("none", "all")
+SLOT_PATHS = (
+    "reviewer", "worker", "implementer", "mapper", "testing", "shell-guard", "lessons",
+    "process.brainstorm", "process.plans", "process.tdd", "process.debug",
+)
+FAILURE_MODES = ("open", "closed")
 MAX_DEPTH = 32
 BEFORE_MAX = 300
 LOAD_MAX = 4
@@ -64,6 +69,7 @@ class Module:
     tests: dict
     marketplace: Optional[str]
     origin: str
+    failure_mode: Optional[str] = None
 
 
 def _is_int(value) -> bool:
@@ -265,6 +271,57 @@ def _object(data: dict, key: str, default):
     return value
 
 
+def _fills(value) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ManifestError("fills must be a slot name or null")
+    if value not in SLOT_PATHS:
+        raise ManifestError("fills %s is not a slot" % value)
+    return value
+
+
+def _failure_mode(data: dict) -> Optional[str]:
+    if "failure_mode" not in data:
+        return None
+    value = data["failure_mode"]
+    if value not in FAILURE_MODES:
+        raise ManifestError("failure_mode must be open or closed")
+    return value
+
+
+def _provides(data: dict, root: Path) -> dict:
+    provides = _object(data, "provides", {})
+    for slot, entry in provides.items():
+        if slot not in SLOT_PATHS:
+            raise ManifestError("provides %s is not a slot" % slot)
+        if not isinstance(entry, dict):
+            raise ManifestError("provides %s must be an object" % slot)
+    entry = provides.get("shell-guard")
+    if entry is not None and "rule_checker" in entry:
+        checker = entry["rule_checker"]
+        what = "provides shell-guard rule_checker"
+        if not isinstance(checker, str):
+            raise ManifestError("%s must be a string" % what)
+        if not _inside(checker):
+            raise ManifestError("%s %s is outside the module" % (what, checker))
+        if not (root / checker).is_file():
+            raise ManifestError("%s %s is not a file" % (what, checker))
+    return provides
+
+
+def _tests(data: dict) -> dict:
+    tests = _object(data, "tests", {})
+    if "contract" in tests:
+        contract = tests["contract"]
+        if not isinstance(contract, list) or not all(isinstance(slot, str) for slot in contract):
+            raise ManifestError("tests contract must be a list of slot names")
+        for slot in contract:
+            if slot not in SLOT_PATHS:
+                raise ManifestError("tests contract %s is not a slot" % slot)
+    return tests
+
+
 def load_manifest(root: Path, marketplace: Optional[str], origin: str) -> Module:
     """Load <root>/rigger-module.json, or raise ManifestError with the first reason it fails."""
     data = _read_json(root / MANIFEST, MANIFEST)
@@ -283,15 +340,14 @@ def load_manifest(root: Path, marketplace: Optional[str], origin: str) -> Module
         raise ManifestError("layer %r: expected general or company" % (layer,))
     if layer == "company" and marketplace == PUBLIC_MARKETPLACE:
         raise ManifestError("company layer in the public marketplace")
-    fills = data.get("fills")
-    if fills is not None and not isinstance(fills, str):
-        raise ManifestError("fills must be a slot name or null")
-    provides = _object(data, "provides", {})
+    fills = _fills(data.get("fills"))
+    failure_mode = _failure_mode(data)
+    provides = _provides(data, root)
     config = _object(data, "config", None)
     if config is not None and layer != "company" and name != CORE:
         raise ManifestError("config is honoured only in company modules and %s" % CORE)
     lessons = _object(data, "lessons", None)
-    tests = _object(data, "tests", {})
+    tests = _tests(data)
     return Module(
         name=name,
         root=root,
@@ -306,4 +362,5 @@ def load_manifest(root: Path, marketplace: Optional[str], origin: str) -> Module
         tests=tests,
         marketplace=marketplace,
         origin=origin,
+        failure_mode=failure_mode,
     )
