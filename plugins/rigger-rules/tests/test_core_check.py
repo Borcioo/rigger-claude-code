@@ -115,16 +115,18 @@ class CoreCheckTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
-    def run_check(self, root=None, config="set", plugin=PLUGIN, command=None):
+    def run_check(self, root=None, config="set", plugin=PLUGIN, command=None, script=None, cwd=None):
         command = command or check_command(plugin)[1]["command"]
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
+        if script is not None:
+            env["CORE_CHECK_SCRIPT"] = script
         env["HOME"] = str(self.home)
         if config == "set":
             env["CLAUDE_CONFIG_DIR"] = str(self.config)
         env["CLAUDE_PLUGIN_ROOT"] = Path(root or self.rules).as_posix()
         env["PATH"] = os.pathsep.join([str(Path(self.sh).parent), env.get("PATH", "")])
         proc = subprocess.run([self.sh, "-c", command], input=b'{"source":"startup"}',
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(self.tmp), timeout=60)
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(cwd or self.tmp), timeout=60)
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         return proc.stdout
 
@@ -259,11 +261,30 @@ class CoreCheckTests(unittest.TestCase):
         self.assertIn(b"\\\\", (self.config / "plugins" / "installed_plugins.json").read_bytes())
         self.assertEqual(self.run_check(), LINE)
 
+    @unittest.skipUnless(os.name == "nt", "a script path written with backslashes is a Windows spelling")
+    def test_backslash_script_path(self):
+        # Claude Code may expand the hook command with backslashes on Windows: the script still finds its folder.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": old})
+        script = str(self.rules / "hooks" / "core_check.sh")
+        self.assertNotIn("/", script)
+        # The path travels in the environment: Git Bash re-parses quotes in its own command line.
+        out = self.run_check(command='sh "$CORE_CHECK_SCRIPT" rigger-rules', script=script)
+        self.assertEqual(out, LINE)
+
+    def test_bare_script_name_run_from_its_folder(self):
+        # No separator in the path: the script's folder is the current one.
+        old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": old})
+        out = self.run_check(command="sh core_check.sh rigger-rules", cwd=self.rules / "hooks")
+        self.assertEqual(out, LINE)
+
     def test_wiring(self):
+        # startup and clear start a session with no rules; compact repeats the line the summary dropped.
         for name in RULES_PLUGINS:
             with self.subTest(plugin=name):
                 group, _ = check_command(PLUGINS / name)
-                self.assertEqual(group, {"matcher": "startup|clear", "hooks": [
+                self.assertEqual(group, {"matcher": "startup|clear|compact", "hooks": [
                     {"type": "command", "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" ' + name,
                      "timeout": 10}]})
 

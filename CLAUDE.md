@@ -66,7 +66,9 @@ change: `CONTRIBUTING.md`.
   line ends with its count and, for the suites, the number of SKIP files; a leg it cannot run
   prints `SKIP <leg>: <reason>`. Between fixes `python -I scripts/run_tests.py --fix-round`, never
   as the gate; add `--no-claude` when no `claude` run is allowed, or `test_reinject.py` starts
-  `claude -p`. A change to a rules file or a skill runs `test_plugin_rules` and `test_drift_lint` in
+  `claude -p`. Before the gate, a change inside one module's folder may run
+  `python -I scripts/run_tests.py --changed-modules` as a fast pre-check; it never replaces the gate
+  for a pull request or a release, and exit 2 means a shared file changed. A change to a rules file or a skill runs `test_plugin_rules` and `test_drift_lint` in
   the same round as the edit (text moved into a placeholder leaves a stale drift-lint baseline row,
   itself a finding) and again before the merge; a commit chained after a test
   runs only on that test's exit code, with the full output kept in a file. The status file's

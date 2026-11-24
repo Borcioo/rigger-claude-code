@@ -115,7 +115,7 @@ class HooksJsonTests(unittest.TestCase):
         self.assertEqual(load_hooks()["SessionStart"], [{
             "matcher": MATCHER, "hooks": [{"type": "command", "command": WORKTREE_COMMAND, "timeout": 10}],
         }, {
-            "matcher": "startup|clear", "hooks": [{"type": "command", "command": CORE_CHECK_COMMAND, "timeout": 10}],
+            "matcher": "startup|clear|compact", "hooks": [{"type": "command", "command": CORE_CHECK_COMMAND, "timeout": 10}],
         }])
 
     def test_no_rules_handler_and_no_subagent_handler(self):
