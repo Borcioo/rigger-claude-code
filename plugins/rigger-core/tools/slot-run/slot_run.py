@@ -154,7 +154,7 @@ def _repository_root(start: str) -> Path:
         folder = parent
     root = Path(folder)
     try:
-        code, out = review_scope._git(root, ["rev-parse", "--show-toplevel"])
+        code, out = review_scope.git(root, ["rev-parse", "--show-toplevel"])
     except review_scope.ScopeError as exc:
         raise Refusal(str(exc))
     top = out.decode("utf-8", "replace").strip()

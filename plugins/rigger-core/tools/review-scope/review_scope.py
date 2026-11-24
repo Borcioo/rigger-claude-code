@@ -71,8 +71,9 @@ def _git_env():
     return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
 
 
-def _git(repo, args):
-    """Run one git command in `repo`; any way it fails is a ScopeError."""
+def git(repo, args):
+    """(exit code, stdout bytes) of one git command in `repo`, found by find_git and run without any GIT_*
+    variable; any way it fails to run is a ScopeError. The one way other tools start git through this module."""
     try:
         proc = subprocess.run(
             [find_git(repo)] + list(GIT_OPTIONS) + list(args),
@@ -104,13 +105,13 @@ def _check_revision(rev):
 def _check_repository(repo):
     if not os.path.isdir(str(repo)):
         raise ScopeError("not a git repository: %s" % repo)
-    code, _out = _git(repo, ["rev-parse", "--git-dir"])
+    code, _out = git(repo, ["rev-parse", "--git-dir"])
     if code != 0:
         raise ScopeError("not a git repository: %s" % repo)
 
 
 def _resolve(repo, rev):
-    code, out = _git(repo, ["rev-parse", "--verify", "--quiet", rev + "^{commit}"])
+    code, out = git(repo, ["rev-parse", "--verify", "--quiet", rev + "^{commit}"])
     if code != 0:
         raise ScopeError("revision does not name a commit: %s" % rev)
     return out.decode("ascii", "replace").strip()
@@ -134,7 +135,7 @@ def scope(repo, base, head):
     _check_repository(repo)
     base_id = _resolve(repo, base)
     head_id = _resolve(repo, head)
-    code, out = _git(repo, ["diff"] + list(GIT_FLAGS) + ["--name-status", "-z", base_id, head_id])
+    code, out = git(repo, ["diff"] + list(GIT_FLAGS) + ["--name-status", "-z", base_id, head_id])
     if code != 0:
         raise ScopeError("git diff failed with exit %d" % code)
     fields = out.split(b"\0")
