@@ -54,7 +54,6 @@ KEPT = ("CLAUDE_CODE_CHILD_SESSION",)
 CORE = PLUGINS / "rigger-core"
 SLOT_RUN = CORE / "tools" / "slot-run" / "slot_run.py"
 FAKE_REVIEWER = SLOT_RUN.parent / "tests" / "fake_reviewer.py"
-NEEDS_TASK_14 = "needs Task 14's slot_run.py and slot-run/tests/fake_reviewer.py, which this branch does not hold"
 # The ## Slots line (D36, spike Q3), anchored on the core root as the session prints it.
 SLOT_LINE = re.compile(r"sh '{root}/bin/py\.sh' '{root}/tools/slot-run/slot_run\.py' <slot> --session (\S+) "
                        r"--base <base revision>".format(root=re.escape(root_text(CORE))))
@@ -421,7 +420,6 @@ class SlotSessionTests(unittest.TestCase):
         runs = [found.group(1) for found in map(SLOT_LINE.search, lines) if found]
         self.assertEqual(runs, [session_id], "the ## Slots command line, with this session's id")
 
-    @unittest.skipUnless(SLOT_RUN.is_file() and FAKE_REVIEWER.is_file(), NEEDS_TASK_14)
     def test_a_stub_command_reviewer_is_run_and_a_refused_output_is_blocked(self):
         for mode, check in (("bad-status", lambda last: last.startswith("slot-run: refused: status: ")),
                             ("ok", lambda last: last == "slot-run: ok reviewer 1 findings")):
@@ -463,7 +461,6 @@ class SlotSessionTests(unittest.TestCase):
         self.assertIn("rigger: slot reviewer runs the project's command %s (trusted in %s)" % (shown, self.personal),
                       notices(lines))
 
-    @unittest.skipUnless(SLOT_RUN.is_file() and FAKE_REVIEWER.is_file(), NEEDS_TASK_14)
     def test_project_command_without_trust_never_runs(self):
         self.write_json(self.repo / ".claude" / "rigger.json",
                         {"slots": {"reviewer": {"kind": "command", "target": self.command("ok")}}})
