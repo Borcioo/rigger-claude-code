@@ -36,8 +36,9 @@ program is git and whose subcommand is `commit`; `cd`, `Set-Location` and `git -
 `$(...)`) restores the folder and stack it opened with (a PowerShell `(...)` or script block restores nothing). In a
 folder or `-F` path, a variable the command sets to a literal before (bash `NAME=value` alone or after `export`,
 PowerShell `$name = value`, `$env:NAME = value`) is replaced by it when every other appearance of the name is a
-plain read (`$name`, `${name}`; the literal text of a commit, such as its message, is no appearance, what runs in
-it is) and it runs whenever the git step does (top level, after `;`, a newline, or `&&` in
+plain read (`$name`, `${name}`; quoted text of a commit, such as its message, is no appearance unless a `${`, `$[`
+or `[` is open around the name or a `[` follows it; what runs in a commit and its unquoted words are) and it runs
+whenever the git step does (top level, after `;`, a newline, or `&&` in
 the step's own chain; not piped or in the background), a Git Bash `/<d>/` or `/tmp` path is read as Windows names
 it. `wsl [options] git ...` is a git step in the Windows folder WSL starts in, its `--cd` or `-C` (`/mnt/<d>/...`
 read as the drive, after `..` and a doubled leading slash are resolved). Every
@@ -66,7 +67,9 @@ file, or a variable, `~`, backtick or brace, when a later `git add`, `-a` or pat
 step git rejects, a Bash glob or brace that, read as git does, weakens tests, commits in more than one
 repository, a commit or staging step whose folder still holds a variable, substitution or leading `~`, or follows a
 folder stack the guard cannot follow (a pop from an empty stack, a bare bash `pushd` with none, `+N`/`-N`, `-n`, a
-named PowerShell stack, a `)` no `(` or `case` opened) until an absolute `cd` names it, a command
+named PowerShell stack or `-StackName` on `Set-Location`, any `dirs`, a push or pop piped or in the background, a
+`)` no `(` or `case` opened, a `)` at the depth of a `case` that a subshell opened before, since that `case` may be
+no keyword) until an absolute `cd` names it, a command
 it cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and
 a `git` followed by the whole word `commit` (not `--no-commit`, `fix/commit-x`, `commit.gpgsign`, `post-commit`;
 `commit-tree` counts) between two of `; & | ( ) { } !` or a newline, anywhere in the text (inside quotes too, at
@@ -78,7 +81,7 @@ is a new file the command makes, and is left out of the replay.
 
 Unchecked by design: a commit in the arguments of `ssh`, or a `wsl` git commit surely in the Linux file system
 (an absolute path outside `/mnt/<d>`, or `~`/`~/x` with no `..`; only options before the subcommand that choose no
-repository; no GIT_* name in the command), also in a `wsl bash -c|-lc` script with no subshell and no `popd`,
+repository; no GIT_* name in the command), also in a `wsl bash -c|-lc` script with no subshell and no `pushd`,
 works on a repository the hook cannot read, so it passes unread. Any other `wsl` commit outside a Windows folder is
 denied (a substitution in those arguments runs here and is denied too).
 
@@ -371,6 +374,7 @@ class Simple:
         self.redirects = []
         self.spans = [[start, start]]
         self.runs = []   # spans inside it that run as commands: substitutions, backticks, expanding heredoc parts
+        self.quoted = []   # spans of its quoted text: quotes, here-strings, `$'...'`, quoted heredoc bodies
         self.before = before   # the separators since the simple command before it (`;`, `&&`, `||`, `|`, `(`, ...)
 
 
@@ -545,6 +549,7 @@ def split_command(text, powershell):
                 current.runs.append([start + body.index("$("), start + len(body)])
             word.append(body)
             has_word = True
+            current.quoted.append([i, end + len(closer) if end >= 0 else n])
             i = end + len(closer) if end >= 0 else n
             continue
         if c in " \t\r":
@@ -557,6 +562,8 @@ def split_command(text, powershell):
                 end = text.find("\n" + delimiter + "\n", i - 1)
                 stop = end if end >= 0 else n
                 owner.spans.append([i, stop])
+                if quoted:
+                    owner.quoted.append([i, stop])
                 runs = [k for k in (text.find("$(", i, stop), text.find("`", i, stop)) if k >= 0]
                 if not quoted and runs:   # an unquoted body expands, and its substitutions run
                     owner.runs.append([min(runs), stop])
@@ -600,6 +607,8 @@ def split_command(text, powershell):
             end = (_ansi_end if text[i + 1] == "'" else _arith_end)(text, i)
             if text[i + 1] == "(":
                 current.runs.append([i, end])   # arithmetic may hold a substitution
+            else:
+                current.quoted.append([i, end])
             word.append(text[i:end])
             has_word = True
             i = end
@@ -610,7 +619,7 @@ def split_command(text, powershell):
             has_word = True
             i = end
         elif c == "'":
-            j = i + 1
+            j, opened = i + 1, i
             while True:
                 end = text.find("'", j)
                 if end < 0:
@@ -624,6 +633,7 @@ def split_command(text, powershell):
                 word.append(text[j:end])
                 i = end + 1
                 break
+            current.quoted.append([opened, i])
             has_word = True
         elif c == '"':
             escape = "`" if powershell else "\\"
@@ -650,6 +660,7 @@ def split_command(text, powershell):
                 j += 1
             if powershell and "$(" in text[i:j]:   # a subexpression runs
                 current.runs.append([text.index("$(", i), j])
+            current.quoted.append([i, j + 1])
             i = j + 1
             has_word = True
         elif c == ("`" if powershell else "\\") and i + 1 < n:
@@ -693,22 +704,48 @@ WORD_START = ("", ";", "&", "|", "(", ")", "{", "}", "'", '"', "=", ",", ":")   
 WORD_END = ("", ";", "&", "|", "(", ")", "{", "}", "'", '"', "=", "[", "+", ",")
 
 
+def _bracketed(text):
+    """True when `text` leaves a `${`, `$[` or `[` open."""
+    open_ = []
+    for token in re.finditer(r"\$\{|\[|\]|\}", text):
+        mark = token.group(0)
+        if mark in ("${", "["):
+            open_.append("}" if mark == "${" else "]")
+        elif open_ and open_[-1] == mark:
+            open_.pop()
+    return bool(open_)
+
+
+def _inert(m, commits, command):
+    """True when a name match `m` lies in quoted text of a git commit, outside what runs there, with no `${`, `$[`
+    or `[` open around it and no `[` after it: message text."""
+    at = m.start()
+    for s in commits:
+        if any(a <= at < b for a, b in s.spans) and not any(a <= at < b for a, b in s.runs):
+            quote = next((a for a, b in s.quoted if a <= at < b), None)
+            return (quote is not None and not _bracketed(command[quote:at])
+                    and command[m.end():m.end() + 1] != "[")
+    return False
+
+
 def _only_read(command, name, powershell, own, commits=()):
     """True when `name` stands in the command text once as its assignment (bash `name=`, alone or after `export`;
     PowerShell `$name =`) and everywhere else only as a plain read (`$name` or `${name}`, in PowerShell an argument
     or part of a string). Any other appearance as a shell word (`[`, `+=`, `declare`, a scope prefix, `read`,
     `for`, `Remove-Variable`, the bare name) leaves it unresolved. Text inside the assignment's own value (`own`,
-    the span from its `=`), the name inside a longer word (`my-repo`, `x\\repo`) and the literal text of a git commit
-    (`commits`: its message; a bash prefix `name=v git commit` sets git's environment only) are no appearance; what
-    runs inside such a commit (a substitution, a backtick, a PowerShell `$(`) still is."""
+    the span from its `=`) and the name inside a longer word (`my-repo`, `x\\repo`) are no appearance, nor is the
+    quoted text of a git commit (`commits`: its message) when no `${`, `$[` or `[` is open around the name and no
+    `[` follows it. What runs inside a commit (a substitution, a backtick, a PowerShell `$(`), its unquoted words (a
+    `name=v git commit` prefix) and a name after `$[`, `[` or a `${` it does not close at once count."""
     assigned = 0
     for m in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", command, re.I if powershell else 0):
         if own[0] <= m.start() < own[1]:
             continue
-        if any(any(a <= m.start() < b for a, b in s.spans) and not any(a <= m.start() < b for a, b in s.runs)
-               for s in commits):
+        if _inert(m, commits, command):
             continue
         before, after = command[:m.start()], command[m.end():]
+        if before.endswith(("$[", "[")) or before.endswith("${") and not after.startswith("}"):
+            return False   # arithmetic, a subscript or an expansion that may assign (`${name:=v}`)
         if before.endswith("${") and after.startswith("}"):
             lead, rest = before[:-2], after[1:]
         elif before.endswith("$"):
@@ -848,7 +885,8 @@ FOLDER_WHY = "the folder of a git step is named by a variable or `~` the command
 FOLDER_HINT = ("Name the folder literally in `cd` or `git -C`, or set the variable once, to a literal path, at the "
                "start of the same command (`;`, `&&` or a newline before the git step, not inside a block)")
 LOST = "$(lost folder)"   # a folder part the guard cannot follow; `_unresolved` refuses any folder that holds it
-STACK_WHY = "the guard cannot follow the folder of a git step past a `pushd`, `popd`, `Pop-Location` or `)`"
+STACK_WHY = ("the guard cannot follow the folder of a git step past a `pushd`, `popd`, `dirs`, `Push-Location`, "
+             "`Pop-Location`, a stack name or `)`")
 STACK_HINT = ("Name the folder with an absolute path in `cd`, `Set-Location` or `git -C` after the last `popd`, "
               "`Pop-Location` or `)`, or run the steps in another folder in a call of their own")
 REMOTE = ("ssh",)   # a commit it runs works on a repository the hook cannot read: unchecked
@@ -961,8 +999,8 @@ def _linux_only_script(script, folder, command):
     read, here = [], folder
     for simple in parsed:
         words = _command_words(simple.words, False)
-        if set(simple.before) & set("()") or words and words[0] in POP:
-            return False   # a subshell or a folder stack this walk does not follow
+        if set(simple.before) & set("()") or words and words[0] in PUSH:
+            return False   # a subshell or a folder stack this walk does not follow (a fresh shell has none to pop)
         if words and words[0] in CD:
             targets = [w for w in words[1:] if not w.startswith("-")]
             here = _wsl_folder(targets[-1], here) if targets else LinuxPath("~")   # a bare `cd` goes home
@@ -1115,7 +1153,8 @@ def read_command(command, cwd, powershell):
             if separator == "(":
                 subshells.append((folder, list(stack)))
             elif separator == ")" and cases and cases[-1] == len(subshells):
-                continue   # a pattern's end
+                if subshells and folder is not None:   # a pattern's end, or a subshell's if `case` was no keyword
+                    folder = os.path.join(folder, LOST)
             elif separator == ")" and subshells:
                 folder, stack = subshells.pop()
             elif separator == ")" and folder is not None:
@@ -1143,8 +1182,17 @@ def read_command(command, cwd, powershell):
         if not words or words is LINUX_ONLY:
             continue
         head = words[0].lower()
+        near = (simple.before + (simples[k + 1][1].before if k + 1 < len(simples) else "")).replace(
+            "&&", "").replace("||", "")
+        if folder is not None and (head == "dirs" or powershell and head in CD and any(
+                len(w) > 1 and "-stackname".startswith(w.lower()) for w in words[1:])):
+            folder = os.path.join(folder, LOST)   # the stack edited, or a default stack named
+            continue
         if head in PUSH + POP:
-            folder = None if folder is None else _stack_step(words, folder, stack, seen, powershell)
+            if folder is not None and set(near) & set("|&"):   # piped or in the background: it may not stay
+                folder = os.path.join(folder, LOST)
+            elif folder is not None:
+                folder = _stack_step(words, folder, stack, seen, powershell)
             continue
         if head in CD:
             targets = [w for w in words[1:] if not w.startswith("-")]
