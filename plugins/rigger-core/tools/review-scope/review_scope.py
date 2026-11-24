@@ -3,6 +3,9 @@
 Each path is `review`, or `skip: deleted` when the head commit no longer holds it. A test file is
 never skipped. A revision is checked in Python before git sees it and resolved to a commit id; only
 those ids reach the diff, which runs with the repository's and the environment's diff drivers off.
+Git itself is found by `find_git`, never by the operating system's lookup, and runs without any
+GIT_* variable. GIT_CONFIG_NOSYSTEM is not set: nothing a cloned repository controls lives in the
+system config, and git reads `safe.directory` there.
 
   review_scope.py --base REV [--head REV] [--repo DIR]
 
@@ -18,9 +21,10 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 GIT_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")
-GIT_PREFIX = ("git", "-c", "core.quotepath=off", "--no-pager")
+GIT_OPTIONS = ("-c", "core.quotepath=off", "--no-pager")
+GIT_EXTS = (".exe",) if os.name == "nt" else ("",)
+BATCH_EXTS = (".cmd", ".bat")
 GIT_TIMEOUT = 60
-DROPPED_ENV = ("GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS")
 REVIEW = "review"
 DELETED = "skip: deleted"
 
@@ -29,15 +33,49 @@ class ScopeError(Exception):
     pass
 
 
+def _inside(folder, root):
+    folder = os.path.normcase(os.path.abspath(folder))
+    root = os.path.normcase(os.path.abspath(str(root)))
+    return folder == root or folder.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def find_program(name, repo, exts):
+    # type: (str, Path, Sequence[str]) -> str
+    """The absolute path of program `name` + one of `exts`, from the absolute PATH entries outside `repo`
+    and the working directory, so a file a cloned repository plants is never run. A batch file is refused:
+    it always runs through cmd.exe, which re-parses its arguments."""
+    if not name or "/" in name or "\\" in name:
+        raise ScopeError("not a bare program name: %r" % name)
+    if any(ext.lower() in BATCH_EXTS for ext in exts):
+        raise ScopeError("a batch file is never run: %s" % ", ".join(exts))
+    cwd = os.getcwd()
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not os.path.isabs(entry):
+            continue
+        if _inside(entry, repo) or _inside(entry, cwd):
+            continue
+        for ext in exts:
+            candidate = os.path.join(os.path.abspath(entry), name + ext)
+            if os.path.isfile(candidate) and (os.name == "nt" or os.access(candidate, os.X_OK)):
+                return candidate
+    raise ScopeError("%s not found in an absolute PATH entry outside the repository and the working directory" % name)
+
+
+def find_git(repo):
+    # type: (Path) -> str
+    return find_program("git", repo, GIT_EXTS)
+
+
 def _git_env():
-    return {key: value for key, value in os.environ.items() if key.upper() not in DROPPED_ENV}
+    """The caller's environment without any GIT_* variable, so none can move the repository or its config."""
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
 
 
 def _git(repo, args):
     """Run one git command in `repo`; any way it fails is a ScopeError."""
     try:
         proc = subprocess.run(
-            list(GIT_PREFIX) + list(args),
+            [find_git(repo)] + list(GIT_OPTIONS) + list(args),
             cwd=str(repo),
             env=_git_env(),
             stdin=subprocess.DEVNULL,

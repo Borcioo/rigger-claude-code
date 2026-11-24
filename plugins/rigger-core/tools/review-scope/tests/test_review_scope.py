@@ -311,6 +311,164 @@ class DriverTests(GitCase):
                 self.assertNotIn("GIT_DIFF_OPTS", env)
 
 
+EXE = ".exe" if os.name == "nt" else ""
+
+
+@contextlib.contextmanager
+def working_directory(path):
+    before = os.getcwd()
+    os.chdir(str(path))
+    try:
+        yield
+    finally:
+        os.chdir(before)
+
+
+class ProgramLookupTests(GitCase):
+    def setUp(self):
+        super().setUp()
+        self.real_path = os.environ.get("PATH", "")
+        self.good = self.tmp / "good"
+        self.tool = self.program(self.good, "tool")
+        self.elsewhere = self.tmp / "elsewhere"
+        self.elsewhere.mkdir()
+
+    def program(self, folder, name, ext=EXE, executable=True):
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / (name + ext)
+        path.write_bytes(b"#!/bin/sh\nexit 0\n")
+        os.chmod(str(path), 0o755 if executable else 0o644)
+        return path
+
+    def find(self, entries, name="tool", cwd=None, exts=(EXE,)):
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join(entries)}):
+            with working_directory(cwd or self.elsewhere):
+                return review_scope.find_program(name, self.repo, exts)
+
+    def same(self, a, b):
+        self.assertEqual(os.path.normcase(os.path.abspath(str(a))), os.path.normcase(os.path.abspath(str(b))))
+
+    def test_lookup_skips_every_unsafe_entry(self):
+        sibling = Path(str(self.repo) + "-tools")
+        self.program(self.repo, "tool")
+        self.program(self.repo / "bin", "tool")
+        self.program(self.elsewhere, "tool")
+        self.program(self.elsewhere / "bin", "tool")
+        self.program(self.tmp / "rel", "tool")
+        (self.tmp / "dirs" / ("tool" + EXE)).mkdir(parents=True)
+        self.program(self.tmp / "noexec", "tool", executable=False)
+        nested_cwd = self.elsewhere / "cwd"
+        nested_cwd.mkdir()
+        # (row, the unsafe entry put before the good one, the working directory)
+        rows = [
+            ("the repository itself", str(self.repo), self.elsewhere),
+            ("a folder inside the repository", str(self.repo / "bin"), self.elsewhere),
+            ("the working directory", str(self.elsewhere), self.elsewhere),
+            ("a folder inside the working directory", str(self.elsewhere / "bin"), self.elsewhere),
+            # Resolves to <tmp>/rel, outside both: only the absolute-entry rule skips it.
+            ("a relative entry", os.path.join("..", "..", "rel"), nested_cwd),
+            ("an empty entry", "", self.elsewhere),
+            ("a folder holding a directory named like the program", str(self.tmp / "dirs"), self.elsewhere),
+        ]
+        if os.name == "nt":
+            rows.append(("the repository spelled in another case", str(self.repo).swapcase(), self.elsewhere))
+        else:
+            rows.append(("a file that is not executable", str(self.tmp / "noexec"), self.elsewhere))
+        for label, unsafe, cwd in rows:
+            with self.subTest(row=label):
+                self.same(self.find([unsafe, str(self.good)], cwd=cwd), self.tool)
+        # Not over-excluded: a folder whose name only starts with the repository's is outside it.
+        sibling_tool = self.program(sibling, "tool")
+        self.same(self.find([str(sibling), str(self.good)]), sibling_tool)
+
+    @unittest.skipUnless(os.name == "nt", "batch files exist on Windows only")
+    def test_git_lookup_never_takes_a_batch_file(self):
+        batch = self.tmp / "batch"
+        self.program(batch, "git", ".cmd")
+        self.program(batch, "git", ".bat")
+        real = self.program(self.good, "git")
+        with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(batch), str(self.good)])}):
+            with working_directory(self.elsewhere):
+                self.same(review_scope.find_git(self.repo), real)
+
+    def test_lookup_refusals(self):
+        with self.assertRaises(review_scope.ScopeError) as caught:
+            self.find([str(self.repo), str(self.elsewhere)])
+        self.assertIn("tool not found in an absolute PATH entry outside the repository and the working directory",
+                      str(caught.exception))
+        for name in ("", "a/tool", "a\\tool"):
+            with self.subTest(name=name):
+                with self.assertRaises(review_scope.ScopeError) as caught:
+                    self.find([str(self.good)], name=name)
+                self.assertIn("not a bare program name", str(caught.exception))
+        for exts in ((".exe", ".cmd"), (".BAT",)):
+            with self.subTest(exts=exts):
+                with self.assertRaises(review_scope.ScopeError) as caught:
+                    self.find([str(self.good)], exts=exts)
+                self.assertIn("a batch file is never run", str(caught.exception))
+
+    def test_a_planted_git_is_never_run(self):
+        base, head = self.two_commits()
+        real_git = shutil.which("git", path=self.real_path)
+        self.assertTrue(real_git and os.path.isabs(real_git))
+        marker = self.tmp / "plant-marker"
+        if os.name == "nt":
+            plant = self.repo / "git.exe"
+            shutil.copy2(sys.executable, str(plant))
+            for dll in Path(os.path.dirname(sys.executable)).glob("*.dll"):
+                shutil.copy2(str(dll), str(self.repo / dll.name))
+        else:
+            plant = self.repo / "git"
+            plant.write_bytes(("#!/bin/sh\necho ran > '%s'\necho planted\nexit 1\n" % marker.as_posix()).encode("utf-8"))
+            os.chmod(str(plant), 0o755)
+        planted_path = os.pathsep.join([str(self.repo), self.real_path])
+        # Control: an ordinary lookup over this PATH finds the plant, and it runs.
+        naive = shutil.which("git", path=planted_path)
+        self.same(naive, plant)
+        ran = REAL_RUN([naive, "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        self.assertIn(b"Python" if os.name == "nt" else b"planted", ran.stdout)
+        if marker.exists():
+            marker.unlink()
+        for cwd, path in ((self.repo, self.real_path), (self.elsewhere, planted_path), (self.repo, "." + os.pathsep + self.real_path)):
+            with self.subTest(cwd=cwd.name, path=path.split(os.pathsep)[0]):
+                with mock.patch.dict(os.environ, {"PATH": path}), working_directory(cwd), self.git_calls() as calls:
+                    self.assertEqual(review_scope.scope(self.repo, base, head), EXPECTED)
+                self.assertTrue(calls)
+                for argv, _env in calls:
+                    self.same(argv[0], real_git)
+                self.assertFalse(marker.exists())
+
+
+class EnvironmentTests(GitCase):
+    def test_inherited_git_variables_do_not_reach_git(self):
+        base, head = self.two_commits()
+        other = self.tmp / "other"
+        other.mkdir()
+        self.git("init", "-q", repo=other)
+        (other / "o.py").write_bytes(b"o = 1\n")
+        self.git("add", "-A", repo=other)
+        self.git("commit", "-q", "-m", "other", repo=other)
+        other_head = self.git("rev-parse", "HEAD", repo=other)
+        inherited = {
+            "GIT_DIR": str(other / ".git"),
+            "GIT_WORK_TREE": str(other),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.quotepath",
+            "GIT_CONFIG_VALUE_0": "on",
+        }
+        with mock.patch.dict(os.environ, inherited):
+            # Control: these variables send an ordinary git call in this repository to the other one.
+            self.assertEqual(self.git("rev-parse", "HEAD"), other_head)
+            with self.git_calls() as calls:
+                self.assertEqual(review_scope.scope(self.repo, base, head), EXPECTED)
+                self.assertEqual(review_scope.resolve_commit(self.repo, "HEAD"), head)
+        self.assertTrue(calls)
+        for argv, env in calls:
+            with self.subTest(argv=argv[1:]):
+                self.assertIsNotNone(env)
+                self.assertEqual([key for key in env if key.upper().startswith("GIT_")], [])
+
+
 class PathRefusalTests(GitCase):
     @unittest.skipIf(os.name == "nt", "Windows cannot name a file with a tab or a line break; runs under WSL and on Linux and macOS")
     def test_a_path_with_a_tab_or_a_line_break_refuses(self):
