@@ -6,8 +6,9 @@ It first writes its argv, working directory and environment names to the record 
 ok (one finding, coverage from the scope file), copy-scope (no findings, coverage from the scope file only),
 bad-status, nonzero (a valid file, then exit 3), no-out, big-out (a valid file padded past 20,000 bytes),
 flood (console output without end), flood-exit (a valid file, then <n> console bytes and exit 0, with
-`--bytes n`), flood-err (the same as flood, on stderr), orphan (a valid file, then a grandchild that keeps the
-console open for 5 s after this process exits 0), hang (starts a grandchild that writes its pid next to the record file, then both sleep).
+`--bytes n`), flood-err (the same as flood, on stderr), orphan (a valid file, then a grandchild that sleeps 30 s
+holding the console, and this process exits 0), detached (the same, but the grandchild's console goes to the
+null device), hang (starts a grandchild, then both sleep). A grandchild writes its pid to <record>.child.pid.
 """
 import json
 import os
@@ -94,10 +95,11 @@ def main():
     elif mode == "flood-err":
         sys.stdout = sys.stderr
         flood()
-    elif mode == "orphan":
+    elif mode in ("orphan", "detached"):
         write_out(document(ONE_FINDING))
+        quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         subprocess.Popen([sys.executable, os.path.abspath(__file__), "sleep", "--record", record + ".child",
-                          "--seconds", "5"])
+                          "--seconds", "30"], **(quiet if mode == "detached" else {}))
         deadline = time.time() + 30
         while not os.path.exists(record + ".child.pid") and time.time() < deadline:
             time.sleep(0.05)

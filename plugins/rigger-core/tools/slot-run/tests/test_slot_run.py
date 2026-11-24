@@ -36,6 +36,7 @@ NOT_FOUND = "slot-run: refused: reviewer-cli not found on PATH (entries inside t
 BARE_OR_ABSOLUTE = "slot-run: refused: the program must be a bare name or an absolute path"
 # The scope of the fixture: a.py edited, b.py renamed to d.py (a delete and an add), c.py deleted.
 SCOPE_TEXT = "review\ta.py\nskip: deleted\tb.py\nskip: deleted\tc.py\nreview\td.py\n"
+_TEMPLATE = []  # [repository, base id, head id] of the fixture, built by the first test that needs it
 
 
 def remove_tree(path):
@@ -108,6 +109,7 @@ class SlotRunCase(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        template, self.base, self.head = self.template()  # before tempdir moves into this test's folder
         work = self.tmp / "work"
         work.mkdir()
         temp_patch = mock.patch.object(tempfile, "tempdir", str(work))
@@ -115,27 +117,39 @@ class SlotRunCase(unittest.TestCase):
         self.addCleanup(temp_patch.stop)
         self.record = str(self.tmp / "record.json")
         self.repo = self.tmp / "repo"
-        self.repo.mkdir()
-        self.git("init", "-q")
-        self.git("config", "core.autocrlf", "false")
-        for name, data in (("a.py", b"x = 1\n"), ("b.py", b"b\n"), ("c.py", b"c\n")):
-            (self.repo / name).write_bytes(data)
-        self.base = self.commit("one")
-        (self.repo / "a.py").write_bytes(b"x = 2\n")
-        self.git("mv", "b.py", "d.py")
-        self.git("rm", "-q", "c.py")
-        self.head = self.commit("two")
+        shutil.copytree(template, str(self.repo))  # each test owns a copy; git runs once per file, not per test
 
-    def git(self, *args):
-        proc = REAL_RUN(["git"] + list(args), cwd=str(self.repo), stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
-        return proc.stdout.decode("utf-8").strip()
+    def template(self):
+        """The fixture repository, built once per test file: a.py edited, b.py renamed to d.py, c.py deleted."""
+        if not _TEMPLATE:
+            folder = Path(os.path.abspath(tempfile.mkdtemp(prefix="slot-run-template-")))
+            unittest.addModuleCleanup(remove_tree, folder)
+            repo = folder / "repo"
+            repo.mkdir()
+            git = self.git_in(repo, folder)
+            git("init", "-q")
+            git("config", "core.autocrlf", "false")
+            for name, data in (("a.py", b"x = 1\n"), ("b.py", b"b\n"), ("c.py", b"c\n")):
+                (repo / name).write_bytes(data)
+            git("add", "-A")
+            git("commit", "-q", "-m", "one")
+            base = git("rev-parse", "HEAD")
+            (repo / "a.py").write_bytes(b"x = 2\n")
+            git("mv", "b.py", "d.py")
+            git("rm", "-q", "c.py")
+            git("add", "-A")
+            git("commit", "-q", "-m", "two")
+            _TEMPLATE.extend([str(repo), base, git("rev-parse", "HEAD")])
+        return _TEMPLATE
 
-    def commit(self, message):
-        self.git("add", "-A")
-        self.git("commit", "-q", "--allow-empty", "-m", message)
-        return self.git("rev-parse", "HEAD")
+    def git_in(self, repo, ceiling):
+        def git(*args):
+            env = dict(os.environ, GIT_CEILING_DIRECTORIES=str(ceiling))
+            proc = REAL_RUN(["git"] + list(args), cwd=str(repo), env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+            return proc.stdout.decode("utf-8").strip()
+        return git
 
     def command(self, mode, *extra, program=None):
         return [program or sys.executable, FAKE, mode, "--record", self.record, "--out", "{out}",
@@ -434,24 +448,65 @@ class BoundTests(SlotRunCase):
             code, lines = self.run_slot()
         self.assertEqual((code, lines[-1]), (2, "slot-run: refused: more than 10000 bytes of console output"), lines)
 
-    def test_a_grandchild_holding_the_console_open_times_out(self):
-        """The command exits 0, but a process it started keeps the console pipe open past the deadline."""
-        self.write_snapshot([command_row(self.command("orphan"))])
-        self.addCleanup(self.wait_for_grandchild)
-        with mock.patch.object(slot_run, "TIMEOUT", 2):
-            code, lines = self.run_slot()
-        self.assertEqual((code, lines[-1]), (2, "slot-run: refused: timed out after 2 s"), lines)
+    def grandchild_pid(self):
+        with open(self.record + ".child.pid", "rb") as handle:
+            return int(handle.read())
 
-    def wait_for_grandchild(self):
-        """On Windows the tree kill cannot reach a grandchild whose parent has exited: let it end first."""
-        try:
-            with open(self.record + ".child.pid", "rb") as handle:
-                pid = int(handle.read())
-        except OSError:
-            return
-        deadline = time.monotonic() + 20
+    def assert_gone_after_the_run(self, pid):
+        """Gone within a second of slot_run's return: the kill belongs to the run, not to a later cleanup."""
+        deadline = time.monotonic() + 1
         while pid_alive(pid) and time.monotonic() < deadline:
-            time.sleep(0.2)
+            time.sleep(0.05)
+        self.assertFalse(pid_alive(pid), "process %d outlived the run" % pid)
+
+    def test_a_descendant_left_holding_the_console_is_stopped_and_refuses(self):
+        """The command exits 0 with a valid file, but a process it started sleeps 30 s holding the console:
+        refused after the exit grace, long before the deadline, with that process gone."""
+        self.assertEqual(slot_run.EXIT_GRACE, 5)  # the default the 10 s bound below is written for
+        self.write_snapshot([command_row(self.command("orphan"))])
+        started = time.monotonic()
+        with mock.patch.object(slot_run, "TIMEOUT", 60), mock.patch.object(slot_run, "EXIT_GRACE", 1):
+            code, lines = self.run_slot()
+        elapsed = time.monotonic() - started
+        self.assertEqual((code, lines[-1]), (2, "slot-run: refused: child process left running"), lines)
+        self.assertLess(elapsed, 10)
+        self.assert_gone_after_the_run(self.grandchild_pid())
+        self.assert_gone_after_the_run(self.recorded()["pid"])
+
+    @unittest.skipUnless(NT, "the job object is Windows only")
+    def test_a_command_outside_a_job_never_runs(self):
+        self.write_snapshot([command_row(self.command("ok"))])
+        with mock.patch.object(slot_run, "_enter_job", return_value=False), mock.patch.object(slot_run, "TIMEOUT", 5):
+            code, lines = self.run_slot()
+        self.assertEqual((code, lines[-1]), (2, "slot-run: refused: the command could not be placed in a job object"))
+        self.assertFalse(os.path.exists(self.record), "the suspended command ran")
+
+    @unittest.skipUnless(NT, "the job object is Windows only; on POSIX the group outlives a killed slot_run")
+    def test_killing_slot_run_stops_the_command_tree(self):
+        """The shell tool's own timeout kills slot_run: the job closes with it, and so does the command tree."""
+        self.write_snapshot([command_row(self.command("hang"))])
+        proc = REAL_POPEN([sys.executable, "-I", "-X", "utf8", SCRIPT, "reviewer", "--session", SESSION, "--base",
+                           self.base, "--head", self.head], cwd=str(self.repo), stdin=subprocess.DEVNULL,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          env=dict(os.environ, TMP=tempfile.tempdir, TEMP=tempfile.tempdir))  # its work folder
+        try:
+            deadline = time.monotonic() + 30
+            while not os.path.exists(self.record + ".child.pid") and time.monotonic() < deadline:
+                time.sleep(0.05)
+            pid = self.grandchild_pid()
+            self.assertTrue(pid_alive(pid))
+        finally:
+            proc.kill()
+            proc.wait(timeout=30)
+        self.assert_gone_after_the_run(pid)
+        self.assert_gone_after_the_run(self.recorded()["pid"])
+
+    def test_a_descendant_that_let_go_of_the_console_is_stopped(self):
+        """A process the command started, with its console on the null device, does not outlive the run."""
+        self.write_snapshot([command_row(self.command("detached"))])
+        code, lines = self.run_slot()
+        self.assertEqual((code, lines[-1]), (0, "slot-run: ok reviewer 1 findings"), lines)
+        self.assert_gone_after_the_run(self.grandchild_pid())
 
 
 class ProgramTests(SlotRunCase):

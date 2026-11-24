@@ -16,7 +16,8 @@ an `.exe` or `.com` file runs.
 
 The command runs from the repository root, with every CLAUDE_*, HARNESS_* and GIT_* variable and
 RIGGER_MODULE_DIRS removed, stdin closed, and stdout and stderr on one pipe that a thread reads and counts:
-past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped. The console text kept
+past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
+has exited but a process it started still holds the console after EXIT_GRACE seconds, and after every run. The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
 ids, `{out}` the output file and `{scope}` a file of `<verdict><TAB><path>` lines from
 `review_scope.scope()`, all in a fresh folder in the temp directory that is kept for the caller.
@@ -52,6 +53,7 @@ TIMEOUT = 900
 CONSOLE_CAP = 1_000_000
 OUT_CAP = 5_000_000
 KILL_TIMEOUT = 10
+EXIT_GRACE = 5  # seconds a process the command started may hold the console after it exits
 CHUNK = 65536
 POLL = 0.05
 NT = os.name == "nt"
@@ -161,27 +163,121 @@ def _repository_root(start: str) -> Path:
     return root
 
 
-def kill_tree(proc, taskkill: Optional[str]) -> None:
-    """Stop a process and everything it started, within KILL_TIMEOUT per step (scripts/run_tests.py)."""
-    try:
-        if NT:
-            subprocess.run([taskkill, "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=KILL_TIMEOUT)
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    proc.kill()
-    try:
-        proc.wait(timeout=KILL_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        pass
+class _Tree:
+    """The command and every process it starts. On Windows a job object holds them from the first
+    instruction (the command starts suspended and resumes inside the job), so the tree is reachable after
+    its first process has exited, which `taskkill /T <pid>` is not. On POSIX it is the command's own
+    process group (start_new_session)."""
+
+    def __init__(self, argv: List[str], root: Path, env: Dict[str, str]):
+        self.job = None
+        if not NT:
+            self.proc = subprocess.Popen(argv, shell=False, cwd=str(root), env=env, stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+            return
+        self.job = _new_job()
+        self.proc = subprocess.Popen(argv, shell=False, cwd=str(root), env=env, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     creationflags=_CREATE_SUSPENDED)
+        if not _enter_job(self.job, self.proc.pid):
+            self.proc.kill()
+            self.proc.wait(timeout=KILL_TIMEOUT)
+            self.close()
+            raise Refusal("the command could not be placed in a job object")
+
+    def kill(self) -> None:
+        """Stop every process of the tree, within KILL_TIMEOUT."""
+        try:
+            if NT:
+                _KERNEL32.TerminateJobObject(self.job, 1)
+            else:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        self.proc.kill()
+        try:
+            self.proc.wait(timeout=KILL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def close(self) -> None:
+        if self.job is not None:
+            _KERNEL32.CloseHandle(self.job)  # kill-on-close: nothing of the tree outlives the handle
+            self.job = None
 
 
-def _run(argv: List[str], root: Path, env: Dict[str, str], console_path: str, taskkill: Optional[str]):
-    """Run `argv`; the reason it was stopped (None when it ran to its end) and its exit code."""
-    proc = subprocess.Popen(argv, shell=False, cwd=str(root), env=env, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=not NT)
+_CREATE_SUSPENDED = 0x00000004
+_KILL_ON_JOB_CLOSE = 0x00002000
+_EXTENDED_LIMITS = 9  # JobObjectExtendedLimitInformation
+_PROCESS_RIGHTS = 0x0001 | 0x0100 | 0x0800  # terminate, set quota, suspend/resume
+_KERNEL32 = None
+_NTDLL = None
+if NT:
+    import ctypes
+    from ctypes import wintypes
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class _ExtendedLimits(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", _BasicLimits), ("IoInfo", ctypes.c_uint64 * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _NTDLL = ctypes.WinDLL("ntdll")
+    _KERNEL32.CreateJobObjectW.restype = wintypes.HANDLE
+    _KERNEL32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    _KERNEL32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    _KERNEL32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    _KERNEL32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _KERNEL32.OpenProcess.restype = wintypes.HANDLE
+    _KERNEL32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _NTDLL.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+
+
+def _new_job():
+    job = _KERNEL32.CreateJobObjectW(None, None)
+    if not job:
+        raise Refusal("no job object for the command")
+    limits = _ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = _KILL_ON_JOB_CLOSE
+    if not _KERNEL32.SetInformationJobObject(job, _EXTENDED_LIMITS, ctypes.byref(limits), ctypes.sizeof(limits)):
+        _KERNEL32.CloseHandle(job)
+        raise Refusal("no job object for the command")
+    return job
+
+
+def _enter_job(job, pid: int) -> bool:
+    """Put the suspended process `pid` in `job`, then let it run; False when either step fails."""
+    handle = _KERNEL32.OpenProcess(_PROCESS_RIGHTS, False, pid)
+    if not handle:
+        return False
+    try:
+        if not _KERNEL32.AssignProcessToJobObject(job, handle):
+            return False
+        return _NTDLL.NtResumeProcess(handle) == 0
+    finally:
+        _KERNEL32.CloseHandle(handle)
+
+
+def _run(argv: List[str], root: Path, env: Dict[str, str], console_path: str):
+    """Run `argv`; the reason it was stopped (None when it ran to its end) and its exit code. Whatever the
+    outcome, no process of the command's tree is left when this returns."""
+    tree = _Tree(argv, root, env)
+    try:
+        return _watch(tree, console_path)
+    finally:
+        tree.close()
+
+
+def _watch(tree: "_Tree", console_path: str):
+    proc = tree.proc
     over = threading.Event()
 
     def read():
@@ -213,14 +309,14 @@ def _run(argv: List[str], root: Path, env: Dict[str, str], console_path: str, ta
             if time.monotonic() >= deadline:
                 reason = "timed out after %d s" % TIMEOUT
     if reason is None:
-        # A grandchild may still hold the pipe: wait for its end only until the deadline.
-        reader.join(timeout=max(0.0, deadline - time.monotonic()))
+        # The command has exited; a process it started may still hold the pipe. Wait EXIT_GRACE for it, never
+        # past the deadline.
+        reader.join(timeout=max(0.0, min(EXIT_GRACE, deadline - time.monotonic())))
         if reader.is_alive():
-            reason = "timed out after %d s" % TIMEOUT
+            reason = "child process left running" if time.monotonic() < deadline else "timed out after %d s" % TIMEOUT
         elif over.is_set():
             reason = "more than %d bytes of console output" % CONSOLE_CAP
-    if reason is not None:
-        kill_tree(proc, taskkill)
+    tree.kill()  # also after a clean exit: a process the command left behind does not outlive the run
     reader.join(timeout=KILL_TIMEOUT)
     if not reader.is_alive():
         proc.stdout.close()
@@ -284,7 +380,6 @@ def _main(argv: List[str], emit) -> int:
     row = _row(slot, session)
     root = _repository_root(repo_arg if repo_arg is not None else os.getcwd())
     program = resolve_program(row.target[0], root)
-    taskkill = review_scope.find_program("taskkill", root, (".exe",)) if NT else None
     try:
         base_id = review_scope.resolve_commit(root, base)
         head_id = review_scope.resolve_commit(root, head)
@@ -302,7 +397,7 @@ def _main(argv: List[str], emit) -> int:
     values = {"base": base_id, "head": head_id, "out": out_path, "scope": scope_path}
     command = [program] + fill(row.target[1:], values)
     try:
-        reason, code = _run(command, root, strip_env(os.environ), os.path.join(work, "console.txt"), taskkill)
+        reason, code = _run(command, root, strip_env(os.environ), os.path.join(work, "console.txt"))
     except OSError as exc:
         raise Refusal("the command could not start: %s" % _shown(exc))
     if reason is not None:
