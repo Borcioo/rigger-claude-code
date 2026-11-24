@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import json
 import shutil
 import subprocess
 import sys
@@ -299,6 +300,209 @@ class LoadRetryTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, run_tests.log_path(self.root).parent, True)
         self.assertEqual(code, 1, output)
         self.assertEqual(self.calls, ["a"])
+
+
+def fixture_git(cwd, *args):
+    env = dict(run_tests.os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t" + "@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t" + "@example.invalid")
+    proc = subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false"] + list(args), cwd=str(cwd),
+                          env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+
+
+# Written out here, not read from run_tests.ALWAYS_RUN, so a mutant of that tuple cannot shrink the expectation too.
+ALWAYS_RUN = (
+    "tests/test_module_contracts.py",
+    "tests/test_repo.py",
+    "tests/test_plugin_refs.py",
+    "plugins/rigger-rules/tests/test_plugin_rules.py",
+)
+PASSING_TEST ="import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n\n\nunittest.main()\n"
+# The stub sweep prints the line kept next to the repository (outside it, so changing it is no change) and logs its run.
+SWEEP_STUB = """import os, sys
+here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+with open(os.path.join(here, "sweep-calls.txt"), "a", encoding="utf-8") as calls:
+    calls.write(" ".join(sys.argv[1:]) + "\\n")
+try:
+    with open(os.path.join(here, "sweep-line.txt"), encoding="utf-8") as line:
+        print(line.read().strip())
+except OSError:
+    print("# files 3, findings 0")
+"""
+
+
+class ChangedModulesTests(unittest.TestCase):
+    """--changed-modules on a fixture repository: modules a, b (depends on a), c, rigger-core and rigger-rules,
+    plugins/zzz without a manifest, the four always-run files and a stub sweep. run_file is a recording fake."""
+
+    MODULE_TESTS = {
+        name: "plugins/%s/tests/test_x.py" % name for name in ("a", "b", "c", "rigger-core")
+    }
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="changed-modules-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = self.tmp / "repo"
+        files = {
+            "README.md": "# r\n",
+            "docs/a.md": "doc\n",
+            "scripts/sweep.py": SWEEP_STUB,
+            "plugins/zzz/x.py": "x = 1\n",
+            "plugins/a/f.py": "f = 1\n",
+        }
+        for name, deps in (("a", None), ("b", ["a"]), ("c", None), ("rigger-core", None), ("rigger-rules", None)):
+            manifest = {"name": name}
+            if deps is not None:
+                manifest["dependencies"] = deps
+            files["plugins/%s/rigger-module.json" % name] = '{"name": "%s"}\n' % name
+            files["plugins/%s/.claude-plugin/plugin.json" % name] = json.dumps(manifest) + "\n"
+            if name != "rigger-rules":
+                files["plugins/%s/tests/test_x.py" % name] = PASSING_TEST
+        for rel in ALWAYS_RUN:
+            files[rel] = PASSING_TEST
+        for rel, text in files.items():
+            self.write(rel, text)
+        fixture_git(self.root, "init", "-q", "-b", "main")
+        fixture_git(self.root, "add", "-A")
+        fixture_git(self.root, "commit", "-q", "-m", "base")
+        self.ran = []
+
+    def write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+
+    def fake_run_file(self, failing=()):
+        def fake(path, env, root=None, timeout=None):
+            rel = path.relative_to(self.root).as_posix()
+            self.ran.append(rel)
+            ok = rel not in failing
+            result = run_tests.evaluate(0 if ok else 1, "Ran 1 test in 0.0s\n\n%s\n" % ("OK" if ok else "FAILED (failures=1)"))
+            result.update(output="", seconds=0.0)
+            return result
+
+        return fake
+
+    def main(self, *argv, failing=()):
+        buffer = io.StringIO()
+        with mock.patch.object(run_tests, "run_file", self.fake_run_file(failing)):
+            with contextlib.redirect_stdout(buffer):
+                code = run_tests.main(["--changed-modules", "--jobs", "1"] + list(argv), root=self.root)
+        return code, buffer.getvalue().replace("\r\n", "\n")
+
+    def sweep_calls(self):
+        try:
+            return (self.tmp / "sweep-calls.txt").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+
+    def expect_run(self, code, output, modules):
+        self.assertEqual(code, 0, output)
+        expected = set(ALWAYS_RUN) | {self.MODULE_TESTS[name] for name in modules}
+        self.assertEqual(set(self.ran), expected, output)
+        self.assertEqual(self.sweep_calls(), ["--no-denylist"], output)
+        self.assertIn("# changed-modules: sweep files 3, findings 0\n", output)
+
+    def test_classify_table(self):
+        rows = {
+            ("shared", None): [
+                "scripts/x.py", "tests/test_x.py", "plugins/a/rules/r.md", "plugins/a/bin/py.sh",
+                "plugins/a/hooks/core_check.sh", "plugins/rigger-core/rigger-defaults.json",
+                ".github/workflows/test.yml", ".claude-plugin/marketplace.json", "pyproject.toml", "plugins/zzz/x.py",
+            ],
+            ("docs", None): ["docs/a.md", "README.md", "LICENSE"],
+            ("module", "a"): [
+                "plugins/a/tools/t/t.py", "plugins/a/hooks/hooks.json", "plugins/a/skills/s/SKILL.md",
+                "plugins/a/README.md", "plugins/a/agents/x.md",
+            ],
+        }
+        for expected, paths in rows.items():
+            for path in paths:
+                with self.subTest(path=path):
+                    self.assertEqual(run_tests.classify(path, self.root), expected)
+
+    def test_shared_file_exits_two_and_runs_nothing(self):
+        self.write("scripts/x.py", "x = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 2, output)
+        self.assertIn("changed-modules: shared file scripts/x.py; run the gate\n", output)
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.sweep_calls(), [])
+
+    def test_module_change_runs_the_module_its_dependents_and_the_always_files(self):
+        self.write("plugins/a/tools/t/t.py", "t = 1\n")
+        code, output = self.main()
+        self.expect_run(code, output, ["a", "b"])
+        self.assertIn("# changed-modules: base main, changed 1, modules a, b\n", output)
+
+    def test_a_new_skill_folder_runs_the_rules_tests(self):
+        self.write("plugins/a/skills/x/SKILL.md", "---\nname: x\n---\n")
+        code, output = self.main()
+        self.expect_run(code, output, ["a", "b"])
+        self.assertIn("plugins/rigger-rules/tests/test_plugin_rules.py", self.ran)
+
+    def test_docs_only_change_runs_the_always_files_and_the_sweep(self):
+        self.write("docs/a.md", "changed\n")
+        self.write("README.md", "# changed\n")
+        code, output = self.main()
+        self.expect_run(code, output, [])
+        self.assertIn("# changed-modules: base main, changed 2, modules none\n", output)
+
+    def test_deleted_module_and_untracked_shared_file_exit_two(self):
+        fixture_git(self.root, "rm", "-r", "-q", "plugins/c")
+        code, output = self.main()
+        self.assertEqual(code, 2, output)
+        self.assertIn("changed-modules: shared file plugins/c/.claude-plugin/plugin.json; run the gate\n", output)
+        self.assertEqual(self.ran, [])
+        fixture_git(self.root, "reset", "-q", "--hard")
+        self.write("tests/new.py", "n = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 2, output)
+        self.assertIn("changed-modules: shared file tests/new.py; run the gate\n", output)
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.sweep_calls(), [])
+
+    def test_moved_file_runs_both_modules(self):
+        fixture_git(self.root, "mv", "plugins/a/f.py", "plugins/c/f.py")
+        code, output = self.main()
+        self.expect_run(code, output, ["a", "b", "c"])
+        self.assertIn("# changed-modules: base main, changed 2, modules a, b, c\n", output)
+
+    def test_sweep_with_findings_or_zero_files_fails(self):
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        for line in ("# files 3, findings 2", "# files 0, findings 0"):
+            with self.subTest(line=line):
+                (self.tmp / "sweep-line.txt").write_text(line + "\n", encoding="utf-8")
+                code, output = self.main()
+                self.assertEqual(code, 1, output)
+                files, findings = line[len("# files "):].split(", findings ")
+                self.assertIn("# changed-modules: sweep files %s, findings %s\n" % (files, findings), output)
+
+    def test_git_failure_exits_two(self):
+        self.write("plugins/a/tools/t/t.py", "t = 1\n")
+        code, output = self.main("--base", "no-such-rev")
+        self.assertEqual(code, 2, output)
+        self.assertRegex(output, r"(?m)^changed-modules: git failed: .+; run the gate$")
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.sweep_calls(), [])
+
+    def test_a_failing_module_test_exits_one(self):
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        code, output = self.main(failing=("plugins/c/tests/test_x.py",))
+        self.assertEqual(code, 1, output)
+        self.assertIn("FAIL plugins/c/tests/test_x.py", output)
+
+    def test_fix_round_or_control_next_to_it_is_refused(self):
+        for flag in ("--fix-round", "--control"):
+            with self.subTest(flag=flag):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    self.main(flag)
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("--changed-modules", errors.getvalue())
+                self.assertIn(flag, errors.getvalue())
+                self.assertNotIn("unrecognized arguments", errors.getvalue())
+                self.assertEqual(self.ran, [])
 
 
 if __name__ == "__main__":

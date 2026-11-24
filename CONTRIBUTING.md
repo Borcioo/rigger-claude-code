@@ -36,6 +36,11 @@ ones that failed first, and stops at the first failure; it never replaces the fu
 to a rules file or a skill also runs `plugins/rigger-rules/tests/test_plugin_rules.py` and
 `plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py`.
 
+`python -I scripts/run_tests.py --changed-modules [--base REV]` is a fast local pre-check for a
+change inside one module's folder: it runs that module's tests, its dependents' and four
+repository-wide files, then the sweep. It is not a gate. A pull request and a release still need
+the full gate, and exit 2 means a shared file changed, so only the gate says anything.
+
 ## The gate
 
 `scripts/gate.py` runs the suite, its planted control, the sweep and its control at once, then, on
