@@ -25,23 +25,69 @@ With a finding, the commit passes only when a `Test-change: <reason>` line (or `
 takes it) with at least REASON_MIN characters stands in the command text (up to a quote), the `-F`/`--file`
 file, a file a `cat`/`Get-Content` before `git commit -F -` reads, the message `-C`/`-c` reuses, or HEAD's
 message on `--amend`. Otherwise the hook denies it and lists the findings. `--dry-run` is no commit.
-`-F -` has no other source: a message fed to stdin any other way is judged by the command text alone.
+`-F -` has no other source: a message fed to stdin any other way is judged by the command text alone. A `-F` file
+the command writes or removes before the commit, or one the hook cannot read, states no reason of its own.
 
-The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs). The
-commit is the first simple command whose program is git and whose subcommand is `commit`; `cd`,
-`Set-Location` and `git -C` before it set the folder. The diff is the index against HEAD (`HEAD~1` with
-`--amend`). When the command also stages (`git add`/`git rm` before the commit, `commit -a`, `-i <paths>`),
-those are replayed on a copy of the index; `git commit <paths>` without `-i` commits HEAD plus those paths,
-replayed on `read-tree HEAD`. Redirections are no words; in Bash a staged word with `* ? [ {` fails open
-(the shell and git expand it differently). The replay uses `GIT_INDEX_FILE` (`git rm` as `rm --cached`) and
-that copy is diffed. The hook runs before the command is approved, so git runs with `core.fsmonitor=false`,
+The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs, a bash
+`"$(...)"` as one word, the body when it is `cat` of a heredoc, `$'...'`, `$((...))`; bash keywords, `env`,
+`command`, `time`, `nohup` and `exec` in front of a program are dropped). A commit is a simple command whose
+program is git and whose subcommand is `commit`; `cd`, `Set-Location` and `git -C` before it set the folder,
+`pushd`/`popd` and `Push-Location`/`Pop-Location` push and pop it, and the `)` that closes a bash subshell (also
+`$(...)`) restores the folder and stack it opened with (a PowerShell `(...)` or script block restores nothing). In a
+folder or `-F` path, a variable the command sets to a literal before (bash `NAME=value` alone or after `export`,
+PowerShell `$name = value`, `$env:NAME = value`) is replaced by it when every other appearance of the name is a
+plain read (`$name`, `${name}`; quoted text of a commit, such as its message, is no appearance unless a `${`, `$[`
+or `[` is open around the name or a `[` follows it; what runs in a commit and its unquoted words are) and it runs
+whenever the git step does (top level, after `;`, a newline, or `&&` in
+the step's own chain; not piped or in the background), a Git Bash `/<d>/` or `/tmp` path is read as Windows names
+it. `wsl [options] git ...` is a git step in the Windows folder WSL starts in, its `--cd` or `-C` (`/mnt/<d>/...`
+read as the drive, after `..` and a doubled leading slash are resolved). Every
+commit of the command is read (a `--dry-run` is none): their staging adds up, and the index is diffed once against
+HEAD (`HEAD~1` when the first one amends). When the command also stages (`git add`/`git rm` before a commit,
+`commit -a`, `-i <paths>`), those are replayed on a copy of the index; a single `git commit <paths>` without `-i`
+commits HEAD plus those paths, replayed on `read-tree HEAD`. Redirections are no words; in Bash a staged word with
+`* ? [ {` is replayed as git reads it (see "cannot tell" below). The replay uses `GIT_INDEX_FILE` (`git rm` as
+`rm --cached`) and that copy is diffed; `git add` writes the blobs it stages into the object store. The hook runs
+before the command is approved, so git runs with `core.fsmonitor=false`,
 `log` with `--no-show-signature`, the replay with every filter driver of its folder switched off, and a
-reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked.
+reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked. A
+commit after a `git merge`, `pull`, `cherry-pick`, `revert` or `rebase` in the same command, when that is the only
+step that changes the index, is diffed as the index stands when the hook runs: what an earlier call staged is
+checked, the history step's content (checked when it was committed) is not there yet (`--abort` and `--quit` are
+index writers; a history step's `--help`, `-h` and `--show-current-patch` before `--`, with no
+`-m`/`-F`/`-X`/`-s`/`--strategy`, change nothing; a commit is never taken for help).
 
-Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
-folder, `git mv`, an interactive add, staging outside the repository,
-no repository (a folder named by a variable or `~` is read literally and fails here), a git error, 8 s of
-git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
+Denied as "cannot tell what this commit holds", with a hint to run that step in its own call (a stated reason still
+passes): another index writer before the commit (`git checkout`, `switch`, `restore`, `reset`, `stash`, `mv`,
+`apply`, `am`, `read-tree`, `update-index`, `--pathspec-from-file`; not `checkout -b`/`switch -c <name>` alone, and
+`reset --soft <rev>` becomes the diff base), a history step with another change to the index, a file writer (`rm`,
+`mv`, `cp` and `Copy-Item` by their destination, `sed -i`, `Remove-Item`, `Move-Item`, `Set-Content`,
+`Add-Content`, `Out-File`, their PowerShell aliases, any redirection target) whose targets hold a tracked test
+file, or a variable, `~`, backtick or brace, when a later `git add`, `-a` or pathspec picks them up, a replayed
+step git rejects, a Bash glob or brace that, read as git does, weakens tests, commits in more than one
+repository, a commit or staging step whose folder still holds a variable, substitution or leading `~`, or follows a
+folder stack the guard cannot follow (a pop from an empty stack, a bare bash `pushd` with none, `+N`/`-N`, `-n`, a
+named PowerShell stack or `-StackName` on `Set-Location`, any `dirs`, a push or pop piped or in the background, a
+`)` no `(` or `case` opened, a `)` at the depth of a `case` that a subshell opened before, since that `case` may be
+no keyword) until an absolute `cd` names it, a command
+it cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and
+a `git` followed by the whole word `commit` (not `--no-commit`, `fix/commit-x`, `commit.gpgsign`, `post-commit`;
+`commit-tree` counts) between two of `; & | ( ) { } !` or a newline, anywhere in the text (inside quotes too, at
+any distance), unless it lies in the literal text of a commit the parse read: a substitution, backtick,
+`$((...))` or unquoted heredoc part runs what it holds and covers nothing. So a commit in a string another shell
+runs, after `sudo`, `eval` or `timeout`, inside a substitution, or only named in an `echo` or `git log --grep` is
+denied. A staged path that names no file and no index entry yet
+is a new file the command makes, and is left out of the replay.
+
+Unchecked by design: a commit in the arguments of `ssh`, or a `wsl` git commit surely in the Linux file system
+(an absolute path outside `/mnt/<d>`, or `~`/`~/x` with no `..`; only options before the subcommand that choose no
+repository; no GIT_* name in the command), also in a `wsl bash -c|-lc` script with no subshell and no `pushd`,
+works on a repository the hook cannot read, so it passes unread. Any other `wsl` commit outside a Windows folder is
+denied (a substitution in those arguments runs here and is denied too).
+
+Fails open: no commit, `cd` without a folder (`cd -` too), a `cd` inside a bash pipeline (read as if it stayed),
+an interactive add, staging outside the repository, another program that writes files (`python x.py`),
+no repository, a git error, 8 s of git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
 Loosening an assertion in place (`toBe(3)` to `toBeTruthy()`), a test replaced by a vacuous one, data
 provider rows and snapshot updates are not detected.
 
@@ -49,6 +95,7 @@ Usage: python -I -S weak_test_guard.py   (event JSON on stdin)
 """
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -61,12 +108,12 @@ TRAILER = "Test-change:"
 REASON_MIN = 10
 MAX_DIFF = 32 << 20
 GIT_TIMEOUT = 4.0
-DEADLINE = 8.0   # all git calls of one event together; the hook's own timeout is 10 s
+DEADLINE = 8.0   # all git calls of one event together; the hook's own timeout is 20 s
 _deadline = [0.0]
 SHOWN = 8   # findings listed in a denial
 SYMBOL_MIN = 5   # shorter defined names (`get`, `user`, `init`) say nothing about which test covered them
 
-CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".go")
+CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".php", ".go")
 TEST_DIRS = frozenset(("test", "tests", "__tests__", "spec", "specs", "e2e"))
 THIRD_PARTY = frozenset(("vendor", "node_modules", "vendor_prefixed", "third_party", "third-party", "bower_components"))
 TEST_FILE = re.compile(r"^test_.*\.py$|_test\.(?:py|go)$|\.(?:test|spec|cy)\.[cm]?[jt]sx?$|Test\.php$")
@@ -101,8 +148,31 @@ DECORATOR = re.compile(r"\s*(?:@|#\[|/\*\*|\*|$)")   # decorators, attributes, a
 COMMENT = re.compile(r"\s*(?:#(?!\[)|//|/\*|\*|<!--|\|(?!\|))")   # `|` opens a Laravel docblock line
 STRING = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\\n]|\\.)*`")
 
+UNCLEAR = "cannot tell what this commit holds:"
+HISTORY = frozenset(("merge", "pull", "cherry-pick", "revert", "rebase"))   # content of commits already made
+INDEX_WRITERS = frozenset(("checkout", "switch", "restore", "reset", "stash", "mv", "apply", "am", "read-tree",
+                           "update-index"))
+# Programs (and PowerShell aliases) that change files a later `git add`, `-a` or pathspec picks up: which of their
+# words are targets. A redirection target of any program is one too.
+FILE_WRITERS = {"rm": "all", "del": "all", "erase": "all", "ri": "all", "rd": "all", "rmdir": "all",
+                "remove-item": "all", "mv": "all", "move": "all", "mi": "all", "move-item": "all", "cp": "copy",
+                "copy": "copy", "cpi": "copy", "copy-item": "copy", "sed": "all", "set-content": "all", "sc": "all",
+                "add-content": "all", "ac": "all", "out-file": "all"}
+NO_FILE = frozenset(("/dev/null", "$null", "nul"))
 CD = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
+PUSH, POP = ("pushd", "push-location"), ("popd", "pop-location")
+STACK_PLAIN = ("--", "-path", "-literalpath", "-passthru")   # options of a push or pop the stack still follows
 READERS = frozenset(("cat", "get-content", "gc", "type"))   # a file piped into `git commit -F -`
+# Every long option of `git commit` (`git commit --git-completion-helper-all`): git takes any unique prefix of one.
+COMMIT_LONG = tuple(
+    "quiet verbose file author date message reedit-message reuse-message fixup squash reset-author trailer signoff "
+    "template edit cleanup status gpg-sign all include interactive patch unified inter-hunk-context only no-verify "
+    "dry-run short branch ahead-behind porcelain long null amend no-post-rewrite untracked-files pathspec-from-file "
+    "pathspec-file-nul allow-empty allow-empty-message verify post-rewrite no-quiet no-verbose no-file no-author "
+    "no-date no-message no-reedit-message no-reuse-message no-fixup no-squash no-reset-author no-signoff no-template "
+    "no-edit no-cleanup no-status no-gpg-sign no-all no-include no-interactive no-patch no-only no-dry-run no-short "
+    "no-branch no-ahead-behind no-porcelain no-long no-null no-amend no-untracked-files no-pathspec-from-file "
+    "no-pathspec-file-nul no-allow-empty no-allow-empty-message".split())
 COMMIT_VALUE_LONG = frozenset(("message", "file", "reuse-message", "reedit-message", "author", "date", "template",
                                "cleanup", "trailer", "fixup", "squash", "pathspec-from-file"))
 # The hook runs before the command is approved: no fsmonitor program, and a ref from the command is never an option.
@@ -228,7 +298,7 @@ def findings(diff_text):
                         name = next(group for group in match.groups() if group).lower()
                         (defined_added if sign == "+" else defined_removed).add(name)
     gone_stems = {stem(f.path) for f in code if f.deleted}
-    symbols = {s for s in (defined_removed - defined_added) | gone_stems if len(s) >= SYMBOL_MIN}
+    symbols = {s for s in (defined_removed - defined_added) | gone_stems if len(re.sub(r"[^a-z0-9]", "", s)) >= SYMBOL_MIN}
 
     per_file, added_names = [], set()
     removed_lines, added_lines = [], []
@@ -295,14 +365,153 @@ def findings(diff_text):
 # --- the command -----------------------------------------------------------------------------------------------
 
 class Simple:
-    """One simple command: its words (a here-string is one word; a heredoc body is none)."""
+    """One simple command: its words (a here-string is one word; a heredoc body is none), the targets of its
+    redirections, and the spans of the text it covers (from the end of the separator before it, and its heredoc
+    bodies)."""
 
-    def __init__(self):
+    def __init__(self, start=0, before=""):
         self.words = []
+        self.redirects = []
+        self.spans = [[start, start]]
+        self.runs = []   # spans inside it that run as commands: substitutions, backticks, expanding heredoc parts
+        self.quoted = []   # spans of its quoted text: quotes, here-strings, `$'...'`, quoted heredoc bodies
+        self.before = before   # the separators since the simple command before it (`;`, `&&`, `||`, `|`, `(`, ...)
+
+
+HEREDOC_CAT = re.compile(r"\s*cat\s*<<-?[ \t]*(['\"]?)(\w+)\1[ \t]*\n")
+# The loose cross-check: a `git` and a later `commit` between two of these separators.
+SEGMENT = re.compile(r"[;&|(){}!\n]|\bgit\b|(?<![\w./-])commit(?![\w./])")   # a whole word: not `--no-commit`
+SEGMENT_PS = re.compile(SEGMENT.pattern, re.I)
+KEYWORDS = frozenset(("then", "do", "else", "elif", "if", "while", "until", "!", "{", "time", "command", "nohup",
+                      "exec"))
+
+
+class Unparsed(Exception):
+    """A bash construct the guard does not model, or one that does not end."""
+
+
+def _arith_end(text, i):
+    """The index just past the `))` closing the bash `$((` at i."""
+    depth, j = 0, i + 1
+    while j < len(text):
+        depth += {"(": 1, ")": -1}.get(text[j], 0)
+        j += 1
+        if depth == 0:
+            return j
+    raise Unparsed("an unclosed `$((`")
+
+
+def _ansi_end(text, i):
+    """The index just past the `'` closing the bash `$'` at i (a backslash escapes the next character)."""
+    j = i + 2
+    while j < len(text):
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == "'":
+            return j + 1
+        else:
+            j += 1
+    raise Unparsed("an unclosed `$'`")
+
+
+def _substitution_end(text, i):
+    """The index just past the `)` that closes the bash `$(` at i. Quotes, `$'...'`, `$((...))`, comments, nested
+    substitutions and heredoc bodies inside it are skipped as bash reads them, so a `"` or `)` there ends nothing.
+    Raises Unparsed when nothing closes it or it holds a `case` (whose patterns end in `)`)."""
+    if text.startswith("$((", i):
+        return _arith_end(text, i)
+    stack, j, n, pending = ["("], i + 2, len(text), []
+    while j < n and stack:
+        c = text[j]
+        if stack[-1] == '"':
+            if c == "\\":
+                j += 2
+            elif c == '"':
+                stack.pop()
+                j += 1
+            elif text.startswith("$((", j):
+                j = _arith_end(text, j)
+            elif text.startswith("$(", j):
+                stack.append("(")
+                j += 2
+            else:
+                j += 1
+        elif c == "\\":
+            j += 2
+        elif text.startswith("$((", j):
+            j = _arith_end(text, j)
+        elif text.startswith("$'", j):
+            j = _ansi_end(text, j)
+        elif c == "'":
+            end = text.find("'", j + 1)
+            j = n if end < 0 else end + 1
+        elif c == "#" and text[j - 1] in " \t\n;|&(":
+            end = text.find("\n", j)
+            j = n if end < 0 else end
+        elif re.match(r"case\s", text[j:j + 5]) and text[j - 1] in " \t\n;|&(":
+            raise Unparsed("a `case` inside `$(...)`")
+        elif c in '"(':
+            stack.append(c)
+            j += 1
+        elif c == ")":
+            stack.pop()
+            j += 1
+        elif text.startswith("<<", j) and not text.startswith("<<<", j):
+            k = j + 2 + (text[j + 2:j + 3] == "-")
+            while k < n and text[k] in " \t":
+                k += 1
+            start = k
+            while k < n and text[k] not in " \t\n;|&<>()":
+                k += 1
+            pending.append(text[start:k].strip("'\""))
+            j = k
+        elif c == "\n" and pending:
+            for delimiter in pending:
+                line = re.compile(r"^[ \t]*%s[ \t]*$" % re.escape(delimiter), re.M).search(text, j + 1)
+                j = line.end() if line else n
+            pending = []
+        else:
+            j += 1
+    if stack:
+        raise Unparsed("an unclosed `$(`")
+    return j
+
+
+def _backtick_end(text, i):
+    """The index just past the backtick that closes the one at i (a backslash escapes the next character)."""
+    j = i + 1
+    while j < len(text):
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == "`":
+            return j + 1
+        else:
+            j += 1
+    raise Unparsed("an unclosed backtick")
+
+
+def _runs_nothing(inner):
+    """True when `$(<inner>)` is `cat` of one heredoc with a quoted delimiter: its body is text that runs nothing."""
+    head = HEREDOC_CAT.match(inner)
+    return bool(head and head.group(1)) and _substitution_word(inner) != "$(" + inner + ")"
+
+
+def _substitution_word(inner):
+    """The word bash makes of `$(<inner>)` when it is `cat` of one heredoc (its body without the trailing newlines),
+    else the text itself."""
+    head = HEREDOC_CAT.match(inner)
+    if head:
+        lines = inner[head.end():].split("\n")
+        for k, line in enumerate(lines):
+            if line.strip(" \t") == head.group(2):
+                if not "".join(lines[k + 1:]).strip():
+                    return "\n".join(lines[:k]).rstrip("\n")
+                break
+    return "$(" + inner + ")"
 
 
 def split_command(text, powershell):
-    """[Simple] of a shell command. A redirection and its target are no words."""
+    """[Simple] of a shell command. A redirection and its target are no words; a bash `"$(...)"` is one word."""
     out, current = [], Simple()
     word, has_word, drop_next = [], False, False
     pending = []   # bash heredoc delimiters waiting for the end of the line
@@ -313,47 +522,62 @@ def split_command(text, powershell):
         if has_word:
             if drop_next:
                 drop_next = False
+                current.redirects.append("".join(word))
             else:
                 current.words.append("".join(word))
         word, has_word = [], False
 
-    def end_simple():
+    def end_simple(separator=""):
         nonlocal current, drop_next
         end_word()
         drop_next = False
-        if current.words:
+        current.spans[0][1] = i
+        if current.words or current.redirects:
             out.append(current)
-        current = Simple()
+            current = Simple(i, separator)
+        else:
+            current = Simple(i, current.before + separator)
 
     while i < n:
         c = text[i]
         if powershell and not has_word and text.startswith(("@'", '@"'), i) and text[i + 2:i + 3] in ("\n", "\r"):
             closer = "\n" + text[i + 1] + "@"
             end = text.find(closer, i + 2)
-            body = text[text.index("\n", i) + 1:end if end >= 0 else n]
+            start = text.index("\n", i) + 1
+            body = text[start:end if end >= 0 else n]
+            if text[i + 1] == '"' and "$(" in body:   # a subexpression runs
+                current.runs.append([start + body.index("$("), start + len(body)])
             word.append(body)
             has_word = True
+            current.quoted.append([i, end + len(closer) if end >= 0 else n])
             i = end + len(closer) if end >= 0 else n
             continue
         if c in " \t\r":
             end_word()
             i += 1
         elif c == "\n":
-            end_simple()
+            end_simple("\n")
             i += 1
-            for delimiter in pending:
+            for delimiter, owner, quoted in pending:
                 end = text.find("\n" + delimiter + "\n", i - 1)
                 stop = end if end >= 0 else n
+                owner.spans.append([i, stop])
+                if quoted:
+                    owner.quoted.append([i, stop])
+                runs = [k for k in (text.find("$(", i, stop), text.find("`", i, stop)) if k >= 0]
+                if not quoted and runs:   # an unquoted body expands, and its substitutions run
+                    owner.runs.append([min(runs), stop])
                 i = stop + len(delimiter) + 2 if end >= 0 else n
             pending = []
+            current = Simple(i, current.before)
         elif c == "#" and not has_word:
             end = text.find("\n", i)
             i = end if end >= 0 else n
         elif text.startswith(("&&", "||"), i):
-            end_simple()
+            end_simple(text[i:i + 2])
             i += 2
         elif c in ";|&()" or (powershell and c in "{}"):
-            end_simple()
+            end_simple(c)
             i += 1
         elif not powershell and text.startswith("<<", i) and not text.startswith("<<<", i):
             end_word()
@@ -363,7 +587,7 @@ def split_command(text, powershell):
             k = j
             while k < n and text[k] not in " \t\n;|&<>":
                 k += 1
-            pending.append(text[j:k].strip("'\""))
+            pending.append((text[j:k].strip("'\""), current, text[j:j + 1] in "'\"\\"))
             i = k
         elif c in "<>":
             if has_word and ("".join(word).isdigit() or "".join(word) == "*"):
@@ -379,8 +603,23 @@ def split_command(text, powershell):
             else:
                 drop_next = True
             i = j
+        elif not powershell and text.startswith(("$'", "$(("), i):
+            end = (_ansi_end if text[i + 1] == "'" else _arith_end)(text, i)
+            if text[i + 1] == "(":
+                current.runs.append([i, end])   # arithmetic may hold a substitution
+            else:
+                current.quoted.append([i, end])
+            word.append(text[i:end])
+            has_word = True
+            i = end
+        elif not powershell and c == "`":
+            end = _backtick_end(text, i)
+            current.runs.append([i, end])
+            word.append(text[i:end])
+            has_word = True
+            i = end
         elif c == "'":
-            j = i + 1
+            j, opened = i + 1, i
             while True:
                 end = text.find("'", j)
                 if end < 0:
@@ -394,6 +633,7 @@ def split_command(text, powershell):
                 word.append(text[j:end])
                 i = end + 1
                 break
+            current.quoted.append([opened, i])
             has_word = True
         elif c == '"':
             escape = "`" if powershell else "\\"
@@ -403,8 +643,24 @@ def split_command(text, powershell):
                     word.append(text[j + 1])
                     j += 2
                     continue
+                if not powershell and text.startswith("$(", j):
+                    end = _substitution_end(text, j)
+                    if not _runs_nothing(text[j + 2:end - 1]):
+                        current.runs.append([j, end])
+                    word.append(_substitution_word(text[j + 2:end - 1]))
+                    j = end
+                    continue
+                if not powershell and text[j] == "`":
+                    end = _backtick_end(text, j)
+                    current.runs.append([j, end])
+                    word.append(text[j:end])
+                    j = end
+                    continue
                 word.append(text[j])
                 j += 1
+            if powershell and "$(" in text[i:j]:   # a subexpression runs
+                current.runs.append([text.index("$(", i), j])
+            current.quoted.append([i, j + 1])
             i = j + 1
             has_word = True
         elif c == ("`" if powershell else "\\") and i + 1 < n:
@@ -421,16 +677,180 @@ def split_command(text, powershell):
 
 
 def _local_path(path, powershell):
-    """A Git Bash drive path (`/<letter>/...`) as a Windows one, on Windows."""
+    """A Git Bash drive path (`/<letter>/...`) as a Windows one, and `/tmp` as the temp folder Git Bash mounts there,
+    on Windows."""
     if os.name == "nt" and not powershell and re.match(r"/[A-Za-z](?:/|$)", path):
         return path[1] + ":" + (path[2:] or "/")
+    if os.name == "nt" and not powershell and re.match(r"/tmp(?:/|$)", path):
+        return tempfile.gettempdir() + path[4:]
     return path
+
+
+def _assignments(words, powershell):
+    """[(name, value)] a simple command sets for the commands after it: bash `NAME=value ...` alone or after
+    `export`, PowerShell `$name = value` and `$env:NAME = value` (names folded to lower case)."""
+    if powershell:
+        if len(words) == 3 and words[1] == "=" and re.fullmatch(r"\$(?:env:)?\w+", words[0], re.I):
+            return [(words[0][1:].lower(), words[2])]
+        one = re.fullmatch(r"\$((?:env:)?\w+)=(.*)", words[0], re.I | re.S) if len(words) == 1 else None
+        return [(one.group(1).lower(), one.group(2))] if one else []
+    words = words[1:] if words[:1] == ["export"] else words
+    pairs = [re.fullmatch(r"([A-Za-z_]\w*)=(.*)", word, re.S) for word in words]
+    return [(pair.group(1), pair.group(2)) for pair in pairs] if pairs and all(pairs) else []
+
+
+OPENS, CLOSES = ("if", "for", "while", "until", "case", "select", "{"), ("fi", "done", "esac", "}")
+WORD_START = ("", ";", "&", "|", "(", ")", "{", "}", "'", '"', "=", ",", ":")   # a shell word may start after these
+WORD_END = ("", ";", "&", "|", "(", ")", "{", "}", "'", '"', "=", "[", "+", ",")
+
+
+def _bracketed(text):
+    """True when `text` leaves a `${`, `$[` or `[` open."""
+    open_ = []
+    for token in re.finditer(r"\$\{|\[|\]|\}", text):
+        mark = token.group(0)
+        if mark in ("${", "["):
+            open_.append("}" if mark == "${" else "]")
+        elif open_ and open_[-1] == mark:
+            open_.pop()
+    return bool(open_)
+
+
+def _inert(m, commits, command):
+    """True when a name match `m` lies in quoted text of a git commit, outside what runs there, with no `${`, `$[`
+    or `[` open around it and no `[` after it: message text."""
+    at = m.start()
+    for s in commits:
+        if any(a <= at < b for a, b in s.spans) and not any(a <= at < b for a, b in s.runs):
+            quote = next((a for a, b in s.quoted if a <= at < b), None)
+            return (quote is not None and not _bracketed(command[quote:at])
+                    and command[m.end():m.end() + 1] != "[")
+    return False
+
+
+def _only_read(command, name, powershell, own, commits=()):
+    """True when `name` stands in the command text once as its assignment (bash `name=`, alone or after `export`;
+    PowerShell `$name =`) and everywhere else only as a plain read (`$name` or `${name}`, in PowerShell an argument
+    or part of a string). Any other appearance as a shell word (`[`, `+=`, `declare`, a scope prefix, `read`,
+    `for`, `Remove-Variable`, the bare name) leaves it unresolved. Text inside the assignment's own value (`own`,
+    the span from its `=`) and the name inside a longer word (`my-repo`, `x\\repo`) are no appearance, nor is the
+    quoted text of a git commit (`commits`: its message) when no `${`, `$[` or `[` is open around the name and no
+    `[` follows it. What runs inside a commit (a substitution, a backtick, a PowerShell `$(`), its unquoted words (a
+    `name=v git commit` prefix) and a name after `$[`, `[` or a `${` it does not close at once count."""
+    assigned = 0
+    for m in re.finditer(r"(?<!\w)" + re.escape(name) + r"(?!\w)", command, re.I if powershell else 0):
+        if own[0] <= m.start() < own[1]:
+            continue
+        if _inert(m, commits, command):
+            continue
+        before, after = command[:m.start()], command[m.end():]
+        if before.endswith(("$[", "[")) or before.endswith("${") and not after.startswith("}"):
+            return False   # arithmetic, a subscript or an expansion that may assign (`${name:=v}`)
+        if before.endswith("${") and after.startswith("}"):
+            lead, rest = before[:-2], after[1:]
+        elif before.endswith("$"):
+            lead, rest = before[:-1], after
+        elif (before[-1:] not in WORD_START and not before[-1:].isspace()
+              or after[:1] not in WORD_END and not after[:1].isspace()):
+            continue   # inside a longer word: a path or a name, not the variable
+        elif not powershell and after.startswith("=") and re.search(r"(?:^|[;&|\n])[ \t]*(?:export[ \t]+)?$", before):
+            assigned += 1
+            continue
+        else:
+            return False
+        if powershell and re.match(r"\s*=(?!=)", rest) and lead[-1:] in ("", " ", "\t", "\n", ";"):
+            assigned += 1
+            continue
+        if powershell and (lead[-1:] not in ("", " ", "\t", "\n", '"', ",", "=", ";")
+                           or not re.match(r"(?:$|[\s\"',;)}|&\\/])", rest)
+                           or re.match(r"\s*(?:[-+*/%]|\?\?)=", rest)):
+            return False
+    return assigned == 1
+
+
+def _trusted(parsed, command, powershell):
+    """{index of a simple command that assigns: its `&&` chain, or None} for the assignments the guard trusts: at the
+    top level (no subshell, group, loop or if block), after the start, `;`, a newline or `&&`, not piped or sent to
+    the background, and the name's one assignment, every other appearance a plain read (a value with `$` or a backtick is
+    kept as written, so a folder holding it stays unresolved). An
+    assignment after `&&` holds only for steps of the same `&&` chain, which run only when it ran. Also
+    {index: chain} of every simple command."""
+    trusted, chains, depth, chain = {}, {}, 0, 0
+
+    def own(simple):
+        """The span of an assignment's value: from its first `=` to the end of the simple command."""
+        start, end = simple.spans[0]
+        eq = command.find("=", start, end)
+        return (eq, end) if eq >= 0 else (0, 0)
+
+    commits = [s for s in parsed if (_git_parts(_command_words(s.words, powershell) or ["-"], ".", powershell)
+                                     or "--")[1] == "commit"]
+    for k, simple in enumerate(parsed):
+        seps = re.sub(r"\s", "", simple.before.replace("&&", "A").replace("||", "O"))
+        if seps != "A":
+            chain += 1
+        chains[k] = chain
+        depth += sum(seps.count(c) for c in "({") - sum(seps.count(c) for c in ")}")
+        first = simple.words[0] if simple.words else ""
+        if not powershell and first in CLOSES:
+            depth -= 1
+        after = parsed[k + 1].before.replace("&&", "").replace("||", "") if k + 1 < len(parsed) else ""
+        pairs = _assignments(simple.words, powershell)
+        if (pairs and depth == 0 and set(seps) <= set("A;") and not set(after) & set("|&")
+                and all(_only_read(command, name, powershell, own(simple), commits) for name, _ in pairs)):
+            trusted[k] = chain if "A" in seps else None
+        if not powershell and first in OPENS:
+            depth += 1
+    return trusted, chains
+
+
+def _expand(word, variables, powershell):
+    """`word` with each variable the command set to a literal replaced by its value; any other stays as written."""
+    if powershell:
+        pattern, fold = re.compile(r"\$(?:\{((?:env:)?\w+)\}|((?:env:)?\w+))", re.I), str.lower
+    else:
+        pattern, fold = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))"), str
+    return pattern.sub(lambda m: variables.get(fold(m.group(1) or m.group(2)), m.group(0)), word)
+
+
+def _unresolved(path):
+    """True when a folder still holds a variable, a substitution or a leading `~`, which the guard cannot name."""
+    return "$" in path or "`" in path or any(part.startswith("~") for part in re.split(r"[\\/]", path))
+
+
+def _folder_refusal(path):
+    """The Unclear for a git step in a folder `_unresolved` refuses."""
+    return Unclear(STACK_WHY, STACK_HINT) if LOST in path else Unclear(FOLDER_WHY, FOLDER_HINT)
+
+
+def _stack_step(words, folder, stack, seen, powershell):
+    """The folder after a `pushd`/`popd` (PowerShell `Push-Location`/`Pop-Location`), updating `stack`; a folder
+    holding LOST when the stack cannot be followed (a pop from an empty stack, a rotation, `-n`, a named stack)."""
+    head, args = words[0].lower(), words[1:]
+    targets = [w for w in args if not w.startswith("-")]
+    odd = [w for w in args if w.startswith("+") or w.startswith("-") and w.lower() not in STACK_PLAIN]
+    lost = os.path.join(folder, LOST)
+    if odd or head in POP and targets:
+        return lost
+    if head in POP:
+        return stack.pop() if stack else lost
+    if targets:
+        stack.append(folder)
+        return os.path.join(folder, _local_path(_expand(targets[-1], seen, powershell), powershell))
+    if powershell:   # a bare `Push-Location` pushes the folder and stays
+        stack.append(folder)
+        return folder
+    if not stack:   # a bare bash `pushd` swaps the two top folders
+        return lost
+    folder, stack[-1] = stack[-1], folder
+    return folder
 
 
 class Commit:
     def __init__(self):
         self.folder = None
         self.message_file = None
+        self.message_written = False   # the `-F` file is one the command writes before the commit
         self.message_sources = []   # files a `cat`/`Get-Content` before `-F -` reads
         self.reuse = None           # -C / -c commit
         self.amend = False
@@ -441,9 +861,187 @@ class Commit:
         self.pathspecs = []
         self.stages = []            # (subcommand, folder, args) before the commit
         self.powershell = False
+        self.unclear = None         # why a step before the commit cannot be replayed
+        self.touched = []           # (folder, program, targets) of file writes a later staging step picks up
+        self.base = None            # the commit a `git reset --soft <rev>` before it moves HEAD to
+        self.parts = [self]         # every commit of the command this one adds up
 
 
-def _git_parts(words, folder, powershell):
+class Unclear(Exception):
+    """The guard cannot tell what the commit holds: the reason, and the hint the denial gives."""
+
+    def __init__(self, why, hint=None):
+        Exception.__init__(self, why)
+        self.hint = hint or ("Run that step in its own call and commit in the next one, so the guard reads what it "
+                             "left")
+
+
+READ_HINT = "Commit in a command of its own, with the message in `-m` or in a file read by `-F`"
+RUN_HINT = ("Run `git commit` itself in the command, not in a string, a function or another shell; if the command "
+            "does not commit, split it so no `git` and `commit` share a part between `;`, `&`, `|` and newlines, "
+            "write that text to a file with the Write tool, or pass an argument such as `--grep commit` from a "
+            "substitution (bash `\"$(printf commit)\"`, PowerShell `\"$('commit')\"`)")
+FOLDER_WHY = "the folder of a git step is named by a variable or `~` the command does not set to a literal"
+FOLDER_HINT = ("Name the folder literally in `cd` or `git -C`, or set the variable once, to a literal path, at the "
+               "start of the same command (`;`, `&&` or a newline before the git step, not inside a block)")
+LOST = "$(lost folder)"   # a folder part the guard cannot follow; `_unresolved` refuses any folder that holds it
+STACK_WHY = ("the guard cannot follow the folder of a git step past a `pushd`, `popd`, `dirs`, `Push-Location`, "
+             "`Pop-Location`, a stack name or `)`")
+STACK_HINT = ("Name the folder with an absolute path in `cd`, `Set-Location` or `git -C` after the last `popd`, "
+              "`Pop-Location` or `)`, or run the steps in another folder in a call of their own")
+REMOTE = ("ssh",)   # a commit it runs works on a repository the hook cannot read: unchecked
+WSL_WHY = "a `wsl` git commit works in a repository the guard cannot place"
+WSL_HINT = ("Name the WSL folder literally: `/mnt/<d>/...` for a Windows repository, an absolute Linux path or "
+            "`~/...` without `..` for a Linux one, with no `--git-dir`, `--work-tree`, `--namespace`, other `-c` "
+            "settings or GIT_* variables")
+LINUX_ONLY = object()   # a `wsl` git step in the Linux file system, which the hook cannot read: unchecked
+WSL_VALUE = ("-d", "--distribution", "-u", "--user", "--shell-type")
+
+
+def _program(word):
+    """A program word as a name: no folder, no `.exe`, lower case."""
+    return re.sub(r"\.exe$", "", word.replace("\\", "/").rsplit("/", 1)[-1].lower())
+
+
+class LinuxPath(str):
+    """A folder in the WSL Linux file system, as WSL resolves it."""
+
+
+UNPLACED = object()   # a WSL folder the guard cannot place
+SAFE_GLOBAL = ("--no-pager", "-P", "-p", "--paginate", "--no-optional-locks", "--literal-pathspecs",
+               "--no-replace-objects")   # git options before the subcommand that never choose the repository
+SAFE_CONFIG = ("user.", "commit.", "color.", "advice.", "gpg.", "i18n.", "pager.")   # `-c` keys that choose none
+
+
+def _wsl_folder(path, folder):
+    """The folder a WSL path names from `folder`: a Windows folder for `/mnt/<d>/...` or a Windows or relative path
+    from one; a LinuxPath for an absolute path outside `/mnt/<d>` (read as WSL does: `..` resolved, a doubled
+    leading slash collapsed) or `~`/`~/x` with no `..`; UNPLACED for anything else. Off Windows an absolute path
+    is local as written."""
+    if folder is UNPLACED or "$" in path or "`" in path:
+        return UNPLACED
+    if isinstance(folder, LinuxPath) and not path.startswith(("/", "~")):
+        path = posixpath.join(folder, path)
+    if path == "~" or path.startswith("~/"):
+        return LinuxPath(path) if ".." not in path.split("/") else UNPLACED
+    if path.startswith("/"):
+        norm = "/" + posixpath.normpath(path).lstrip("/")
+        if os.name != "nt":
+            return norm
+        mount = re.match(r"/mnt/([A-Za-z])(?=/|$)(.*)", norm)
+        return mount.group(1) + ":" + (mount.group(2) or "/") if mount else LinuxPath(norm)
+    return path if folder is None else os.path.join(folder, path)
+
+
+def _wsl_git(words, base):
+    """For git words WSL runs from `base`: (the folder they choose, whether every option before the subcommand is
+    one that chooses no repository, the index of the subcommand)."""
+    j, sure = 1, True
+    while j < len(words) and words[j].startswith("-"):
+        if words[j] == "-C" and j + 1 < len(words):
+            base = _wsl_folder(words[j + 1], base)
+        elif words[j] == "-c" and j + 1 < len(words):
+            sure = sure and words[j + 1].split("=", 1)[0].lower().startswith(SAFE_CONFIG)
+        elif words[j] not in SAFE_GLOBAL:
+            sure = False
+        j += 2 if words[j] == "-C" or words[j] in GIT_VALUE_GLOBAL else 1
+    return base, sure, j
+
+
+def _linux_only(base, sure, command):
+    """True when a WSL git step surely works in the Linux file system: its folder is there, no option before the
+    subcommand can choose another repository, and the command names no GIT_* variable."""
+    return isinstance(base, LinuxPath) and sure and not re.search("GIT_", command, re.I)
+
+
+def _through_wsl(words, folder, command):
+    """`wsl [options] git ...` as the git words it runs, with the Windows folder as `-C` (WSL starts in the Windows
+    folder); LINUX_ONLY when that repository is surely in the Linux file system; (UNPLACED, subcommand) when the
+    guard cannot place it; None when it runs no plain git."""
+    i, base = 1, folder
+    while i < len(words) and words[i].startswith("-"):
+        if words[i] in WSL_VALUE:
+            i += 2
+        elif words[i] == "--cd" and i + 1 < len(words):
+            base, i = _wsl_folder(words[i + 1], folder), i + 2
+        elif words[i] in ("-e", "--exec", "--"):
+            i += 1
+            break
+        elif words[i] == "--system":
+            i += 1
+        else:
+            return None
+    rest = words[i:]
+    if len(rest) > 2 and _program(rest[0]) in ("bash", "sh") and rest[1] in ("-c", "-lc"):
+        return LINUX_ONLY if _linux_only_script(rest[2], base, command) else None
+    if not rest or _program(rest[0]) != "git":
+        return None
+    base, sure, j = _wsl_git(rest, base)
+    if _linux_only(base, sure, command):
+        return LINUX_ONLY
+    if base is UNPLACED or isinstance(base, LinuxPath):
+        return UNPLACED, (rest[j:j + 1] or [""])[0]
+    out, k = [], 1
+    while k < j:
+        width = 2 if rest[k] == "-C" or rest[k] in GIT_VALUE_GLOBAL else 1
+        out += [] if rest[k] == "-C" else rest[k:k + width]
+        k += width
+    return ["git"] + ([] if base is None else ["-C", base]) + out + rest[j:]
+
+
+def _linux_only_script(script, folder, command):
+    """True when a bash script `wsl` runs from `folder` commits only where `_linux_only` holds (after its `cd` and
+    `-C`) and holds no other `git ... commit` the parse cannot place."""
+    try:
+        parsed = split_command(script, False)
+    except Unparsed:
+        return False
+    read, here = [], folder
+    for simple in parsed:
+        words = _command_words(simple.words, False)
+        if set(simple.before) & set("()") or words and words[0] in PUSH:
+            return False   # a subshell or a folder stack this walk does not follow (a fresh shell has none to pop)
+        if words and words[0] in CD:
+            targets = [w for w in words[1:] if not w.startswith("-")]
+            here = _wsl_folder(targets[-1], here) if targets else LinuxPath("~")   # a bare `cd` goes home
+        elif words and _program(words[0]) == "git":
+            base, sure, j = _wsl_git(words, here)
+            if words[j:j + 1] == ["commit"]:
+                if not _linux_only(base, sure, command):
+                    return False
+                read.append(simple)
+    try:
+        _unread_commit(script, read, False)
+    except Unclear:
+        return False
+    return True
+
+
+def _copy_targets(args):
+    """The destination of a `cp` or `Copy-Item`: the value of `-t`, `--target-directory` or `-Destination`, else the
+    last word that is no option."""
+    for k, arg in enumerate(args):
+        name, eq, value = arg.partition("=")
+        if name in ("-t", "--target-directory") or name.lower().startswith("-dest"):
+            return [value] if eq else args[k + 1:k + 2]
+    return [a for a in args if not a.startswith("-")][-1:]
+
+
+def _command_words(words, powershell):
+    """The words from the program on: bash assignments, keywords and `env` with its options in front dropped."""
+    while words and not powershell:
+        if re.match(r"[A-Za-z_]\w*=", words[0]) or words[0] in KEYWORDS:
+            words = words[1:]
+        elif words[0] == "env":
+            words = words[1:]
+            while words and (words[0].startswith("-") or re.match(r"[A-Za-z_]\w*=", words[0])):
+                words = words[1:]
+        else:
+            break
+    return words
+
+
+def _git_parts(words, folder, powershell, variables=None):
     """(folder, subcommand, args) of a git command, folder None when it cannot be read; None when not git."""
     head = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
     if head not in ("git", "git.exe"):
@@ -454,7 +1052,7 @@ def _git_parts(words, folder, powershell):
         if option == "-C":
             if i + 1 >= len(words) or folder is None:
                 return None, None, []
-            folder = os.path.join(folder, _local_path(words[i + 1], powershell))
+            folder = os.path.join(folder, _local_path(_expand(words[i + 1], variables or {}, powershell), powershell))
             i += 2
         elif option in GIT_VALUE_GLOBAL:
             i += 2
@@ -475,6 +1073,8 @@ def _commit_options(commit, args):
             return
         if word.startswith("--"):
             name, eq, attached = word[2:].partition("=")
+            named = [option for option in COMMIT_LONG if option.startswith(name)]
+            name = name if name in COMMIT_LONG or len(named) != 1 else named[0]
             if name in COMMIT_VALUE_LONG and not eq:
                 attached, i = value, i + 1
             if name in ("message", "file"):
@@ -516,53 +1116,196 @@ def _commit_options(commit, args):
 
 
 def read_command(command, cwd, powershell):
-    """The Commit of the first `git commit` in the command, None when there is none or its folder is unknown."""
+    """The Commit the command's `git commit`s add up to (the last one, holding the others in `parts`), None when
+    there is none, a commit's folder is unknown, or they follow a history step. Raises Unclear as the docstring above
+    says."""
+    try:
+        parsed = split_command(command, powershell)
+    except Unparsed as why:
+        if re.search(r"\bgit\b[\s\S]*\bcommit\b", command):
+            raise Unclear("the guard cannot read the command (%s)" % why, READ_HINT)
+        return None
+    simples = [(_command_words(simple.words, powershell), simple) for simple in parsed]
+
+    def runs_git(words, folder):
+        """The words of a `wsl` git step as git runs them, LINUX_ONLY, (UNPLACED, subcommand), or the words as
+        they stand."""
+        if words and _program(words[0]) == "wsl":
+            return _through_wsl(words, folder, command) or words
+        return words
+
+    read = []
+    for words, simple in simples:
+        words = runs_git(words, cwd)
+        if words is LINUX_ONLY or isinstance(words, tuple) or words and (
+                _program(words[0]) in REMOTE or (_git_parts(words, cwd, powershell) or "--")[1] == "commit"):
+            read.append(simple)   # an unplaced `wsl` step is refused below, with its own reason
+    _unread_commit(command, read, powershell)
+    trusted, chains = _trusted(parsed, command, powershell)
     folder = cwd
-    stages, readers = [], []
-    for simple in split_command(command, powershell):
-        words = simple.words
-        while not powershell and words and re.match(r"[A-Za-z_]\w*=", words[0]):
-            words = words[1:]
-        if not words:
+    stages, readers, commits, variables, written = [], [], [], {}, set()
+    unclear, base, writes, touched, history, dirty, vague = None, None, [], [], None, False, None
+    stack, subshells = [], []   # the `pushd` folders; (folder, stack) where each open bash subshell started
+    cases = []   # the subshell depth of each open bash `case`, whose patterns end in a `)` that closes nothing
+    for k, (words, simple) in enumerate(simples):
+        seen = {name: value for name, (value, chain) in variables.items() if chain is None or chain == chains[k]}
+        for separator in "" if powershell else simple.before:   # a bash subshell's `cd` ends at its `)`
+            if separator == "(":
+                subshells.append((folder, list(stack)))
+            elif separator == ")" and cases and cases[-1] == len(subshells):
+                if subshells and folder is not None:   # a pattern's end, or a subshell's if `case` was no keyword
+                    folder = os.path.join(folder, LOST)
+            elif separator == ")" and subshells:
+                folder, stack = subshells.pop()
+            elif separator == ")" and folder is not None:
+                folder = os.path.join(folder, LOST)
+        if not powershell and words[:1] == ["case"]:
+            cases.append(len(subshells))
+        elif not powershell and words[:1] == ["esac"] and cases:
+            cases.pop()
+        targets = [t for t in simple.redirects if t.lower() not in NO_FILE]
+        if targets:
+            writes.append((folder, (words or ["a redirection"])[0], targets))
+            written.update(_written(folder, targets, seen, powershell))
+        assigned = _assignments(simple.words, powershell)
+        if assigned:
+            if k in trusted:   # an untrusted one sets a name no trusted one sets: the name stays unresolved
+                variables.update((name, (value, trusted[k])) for name, value in assigned)
+            continue
+        words = runs_git(words, folder)
+        if isinstance(words, tuple):   # a `wsl` git step the guard cannot place
+            if words[1] == "commit":
+                raise Unclear(WSL_WHY, WSL_HINT)
+            if vague is None and words[1] in ("add", "rm"):
+                vague = ""   # a staging step in a folder the guard cannot place
+            continue
+        if not words or words is LINUX_ONLY:
             continue
         head = words[0].lower()
+        near = (simple.before + (simples[k + 1][1].before if k + 1 < len(simples) else "")).replace(
+            "&&", "").replace("||", "")
+        if folder is not None and (head == "dirs" or powershell and head in CD and any(
+                len(w) > 1 and "-stackname".startswith(w.lower()) for w in words[1:])):
+            folder = os.path.join(folder, LOST)   # the stack edited, or a default stack named
+            continue
+        if head in PUSH + POP:
+            if folder is not None and set(near) & set("|&"):   # piped or in the background: it may not stay
+                folder = os.path.join(folder, LOST)
+            elif folder is not None:
+                folder = _stack_step(words, folder, stack, seen, powershell)
+            continue
         if head in CD:
             targets = [w for w in words[1:] if not w.startswith("-")]
             if not targets:
                 folder = None
             elif folder is not None:
-                folder = os.path.join(folder, _local_path(targets[-1], powershell))
+                folder = os.path.join(folder, _local_path(_expand(targets[-1], seen, powershell), powershell))
             continue
         if head in READERS and folder is not None:
             readers = [os.path.join(folder, w) for w in words[1:] if not w.startswith("-")]
             continue
-        parts = _git_parts(words, folder, powershell)
+        program = re.sub(r"\.exe$", "", head.replace("\\", "/").rsplit("/", 1)[-1])
+        kind = FILE_WRITERS.get(program)
+        if kind and (program != "sed" or any(w.startswith("--in-place") or re.match(r"-[^-]*i", w) for w in words[1:])):
+            names = [w for w in words[1:] if not w.startswith("-")]
+            writes.append((folder, words[0], _copy_targets(words[1:]) if kind == "copy" else names))
+            written.update(_written(folder, writes[-1][2], seen, powershell))
+            continue
+        parts = _git_parts(words, folder, powershell, seen)
         if parts is None:
             continue
         git_folder, sub, args = parts
-        if sub in ("add", "rm", "mv"):
+        options = args[:args.index("--")] if "--" in args else args
+        if sub in HISTORY and any(a in ("--help", "-h", "--show-current-patch") for a in options) \
+                and not any(a in ("-m", "-F", "-X", "-s", "--strategy") for a in options):
+            continue   # help changes nothing; `-m -h` gives a message
+        if any(a.startswith("--pathspec-from-file") for a in args) and sub in ("add", "rm", "commit"):
+            unclear = unclear or "`--pathspec-from-file` names its paths in a file"
+        if sub in HISTORY and not any(a in ("--abort", "--quit") for a in args):
+            history = history or sub   # what follows commits content the guard read when it was committed
+            continue
+        if sub in INDEX_WRITERS or sub in HISTORY:
+            revs = [a for a in args if not a.startswith("-")]
+            loud = [a for a in args if a not in ("-q", "--quiet")]
+            if sub == "reset" and "--soft" in args and len(revs) <= 1:
+                base = revs[0] if revs else base
+            elif not (sub in ("checkout", "switch") and len(loud) == 2 and loud[0] in ("-b", "-B", "-c", "-C")):
+                unclear, dirty = unclear or "`git %s` runs before it" % sub, True
+        if sub in ("add", "rm"):
             stages.append((sub, git_folder, args))
+            touched, writes, dirty = touched + writes, [], True
+            if vague is None and git_folder is not None and _unresolved(git_folder):
+                vague = git_folder
         elif sub == "commit":
+            commit = Commit()
+            _commit_options(commit, args)
+            if commit.dry_run:
+                continue
             if git_folder is None:
                 return None
-            commit = Commit()
-            commit.folder, commit.stages, commit.powershell = git_folder, stages, powershell
-            commit.message_sources = readers
-            _commit_options(commit, args)
-            return commit
-    return None
+            if vague is not None or _unresolved(git_folder):
+                raise _folder_refusal(git_folder if vague is None else vague)
+            if commit.all or commit.pathspecs:
+                touched, writes, dirty = touched + writes, [], True
+            if history and dirty:
+                raise Unclear("`git %s` and another change to the index run before it" % history)
+            if commit.message_file and commit.message_file != "-":
+                commit.message_file = _local_path(_expand(commit.message_file, seen, powershell), powershell)
+                commit.message_written = bool(_written(git_folder, [commit.message_file], {}, powershell) & written)
+            commit.folder, commit.stages, commit.powershell = git_folder, list(stages), powershell
+            commit.message_sources, commit.touched, dirty = readers, list(touched), False
+            commit.unclear, commit.base = unclear, base   # a step after the last commit changes nothing it holds
+            commits.append(commit)
+            if commit.all:
+                stages.append(("add", git_folder, ["-u"]))
+            if commit.pathspecs:
+                stages.append(("add", git_folder, ["--"] + commit.pathspecs))
+    if not commits:
+        return None
+    commit = commits[-1]
+    commit.parts, commit.amend = commits, commits[0].amend
+    if len(commits) > 1:
+        commit.include = True   # the paths join what the earlier commits staged
+    return commit
 
 
-def has_reason(text):
+def _written(folder, targets, variables, powershell):
+    """The paths, as compared, of files a step in `folder` writes or removes."""
+    if folder is None:
+        return set()
+    return {os.path.normcase(os.path.abspath(os.path.join(folder, _local_path(_expand(t, variables, powershell),
+                                                                              powershell)))) for t in targets}
+
+
+def _unread_commit(command, read, powershell):
+    """Raise Unclear when a `commit` word follows a `git` word between two separators (`;&|(){}!`, a newline)
+    outside the text of every commit the parse read, where a substitution, backtick or expanding heredoc part inside
+    a commit is no text of it. Loose on purpose: it knows no wrapper, so text that only names a commit
+    (`echo git commit`) is refused too."""
+    git_seen = False
+    for token in (SEGMENT_PS if powershell else SEGMENT).finditer(command):
+        word = token.group(0).lower()
+        if word == "git":
+            git_seen = True
+        elif word != "commit":
+            git_seen = False   # a separator ends the segment
+        elif git_seen and not any(
+                any(start <= token.start() < end for start, end in simple.spans)
+                and not any(start <= token.start() < end for start, end in simple.runs) for simple in read):
+            raise Unclear("a git commit the guard could not parse stands in it", RUN_HINT)
+
+
+def has_reason(text, quoted=True):
     """True when a line holds `Test-change:` (or `Test-change=`, as `--trailer` takes it) and at least
-    REASON_MIN characters after it, up to a quote that ends the value it stands in."""
+    REASON_MIN characters after it; in command text (`quoted`) up to a quote that ends the value it stands in, where an
+    apostrophe inside a word (`it's`) ends nothing."""
     for line in (text or "").splitlines():
         at = max(line.find(TRAILER), line.find(TRAILER[:-1] + "="))
         if at < 0:
             continue
         reason = line[at + len(TRAILER):]
-        cut = min([k for k in (reason.find('"'), reason.find("'"), reason.find("`")) if k >= 0] or [len(reason)])
-        if len(reason[:cut].strip()) >= REASON_MIN:
+        end = re.search(r"[\"`]|'(?!\w)", reason) if quoted else None
+        if len(reason[:end.start() if end else len(reason)].strip()) >= REASON_MIN:
             return True
     return False
 
@@ -599,6 +1342,10 @@ def _interactive(args):
     return False
 
 
+class GitFailed(RuntimeError):
+    pass
+
+
 def _git(args, cwd, env=None):
     left = _deadline[0] - time.monotonic()
     if left <= 0:
@@ -606,8 +1353,24 @@ def _git(args, cwd, env=None):
     proc = subprocess.run(GIT + args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, timeout=min(GIT_TIMEOUT, left), env=_git_env(env))
     if proc.returncode != 0:
-        raise RuntimeError("git %s failed" % args[0])
+        raise GitFailed("git %s failed" % args[0])
     return proc.stdout
+
+
+def _holds_tests(folder, targets, top):
+    """True when a target names a tracked test file or a folder or glob that holds one, or the shell expands it
+    (a variable, `~`, a backtick, a brace) to a name the guard cannot see."""
+    if any(ch in t for t in targets for ch in "$~`{"):
+        return True
+    specs = [t if any(ch in t for ch in "*?[") else ":(literal)" + t for t in targets
+             if any(ch in t for ch in "*?[") or _inside(os.path.join(folder, t), top)]
+    if not specs:
+        return False
+    try:
+        listed = _git(["ls-files", "-z", "--"] + specs, folder).decode("utf-8", "replace")
+    except GitFailed:
+        return True   # a target git cannot read (a glob outside the repository): it may hold tests
+    return any(is_test_path(path) for path in listed.split("\0") if path)
 
 
 def _no_filters(folder):
@@ -631,20 +1394,23 @@ def _no_filters(folder):
 
 
 def _stated(commit, command):
+    """True when the message of the command or of one of its commits states a reason."""
+    return has_reason(command) or any(_stated_one(part) for part in commit.parts)
+
+
+def _stated_one(commit):
     """True when the commit's message states a reason (read without git where it can be)."""
-    if has_reason(command):
-        return True
     if commit.message_file == "-":
-        return any(has_reason(_read(path)) for path in commit.message_sources)
+        return any(has_reason(_read(path), quoted=False) for path in commit.message_sources)
     if commit.message_file:
+        if commit.message_written:
+            return False   # what the command writes there stands in the command text, which is read already
         text = _read(os.path.join(commit.folder, commit.message_file))
-        if text is None:
-            raise RuntimeError("message file unreadable")   # the same command may still write it: fail open
-        return has_reason(text)
+        return text is not None and has_reason(text, quoted=False)   # a file it cannot read states no reason
     ref = commit.reuse or ("HEAD" if commit.amend and not commit.new_message else None)
     if ref and not ref.startswith("-"):
         return has_reason(_git(["log", "-1", "--no-show-signature", "--format=%B", ref, "--"],
-                               commit.folder).decode("utf-8", "replace"))
+                               commit.folder).decode("utf-8", "replace"), quoted=False)
     return False
 
 
@@ -666,38 +1432,62 @@ def _inside(folder, top):
 
 
 def _replay(commit, index, top):
-    """Apply the command's staging to the index copy at `index`; False when it cannot be replayed."""
+    """Apply the command's staging to the index copy at `index`; False when it cannot be replayed. Raises Unclear
+    when git rejects a replayed step."""
     env = {"GIT_INDEX_FILE": index}
     off = {}
 
-    def git_off(args, folder):
+    def git_off(args, folder, step):
         if folder not in off:
             off[folder] = _no_filters(folder)
-        _git(off[folder] + args, folder, env)
+        try:
+            _git(off[folder] + args, folder, env)
+        except GitFailed:
+            raise Unclear("replaying `git %s` failed" % " ".join(step)[:80])
 
     only = bool(commit.pathspecs) and not commit.include
-    words = [a for _, _, args in ([] if only else commit.stages) for a in args] + commit.pathspecs
-    if not commit.powershell and any(ch in a for a in words for ch in "*?[{"):
-        return False   # the shell and git would expand these differently
     if only:
         _git(["read-tree", "HEAD"], top, env)   # with --amend too: HEAD's tree plus the paths, diffed against HEAD~1
     else:
         for sub, folder, args in commit.stages:
-            if (folder is None or not _inside(folder, top) or sub == "mv"
-                    or _interactive(args)):
+            if folder is None or not _inside(folder, top) or _interactive(args):
                 return False
             if sub == "add":
                 if any(a in ("-n", "--dry-run") for a in args):
                     continue
-                git_off(["add"] + args, folder)
+                new = _not_yet(args, folder, env)
+                if new and all(a in new or a.startswith("-") for a in args):
+                    continue
+                git_off(["add"] + [a for a in args if a not in new], folder, [sub] + args)
             else:
                 paths = [a for a in args if not a.startswith("-") or a == "--"]
-                git_off(["rm", "--cached", "-r", "-q", "--ignore-unmatch"] + paths, folder)
+                git_off(["rm", "--cached", "-r", "-q", "--ignore-unmatch"] + paths, folder, [sub] + args)
         if commit.all:
-            git_off(["add", "-u"], top)
+            git_off(["add", "-u"], top, ["commit", "-a"])
     if commit.pathspecs:
-        git_off(["add", "--"] + commit.pathspecs, commit.folder)
+        git_off(["add", "--"] + commit.pathspecs, commit.folder, ["commit", "--"] + commit.pathspecs)
     return True
+
+
+def _not_yet(args, folder, env):
+    """The literal paths of a `git add` that name nothing yet, no file and no index entry: the same command makes
+    them, so they are new files, which remove no test. A magic pathspec (`:(...)`) is never one."""
+    paths = [a for a in args if not a.startswith(("-", ":")) and not any(ch in a for ch in "*?[{")
+             and not os.path.lexists(os.path.join(folder, a))]
+    if not paths:
+        return set()
+    listed = _git(["ls-files", "-z", "--"] + [":(literal)" + p for p in paths], folder, env).decode("utf-8", "replace")
+    tracked = [path for path in listed.split("\0") if path]
+    return {p for p in paths
+            if not any(t == p.replace("\\", "/").rstrip("/") or t.startswith(p.replace("\\", "/").rstrip("/") + "/")
+                       for t in tracked)}
+
+
+def _globbed(commit):
+    """True when a staged word holds a Bash glob or brace, which the shell and git expand differently."""
+    only = bool(commit.pathspecs) and not commit.include
+    words = [a for _, _, args in ([] if only else commit.stages) for a in args] + commit.pathspecs
+    return not commit.powershell and any(ch in a for a in words for ch in "*?[{")
 
 
 def check(command, cwd, powershell):
@@ -705,7 +1495,12 @@ def check(command, cwd, powershell):
     _deadline[0] = time.monotonic() + DEADLINE
     if not cwd:
         return None
-    commit = read_command(command, cwd, powershell)
+    try:
+        commit = read_command(command, cwd, powershell)
+    except Unclear:
+        if has_reason(command):
+            return None
+        raise
     if commit is None or commit.dry_run or _stated(commit, command):
         return None
     paths = _git(["rev-parse", "--show-toplevel", "--git-path", "index", "--git-path", "MERGE_HEAD",
@@ -714,8 +1509,21 @@ def check(command, cwd, powershell):
     top = paths[0]
     if any(os.path.exists(os.path.join(commit.folder, p)) for p in paths[2:]):
         return None
-    base = "HEAD~1" if commit.amend else "HEAD"
-    args = ["diff", "-M", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/",
+    if commit.unclear:
+        raise Unclear(commit.unclear)
+    for folder in {os.path.normcase(os.path.abspath(part.folder)) for part in commit.parts} - {
+            os.path.normcase(os.path.abspath(commit.folder))}:
+        try:
+            other = _git(["rev-parse", "--show-toplevel"], folder).decode("utf-8", "replace").strip()
+        except (GitFailed, OSError):
+            other = None
+        if other is None or not _inside(other, top) or not _inside(top, other):
+            raise Unclear("commits in more than one repository")
+    for folder, program, targets in commit.touched:
+        if folder is None or _unresolved(folder) or _holds_tests(folder, targets, top):
+            raise Unclear("`%s` changes test files a later step stages" % program)
+    base = (commit.base or "HEAD") + ("~1" if commit.amend else "")
+    args =["diff", "-M", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/",
             "--dst-prefix=b/", "--cached", base, "--"]
     args += ["*" + ext for ext in CODE_EXT]
     if commit.stages or commit.all or commit.pathspecs:
@@ -736,6 +1544,9 @@ def check(command, cwd, powershell):
     if not found:
         return None
     listed = "; ".join(found[:SHOWN]) + ("; and %d more" % (len(found) - SHOWN) if len(found) > SHOWN else "")
+    if _globbed(commit):
+        raise Unclear("a glob or brace in the staged paths is expanded by the shell and by git differently; read "
+                      "as git does, the commit weakens tests: " + listed)
     return ("%s this commit weakens tests: %s. If that is intended (the code a test covered is gone, cases folded "
             "into a table, the test was wrong, a flaky test has a task), add a `%s <why>` line to the commit "
             "message as a trailer and commit again; otherwise restore the tests and fix the code."
@@ -749,6 +1560,9 @@ def main():
         return 0
     try:
         reason = check(event["tool_input"]["command"], event.get("cwd"), tool == "PowerShell")
+    except Unclear as why:
+        reason = ("%s %s %s. %s; if the commit removes or skips tests on purpose, add a `%s <why>` line to its "
+                  "message." % (PREFIX, UNCLEAR, why, why.hint, TRAILER))
     except RuntimeError:   # a git call failed or ran out of time (a blob a partial clone lacks): fail open
         return 0
     if reason:
