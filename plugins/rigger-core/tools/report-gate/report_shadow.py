@@ -131,9 +131,10 @@ def contract(event):
             sys.path.insert(0, path)
     import slot_check
     agent_type = _text(event.get("agent_type"))
-    slot = next((path for path, target in _agent_slots(_text(event.get("session_id"))) if target == agent_type), None)
-    if slot is None:
+    named = [path for path, target in _agent_slots(_text(event.get("session_id"))) if target == agent_type]
+    if len(named) != 1:   # no slot, or two slots name this agent: no verdict is claimed for an ambiguous row
         return "", "none"
+    slot = named[0]
     message = event.get("last_assistant_message")
     if not isinstance(message, str):   # the event text only, never the transcript (spike Q2)
         return slot, "unread"

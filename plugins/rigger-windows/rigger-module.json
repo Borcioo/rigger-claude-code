@@ -24,7 +24,7 @@
       "load": [
         "rigger-windows:windows-dev-env"
       ],
-      "section": "windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind"
+      "section": "skills.skill-triggers"
     },
     {
       "id": "rigger-windows.php-herd-tooling",
@@ -32,7 +32,7 @@
       "load": [
         "rigger-windows:php-herd-tooling"
       ],
-      "section": "windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind"
+      "section": "skills.skill-triggers"
     },
     {
       "id": "rigger-windows.node-versions",
@@ -40,7 +40,7 @@
       "load": [
         "rigger-windows:node-versions"
       ],
-      "section": "windows-skills.windows-skills-loaded-before-the-first-step-of-their-kind"
+      "section": "skills.skill-triggers"
     }
   ],
   "tests": {

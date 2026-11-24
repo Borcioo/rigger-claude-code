@@ -567,5 +567,17 @@ class CliTests(GitCase):
                 self.assertEqual(out.count("\n"), 1, out)
 
 
+PRIVATE_USE = r"\breview_scope\._[A-Za-z]\w*"
+
+
+class ReviewScopeUseTests(unittest.TestCase):
+    def test_slot_check_uses_only_public_review_scope_names(self):
+        import re
+        self.assertEqual(re.findall(PRIVATE_USE, "x = review_scope._git(repo, args)"), ["review_scope._git"])
+        with open(SCRIPT, "rb") as handle:
+            source = handle.read().decode("utf-8")
+        self.assertEqual(re.findall(PRIVATE_USE, source), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

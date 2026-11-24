@@ -213,6 +213,24 @@ class ContractTests(unittest.TestCase):
         self.assertGreater(read, 0, "0 fixtures read")
         sys.stdout.write("# contract fixtures: %d\n" % read)
 
+    def test_every_trigger_section_names_a_section_that_exists(self):
+        # `section` is ignored by the renderer (one merged table), so a stale id would go unnoticed
+        sections = import_from(ASSEMBLE_DIR, "sections")
+        known, rows, stale = set(), 0, []
+        manifests = [(d, json.loads((d / MANIFEST).read_bytes().decode("utf-8"))) for d in module_dirs()]
+        for module_dir, data in manifests:
+            for entry in data.get("rules", []):
+                path = module_dir / entry["file"]
+                known.update(section.id for section in sections.split(path.stem, path.read_bytes()))
+        self.assertIn("skills.skill-triggers", known)
+        for module_dir, data in manifests:
+            for row in data.get("triggers", []):
+                rows += 1
+                if "section" in row and row["section"] not in known:
+                    stale.append("%s %s: %s" % (module_dir.name, row["id"], row["section"]))
+        self.assertGreater(rows, 0, "0 trigger rows read")
+        self.assertEqual(stale, [])
+
     def test_fail_rule_takes_the_longest_id(self):
         rules = ("coverage-sum", "coverage-scope", "path", "base-head", "status", "status-line")
         rows = [("fail-coverage-scope-rename.json", "coverage-scope"), ("fail-path-absolute.json", "path"),

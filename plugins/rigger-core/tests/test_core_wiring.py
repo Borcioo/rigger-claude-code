@@ -236,6 +236,19 @@ class SlotWordingTests(unittest.TestCase):
         self.assertIn("(procedure in the testing skill the Skill triggers table names)", reviewer)
         self.assertIn("opens with `SHORTCUTS: <n>`", reviewer)
 
+    def test_the_reviewer_json_example_meets_the_contract(self):
+        # Shape rules only: the example's base and head are placeholders, so the git rules cannot run on it.
+        text = REVIEWER.read_text(encoding="utf-8")
+        self.assertIn('`"contract": "rigger.reviewer/1"`', " ".join(text.split()))
+        saved = list(sys.path)
+        try:
+            sys.path.insert(0, str(CORE / "tools" / "slot-check"))
+            import slot_check
+        finally:
+            sys.path[:] = saved
+        verdict = slot_check.check("reviewer", text, shape_only=True)
+        self.assertEqual((verdict.ok, verdict.rule, verdict.reason, verdict.findings), (True, "", "", 1))
+
     def test_dispatch_names_slots(self):
         skill = " ".join(SKILL.read_text(encoding="utf-8").split())
         self.assertIn("Agent type: the `worker` slot for implementation, the `reviewer` slot for review or "

@@ -1,5 +1,6 @@
 """Tests of scripts/run_tests.py's process handling: a kill that fails and an interrupted run."""
 
+import atexit
 import contextlib
 import io
 import json
@@ -302,8 +303,24 @@ class LoadRetryTests(unittest.TestCase):
         self.assertEqual(self.calls, ["a"])
 
 
+EMPTY_GITCONFIG = []  # the one empty file fixture_git names as the global config, made on first use
+
+
+def empty_gitconfig():
+    if not EMPTY_GITCONFIG:
+        folder = tempfile.mkdtemp(prefix="fixture-gitconfig-")
+        atexit.register(shutil.rmtree, folder, True)
+        path = Path(folder) / "gitconfig"
+        path.write_bytes(b"")
+        EMPTY_GITCONFIG.append(str(path))
+    return EMPTY_GITCONFIG[0]
+
+
 def fixture_git(cwd, *args):
-    env = dict(run_tests.os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t" + "@example.invalid",
+    """git in the fixture folder: no inherited GIT_* variable, no system or user config."""
+    env = {key: value for key, value in run_tests.os.environ.items() if not key.upper().startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=empty_gitconfig(),
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t" + "@example.invalid",
                GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t" + "@example.invalid")
     proc = subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false"] + list(args), cwd=str(cwd),
                           env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
@@ -319,16 +336,94 @@ ALWAYS_RUN = (
 )
 PASSING_TEST ="import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n\n\nunittest.main()\n"
 # The stub sweep prints the line kept next to the repository (outside it, so changing it is no change) and logs its run.
+# Given files, it is the control run: one finding per line naming the planted path (or control-line.txt), exit 1 on any.
 SWEEP_STUB = """import os, sys
 here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 with open(os.path.join(here, "sweep-calls.txt"), "a", encoding="utf-8") as calls:
     calls.write(" ".join(sys.argv[1:]) + "\\n")
+files = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+if files:
+    try:
+        with open(os.path.join(here, "control-line.txt"), encoding="utf-8") as line:
+            print(line.read().strip())
+        sys.exit(0)
+    except OSError:
+        pass
+    found = 0
+    for name in files:
+        with open(name, encoding="utf-8") as planted:
+            for number, text in enumerate(planted, 1):
+                if ":/planted/" in text:
+                    found += 1
+                    print("%s:%d: planted path" % (name, number))
+    print("# files %d, findings %d" % (len(files), found))
+    sys.exit(1 if found else 0)
 try:
     with open(os.path.join(here, "sweep-line.txt"), encoding="utf-8") as line:
         print(line.read().strip())
 except OSError:
     print("# files 3, findings 0")
 """
+
+
+def plain_git(cwd, *args):
+    """git with no inherited GIT_* variable and no user config: the oracle of FixtureGitTests."""
+    env = {key: value for key, value in run_tests.os.environ.items() if not key.upper().startswith("GIT_")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=run_tests.os.devnull, GIT_AUTHOR_NAME="t",
+               GIT_AUTHOR_EMAIL="t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t")
+    proc = subprocess.run(["git"] + list(args), cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    return proc.stdout.decode("utf-8").strip()
+
+
+class FixtureGitTests(unittest.TestCase):
+    """fixture_git acts on the folder it is given, whatever the caller's GIT_* variables and git config say."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fixture-git-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = self.tmp / "repo"
+        self.repo.mkdir()
+        (self.repo / "f.txt").write_text("f\n", encoding="utf-8", newline="\n")
+
+    def build(self):
+        fixture_git(self.repo, "init", "-q", "-b", "main")
+        fixture_git(self.repo, "add", "-A")
+        fixture_git(self.repo, "commit", "-q", "-m", "base")
+
+    def test_an_inherited_git_dir_does_not_move_the_fixture(self):
+        victim = self.tmp / "victim"
+        victim.mkdir()
+        plain_git(victim, "init", "-q", "-b", "main")
+        plain_git(victim, "commit", "-q", "--allow-empty", "-m", "victim")
+        before = plain_git(victim, "rev-parse", "HEAD")
+        # GIT_WORK_TREE too, so every step succeeds and a leak shows as a victim commit, not a git error
+        with mock.patch.dict(run_tests.os.environ, {"GIT_DIR": str(victim / ".git"), "GIT_WORK_TREE": str(self.repo)}):
+            self.build()
+        self.assertEqual((plain_git(victim, "rev-parse", "HEAD"), plain_git(victim, "status", "--porcelain")),
+                         (before, ""))
+        self.assertEqual(plain_git(self.repo, "log", "--format=%s"), "base")
+
+    def test_the_user_git_config_is_not_read(self):
+        home = self.tmp / "home"
+        template = self.tmp / "template"
+        template.mkdir()
+        (template / "planted-by-config").write_text("x\n", encoding="utf-8")
+        home.mkdir()
+        (home / ".gitconfig").write_text("[init]\n\ttemplateDir = %s\n" % template.as_posix(), encoding="utf-8")
+        # Control: plain git with that home reads the file and copies the template.
+        control = self.tmp / "control"
+        control.mkdir()
+        env = {key: value for key, value in run_tests.os.environ.items() if not key.upper().startswith("GIT_")}
+        env.update(HOME=str(home), USERPROFILE=str(home), XDG_CONFIG_HOME=str(home / "xdg"))
+        subprocess.run(["git", "init", "-q"], cwd=str(control), env=env, stdin=subprocess.DEVNULL,
+                       capture_output=True, timeout=60, check=True)
+        self.assertTrue((control / ".git" / "planted-by-config").is_file())
+        with mock.patch.dict(run_tests.os.environ, {"HOME": str(home), "USERPROFILE": str(home),
+                                                    "XDG_CONFIG_HOME": str(home / "xdg")}):
+            self.build()
+        self.assertFalse((self.repo / ".git" / "planted-by-config").exists())
 
 
 class ChangedModulesTests(unittest.TestCase):
@@ -400,8 +495,22 @@ class ChangedModulesTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         expected = set(ALWAYS_RUN) | {self.MODULE_TESTS[name] for name in modules}
         self.assertEqual(set(self.ran), expected, output)
-        self.assertEqual(self.sweep_calls(), ["--no-denylist"], output)
+        self.expect_sweep_and_control(output)
         self.assertIn("# changed-modules: sweep files 3, findings 0\n", output)
+        self.assertIn("# changed-modules: sweep control caught 1 finding\n", output)
+
+    def expect_sweep_and_control(self, output):
+        """The sweep ran over the repository, then over one planted file outside it."""
+        calls = self.sweep_calls()
+        self.assertEqual(len(calls), 2, output)
+        self.assertEqual(calls[0], "--no-denylist", output)
+        flag, _, planted = calls[1].partition(" ")
+        self.assertEqual(flag, "--no-denylist", output)
+        planted = Path(planted)
+        self.assertEqual(planted.name, "planted.md", output)
+        self.assertNotIn(self.root, planted.parents, output)
+        self.assertFalse(planted.exists(), "the planted file outlives the run")
+        self.assertNotIn("planted path", output)   # the control's finding line stays out of the findings printout
 
     def test_classify_table(self):
         rows = {
@@ -473,6 +582,16 @@ class ChangedModulesTests(unittest.TestCase):
         self.assertEqual(self.ran, [])
         self.assertEqual(self.sweep_calls(), [])
 
+    def test_a_missing_always_run_file_exits_two_and_runs_nothing(self):
+        # the one always-run file inside a module: the other three are shared paths, which exit 2 already
+        (self.root / "plugins/rigger-rules/tests/test_plugin_rules.py").unlink()
+        code, output = self.main()
+        self.assertEqual(code, 2, output)
+        self.assertIn("changed-modules: always-run file plugins/rigger-rules/tests/test_plugin_rules.py "
+                      "not found; run the gate\n", output)
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.sweep_calls(), [])
+
     def test_moved_file_runs_both_modules(self):
         fixture_git(self.root, "mv", "plugins/a/f.py", "plugins/c/f.py")
         code, output = self.main()
@@ -488,6 +607,18 @@ class ChangedModulesTests(unittest.TestCase):
                 self.assertEqual(code, 1, output)
                 files, findings = line[len("# files "):].split(", findings ")
                 self.assertIn("# changed-modules: sweep files %s, findings %s\n" % (files, findings), output)
+
+    def test_a_sweep_control_that_misses_the_planted_finding_fails(self):
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        for line in ("# files 1, findings 0", "no count line"):
+            with self.subTest(line=line):
+                (self.tmp / "control-line.txt").write_text(line + "\n", encoding="utf-8")
+                (self.tmp / "sweep-calls.txt").unlink(missing_ok=True)
+                code, output = self.main()
+                self.assertEqual(code, 1, output)
+                self.assertIn("# changed-modules: sweep files 3, findings 0\n", output)
+                self.assertIn("# changed-modules: sweep control missed the planted finding\n", output)
+                self.assertEqual(len(self.sweep_calls()), 2, output)
 
     def test_git_failure_exits_two(self):
         self.write("plugins/a/tools/t/t.py", "t = 1\n")

@@ -322,7 +322,7 @@ def rule_reviewer_coverage_scope(ctx):
 def _show(repo, commit, path):
     """The bytes of `path` at `commit`, or None when the commit holds no file there."""
     try:  # `cat-file blob` refuses a folder
-        code, out = review_scope._git(repo, ["cat-file", "blob", "%s:%s" % (commit, path)])
+        code, out = review_scope.git(repo, ["cat-file", "blob", "%s:%s" % (commit, path)])
     except review_scope.ScopeError:
         return None
     return out if code == 0 else None
