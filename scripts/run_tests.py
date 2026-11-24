@@ -573,6 +573,10 @@ def run_sweep(root, env, log):
         for line in output.rstrip().splitlines()[-20:]:
             tell("  | " + line, log)
         return None, done.returncode
+    if int(counts[-1][1]) > 0:
+        for line in output.splitlines():
+            if not SWEEP_COUNT_RE.match(line) and line.strip():
+                tell(line, log)
     return (int(counts[-1][0]), int(counts[-1][1])), done.returncode
 
 

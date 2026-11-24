@@ -492,6 +492,16 @@ class ChangedModulesTests(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("FAIL plugins/c/tests/test_x.py", output)
 
+    def test_sweep_findings_are_printed_before_the_count_line(self):
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        finding_lines = ["plugins/c/tools/t.py:1: host example.invalid", "plugins/c/tools/t.py:2: path /abs/x"]
+        (self.tmp / "sweep-line.txt").write_text("\n".join(finding_lines + ["# files 3, findings 2"]) + "\n", encoding="utf-8")
+        code, output = self.main()
+        self.assertEqual(code, 1, output)
+        lines = output.splitlines()
+        count_at = lines.index("# changed-modules: sweep files 3, findings 2")
+        self.assertEqual(lines[count_at - 2:count_at], finding_lines, output)
+
     def test_fix_round_control_or_agent_next_to_it_is_refused(self):
         for flag in ("--fix-round", "--control", "--agent"):
             with self.subTest(flag=flag):
