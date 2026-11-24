@@ -473,6 +473,16 @@ class ChangedModulesTests(unittest.TestCase):
         self.assertEqual(self.ran, [])
         self.assertEqual(self.sweep_calls(), [])
 
+    def test_a_missing_always_run_file_exits_two_and_runs_nothing(self):
+        # the one always-run file inside a module: the other three are shared paths, which exit 2 already
+        (self.root / "plugins/rigger-rules/tests/test_plugin_rules.py").unlink()
+        code, output = self.main()
+        self.assertEqual(code, 2, output)
+        self.assertIn("changed-modules: always-run file plugins/rigger-rules/tests/test_plugin_rules.py "
+                      "not found; run the gate\n", output)
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.sweep_calls(), [])
+
     def test_moved_file_runs_both_modules(self):
         fixture_git(self.root, "mv", "plugins/a/f.py", "plugins/c/f.py")
         code, output = self.main()

@@ -47,8 +47,9 @@ and the `# files` line ends with `, load-only N`. One that fails again stays fai
 --changed-modules
               a fast local pre-check for a change inside one module's folder, never a gate: a pull
               request and a release still need scripts/gate.py. It maps each changed path (as
-              --fix-round reads them) to shared, documentation or a module. A shared path, or a git
-              failure, prints one line and exits 2 with nothing run: only the gate says anything
+              --fix-round reads them) to shared, documentation or a module. A shared path, a git
+              failure or an ALWAYS_RUN file that is not there prints one line and exits 2 with
+              nothing run: only the gate says anything
               then. Otherwise it runs the test files of each changed module and of each module whose
               plugin.json dependencies reach one, plus ALWAYS_RUN, then the sweep with
               --no-denylist. Exit 0 only when every file passed and the sweep printed
@@ -599,9 +600,15 @@ def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int
         "# changed-modules: base %s, changed %d, modules %s" % (base, len(changed), ", ".join(names) or "none"),
         log,
     )
+    discovered = discover(root)
+    found = [path.relative_to(root).as_posix() for path in discovered]
+    missing = [rel for rel in ALWAYS_RUN if rel not in found]
+    if missing:
+        tell("changed-modules: always-run file %s not found; run the gate" % missing[0], log)
+        return 2
     selected = set(names)
     files = []
-    for path in discover(root):
+    for path in discovered:
         rel = path.relative_to(root).as_posix()
         parts = rel.split("/")
         if rel in ALWAYS_RUN or (parts[0] == "plugins" and parts[1] in selected):
