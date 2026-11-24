@@ -435,6 +435,17 @@ class ChangedModulesTests(unittest.TestCase):
         self.expect_run(code, output, ["a", "b"])
         self.assertIn("# changed-modules: base main, changed 1, modules a, b\n", output)
 
+    def test_a_module_with_an_unreadable_plugin_json_runs_with_any_changed_module(self):
+        self.write("plugins/d/rigger-module.json", '{"name": "d"}\n')
+        self.write("plugins/d/.claude-plugin/plugin.json", '{"dependencies": 3}\n')
+        self.write("plugins/d/tests/test_x.py", PASSING_TEST)
+        fixture_git(self.root, "add", "-A")
+        fixture_git(self.root, "commit", "-q", "-m", "add d")
+        self.write("plugins/c/tools/t/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(set(self.ran), set(ALWAYS_RUN) | {"plugins/c/tests/test_x.py", "plugins/d/tests/test_x.py"}, output)
+
     def test_a_new_skill_folder_runs_the_rules_tests(self):
         self.write("plugins/a/skills/x/SKILL.md", "---\nname: x\n---\n")
         code, output = self.main()
