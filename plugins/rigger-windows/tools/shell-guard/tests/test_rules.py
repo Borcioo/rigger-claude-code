@@ -2071,6 +2071,11 @@ def run_all(root, links):
         if not ok:
             e2e_failed += 1
             print("E2E FAIL  %s want=%r got=%r  %s: %r" % (flag, want, got, tool, cmd[:90]))
+    # The reason starts with the id of the rule that denied, in brackets (the shell-guard slot contract)
+    named = run_installed("--pwsh-all", "PowerShell", "git commit --no-verify -m x")
+    if named is None or not named.startswith("shell-guard [git-no-verify]: "):
+        e2e_failed += 1
+        print("E2E FAIL  the reason names its rule: got=%r" % (named and named[:120]))
     # Without the optional tools' env vars the hook still denies, and names no machine path in the fix.
     generic = "; call the program the wrapper starts directly instead."
     gone = os.path.join(TOOLS, "missing")
@@ -2096,7 +2101,7 @@ def run_all(root, links):
         if got != want:
             e2e_failed += 1
             print("E2E FAIL  %s: want=%r got=%r" % (label, want, got))
-    e2e_total = len(e2e) + len(unset) + len(derived)
+    e2e_total = len(e2e) + 1 + len(unset) + len(derived)
     print("e2e hook runs: %d/%d pass" % (e2e_total - e2e_failed, e2e_total))
     failed += e2e_failed
     total += e2e_total

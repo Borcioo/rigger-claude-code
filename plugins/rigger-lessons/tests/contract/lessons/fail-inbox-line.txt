@@ -1,0 +1,2 @@
+Lessons due for review: 1
+Lessons inbox: ~/.claude/lessons-inbox.md: 3 entries
