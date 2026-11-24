@@ -114,7 +114,7 @@ class ReinjectTests(unittest.TestCase):
         return counts
 
     def assert_one_copy_each(self, counts):
-        self.assertEqual(len(counts), 19)
+        self.assertEqual(len(counts), 18)  # 17 main-session rules files and worktree_root.sh
         self.assertEqual({name: count for name, count in counts.items() if count != 1}, {})
 
     def test_compact_leaves_one_copy(self):

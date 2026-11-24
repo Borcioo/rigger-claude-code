@@ -83,14 +83,18 @@ failure on the stronger model goes to the user with the diagnosis.
 
 - **Main-session context is the scarce budget.** While planning or orchestrating, send reading whose
   conclusion you need, not its text (a whole file over ~200 lines, a `--help` or directory dump, an
-  unfamiliar repo), to an `Explore` subagent (a conclusion) or `rigger-core:mapper` (locations only). A brief
+  unfamiliar repo), to an `Explore` subagent (a conclusion) or the `mapper` slot's agent (locations only). A brief
   that starts a session or a multi-task agent repeats this, names each skill with the step it
   covers and never says to read skills up front.
-- Agent type: `rigger-core:worker` for implementation, `rigger-core:reviewer` for review or
-  verification (their descriptions say when another type fits). Both load skills themselves and can
+- Agent type: the `worker` slot for implementation, the `reviewer` slot for review or
+  verification (table `## Slots`; an agent's description says when another type fits). Both load skills themselves and can
   use a browser: the brief names the skills the task needs, the browser, if any, and the Risk mark. Set `model` on every dispatch
-  except `rigger-core:implementer` and `rigger-core:mapper`, which pin their own; an agent
-  dispatched without one inherits yours.
+  except a slot whose Model is `pinned`; an agent dispatched without one inherits yours.
+- A reviewer slot of kind `command` is run with the command under `## Slots`, not dispatched: its last
+  line is the result, and `slot-run: refused` is handled like a `STATUS: BLOCKED` report, never as no
+  findings. Check an agent reviewer's closing JSON with
+  `tools/slot-check/slot_check.py reviewer <reply file> --base <base> --head <head>` from the
+  rigger-core plugin root; a refusal is a failed review.
 - Any skill or MCP server the task needs, a project's own included: name it in the brief.
 - Follow `templates/implementer-brief.md` at the rigger-core plugin root (two folders above this
   skill's folder). Every brief
@@ -119,7 +123,7 @@ failure on the stronger model goes to the user with the diagnosis.
   the brief's environment. Still red: the blocker stands; fix it at the source or ask the user
   (inside an approved plan, block that part and list it in the final summary).
   Green after one command or setting: a shortcut or a brief gap; append it to the
-  lessons inbox (rigger-lessons: `lessons-inbox.md` in the config dir) and put it in the next briefs.
+  lessons inbox where the `lessons` slot is filled (`lessons-inbox.md` in the config dir) and put it in the next briefs.
 - Check any agent silent for 20+ minutes; when one reports waiting on background work, check at
   once that the process runs and its output is fresh, and again within 20 minutes. A session that
   waits runs one background check that exits on the condition (a Monitor prints only that line)
@@ -144,8 +148,8 @@ failure on the stronger model goes to the user with the diagnosis.
   is its own task.
 - A `Pre-existing` finding with evidence never enters the author's fix round: the orchestrator
   proposes a separate session for it (one per bug, or one for a group of Minor ones).
-- A Critical finding on a Risk-full change goes first to two fresh read-only `rigger-core:reviewer`
-  agents that check it in the code; it is fixed when both confirm, and on a split the orchestrator
+- A Critical finding on a Risk-full change goes first to two fresh read-only agents of the `reviewer`
+  slot that check it in the code; it is fixed when both confirm, and on a split the orchestrator
   decides from their evidence.
 - A re-review gets the fix diff, the findings it answers and the author's red-run output, and re-runs only the red runs (mutations) on changed lines, against every test file that covers them, never every red run of the change; it reviews the whole change again only when the fix touches files the first review did not see, or on a Risk-full change.
 - The orchestrator records each finding's outcome in the state file under `## Findings`, one line

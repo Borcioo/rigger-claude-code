@@ -83,6 +83,33 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(got, text)
         self.assertEqual(unknown, ["{{tool:x:y}}", "{{slot:nope}}", "{{triggers:s.t}}", "{{shout}}"])
 
+    def test_an_empty_slot_drops_the_sentence_that_names_it(self):
+        # process.plans and process.debug are slots with no filler in SLOTS; testing is filled.
+        text = (b"## P\n"
+                b"\n"
+                b"- Keep a plan. Load {{slot:process.plans}} first,\n"
+                b"  then write it. Review it once.\n"
+                b"- An item with no full stop\n"
+                b"- A brief never waives planning (with superpowers installed:\n"
+                b"  {{slot:process.debug}}), the thinking pass (goal,\n"
+                b"  reader).\n"
+                b"- Stays.\n"
+                b"- Kept first. Then {{slot:process.plans}} last.\n"
+                b"## Q\n"
+                b"Debug with {{slot:process.debug}} when stuck. Use {{slot:testing}} always.\n"
+                b"| a {{slot:process.plans}} | b |\n"
+                b"| c | d |\n")
+        expected = (b"## P\n"
+                    b"\n"
+                    b"- Keep a plan. Review it once.\n"
+                    b"- An item with no full stop\n"
+                    b"- Stays.\n"
+                    b"- Kept first.\n"
+                    b"## Q\n"
+                    b"Use `rigger-core:testing` always.\n"
+                    b"| c | d |\n")
+        self.assertEqual(render.render(text, ctx()), (expected, []))
+
     def test_var_and_legacy_var(self):
         variables = {"demo": {"reply_language": "Reply in {{slot:testing}}.", "report_lines": "15"}}
         text = b"{{var:reply_language}} / {{report_lines}} / {{var:other}}\n"

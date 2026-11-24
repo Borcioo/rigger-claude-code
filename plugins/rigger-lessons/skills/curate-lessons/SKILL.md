@@ -18,10 +18,16 @@ The inbox is the path the lessons SessionStart line names (`$HARNESS_LESSONS_INB
 `lessons-inbox.md` in `$CLAUDE_CONFIG_DIR`, else in `~/.claude`). Every line starting
 `- YYYY-MM-DD` is an entry, also outside `## Entries`.
 
-When `lessons-proposals.md` next to the inbox holds proposals, first check them against the current tree:
+When `lessons-proposals.md` next to the inbox holds proposals, first check them against the current tree.
+The rules files hold placeholders that the session sees filled in (the Skill triggers table, values), so
+pass the rendered text too: Read `plugins/installed_plugins.json` in the config dir and, under the key that
+starts with `rigger-core@`, take the first `installPath` where `<installPath>/tools/assemble/assemble.py`
+exists; in a POSIX shell (on Windows the Bash tool, since PowerShell's `>` may re-encode the text) run
+`python "<installPath>/tools/assemble/assemble.py" --render > <temp file>`. With no such `installPath`,
+leave `--rules-text` out and tell the user in one line that tables and values are not checked for cover.
 
 ```
-python "${CLAUDE_PLUGIN_ROOT}/tools/proposal_check.py" <queue> --corpus <global rules file or CLAUDE.md> --archive
+python "${CLAUDE_PLUGIN_ROOT}/tools/proposal_check.py" <queue> --corpus <global rules file or CLAUDE.md> --rules-text <temp file> --archive
 ```
 
 The check moves `stale` (target gone, old text not found exactly once), `applied` and `covered`

@@ -15,10 +15,6 @@
     {
       "file": "rules/windows.md",
       "audience": "both"
-    },
-    {
-      "file": "rules/windows-skills.md",
-      "audience": "both"
     }
   ],
   "triggers": [

@@ -118,6 +118,39 @@ class ProposalCheckTests(unittest.TestCase):
         self.assertEqual(self.verdicts(text, "--repo", str(self.repo)), ["live"])
         self.assertEqual(self.verdicts(text, "--repo", str(self.repo), "--corpus", str(extra)), ["covered"])
 
+    def rules_text(self, text, name="rules-text.md"):
+        path = self.tmp / name
+        path.write_bytes(text if isinstance(text, bytes) else text.encode("utf-8"))
+        return str(path)
+
+    def test_rules_text_covers_a_rendered_trigger_row(self):
+        # A rules file holds only `{{triggers:…}}`; the row exists in the text a session sees (assemble.py --render).
+        row = "| writing code or tests, reviewing tests, a spike | `rigger-core:testing` |"
+        rendered = "Plugin root: <root>\n## Skill triggers\n\n| Before | Skill |\n|---|---|\n%s\n" % row
+        text = block("a", "plugins/rigger-rules/rules/a.md", "- old line once", "- old line once\n" + row)
+        self.assertEqual(self.verdicts(text, "--repo", str(self.repo)), ["live"])
+        code, out = self.run_check(text, "--repo", str(self.repo), "--rules-text", self.rules_text(rendered))
+        self.assertEqual((code, out.splitlines()[0]), (0, "covered: %s (every added line is already in %s)" % (
+            text.splitlines()[0][3:], Path(self.tmp / "rules-text.md").resolve().as_posix())))
+
+    def test_rules_text_line_the_target_holds_is_no_cover(self):
+        # The rendered text holds the target's own lines under another path: they never count as cover.
+        own = "- the target holds this long line too"
+        rendered = "## A\n\n- old line once\n%s\n" % own
+        text = block("l", "plugins/rigger-rules/rules/a.md", "- old line once", "- old line once\n" + own)
+        self.assertEqual(self.verdicts(text, "--repo", str(self.repo), "--rules-text", self.rules_text(rendered)),
+                         ["live"])
+
+    def test_rules_text_missing_or_empty_exits_2_before_any_check(self):
+        text = block("a", "plugins/rigger-rules/rules/a.md", "- old line once", RULE)
+        for name, path in (("missing", str(self.tmp / "none.md")), ("empty", self.rules_text(" \n\n", "blank.md")),
+                           ("not UTF-8", self.rules_text(b"\xff\xfe rules\n", "latin.md"))):
+            with self.subTest(case=name):
+                code, out = self.run_check(text, "--repo", str(self.repo), "--rules-text", path)
+                self.assertEqual(code, 2)
+                self.assertEqual(out.splitlines(), ["proposal_check: --rules-text %s: %s" % (
+                    path, "holds no text" if name == "empty" else "cannot read")])
+
     def test_crlf_queue_and_a_fence_inside_the_text_parse(self):
         new = "- old line once\n~~~\ninner fence\n~~~\n" + RULE
         text = "# Proposals\n\n" + block("a", "plugins/rigger-rules/rules/a.md", "- old line once", new)

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, FrozenSet, List, Optional, Tuple
 
 from config import _shown
-from manifest import Module, TriggerRow
+from manifest import SLOT_PATHS, Module, TriggerRow
 from parts import PART_CAP, _piece
 
 DEFAULT_SECTION = "skills.skill-triggers"
@@ -25,6 +25,10 @@ JOINER = ", then "
 SECOND_TABLE = "second trigger table"
 DROP_ORDER = ("L4:", "L3:", "L2:")  # project rows leave the table first, then personal, then company
 LEFT_OUT = "rigger: left out {count} of the trigger rows from {files}: the Skill triggers table must fit in one hook part"
+# A block of rules text is a list item with its indented lines, a paragraph, a heading line or a table line.
+_BLOCK_START = re.compile(r"[ \t]*(?:[-*+]|\d+\.)[ \t]|#|\|")
+_MARKER = re.compile(r"[ \t]*(?:(?:[-*+]|\d+\.|#{1,6})[ \t]+)?")
+_SENTENCE_END = re.compile(r"[.!?][)\"'`*]*(?=\s|$)")
 
 
 @dataclass
@@ -56,6 +60,54 @@ def _slot_target(slots: dict, path: str) -> Optional[str]:
         node = node.get(key) if isinstance(node, dict) else None
     target = node.get("target") if isinstance(node, dict) else None
     return target if isinstance(target, str) else None
+
+
+def _names_empty_slot(text: str, slots: dict) -> bool:
+    return any(match.group(1) == "slot" and match.group(2) in SLOT_PATHS and _slot_target(slots, match.group(2)) is None
+               for match in PLACEHOLDER.finditer(text))
+
+
+def _without_sentences(body: str, slots: dict) -> str:
+    """`body` without each sentence that names an empty slot, and without the whitespace after it."""
+    spans = []  # type: List[Tuple[int, int, int]]  (start, end of the sentence, end of the space after it)
+    start = 0
+    while start < len(body):
+        found = _SENTENCE_END.search(body, start)
+        end = found.end() if found else len(body)
+        after = end
+        while after < len(body) and body[after].isspace():
+            after += 1
+        spans.append((start, end, after))
+        start = after
+    kept = "".join(body[s:a] for s, e, a in spans if not _names_empty_slot(body[s:e], slots))
+    return kept.rstrip() if kept != body else body
+
+
+def _drop_empty_slot_sentences(text: str, slots: dict) -> str:
+    """An empty slot's `{{slot:<path>}}` never prints: the sentence holding it goes, and a block left with no
+    sentence goes whole (coordinator ruling on phase 2 Task 16; spec section 10.4)."""
+    if not _names_empty_slot(text, slots):
+        return text
+    lines = text.split("\n")
+    blocks = []  # type: List[List[int]]
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        previous = lines[index - 1] if index else ""
+        if not blocks or blocks[-1][-1] != index - 1 or _BLOCK_START.match(line) \
+                or previous.startswith(("#", "|")):
+            blocks.append([index])
+        else:
+            blocks[-1].append(index)
+    for block in reversed(blocks):
+        whole = "\n".join(lines[i] for i in block)
+        if not _names_empty_slot(whole, slots):
+            continue
+        marker = _MARKER.match(whole).group(0)
+        body = _without_sentences(whole[len(marker):], slots)
+        kept = [line for line in (marker + body).split("\n") if line.strip()] if body.strip() else []
+        lines[block[0]:block[-1] + 1] = kept
+    return "\n".join(lines)
 
 
 def _entry(entry: str, slots: dict) -> str:
@@ -141,7 +193,7 @@ def render(text: bytes, ctx: RenderContext) -> Tuple[bytes, List[str]]:
         return match.group(0)
 
     out = []  # type: List[bytes]
-    decoded = text.decode("utf-8", "surrogateescape")
+    decoded = _drop_empty_slot_sentences(text.decode("utf-8", "surrogateescape"), ctx.slots)
     lines = [part + "\n" for part in decoded.split("\n")]
     lines[-1] = lines[-1][:-1]
     table_at = None  # type: Optional[int]

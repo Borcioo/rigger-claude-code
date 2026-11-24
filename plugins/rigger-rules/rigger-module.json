@@ -47,10 +47,6 @@
     {
       "file": "rules/environment.md",
       "audience": "main"
-    },
-    {
-      "file": "rules/skills.md",
-      "audience": "both"
     }
   ],
   "triggers": [],

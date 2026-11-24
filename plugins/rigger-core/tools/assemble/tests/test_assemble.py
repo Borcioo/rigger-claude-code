@@ -1415,7 +1415,7 @@ class CheckTests(unittest.TestCase):
         code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(REPO_CORE), RIGGER_MODULE_DIRS="")
         lines = out.decode("utf-8").splitlines()
         self.assertEqual(code, 0, out + err)
-        self.assertRegex(lines[-1], r"^# check: modules 7, rules files (1[9]|[2-9]\d), findings 0$")
+        self.assertRegex(lines[-1], r"^# check: modules 7, rules files (1[89]|[2-9]\d), findings 0$")
         self.assertIn("# external: superpowers", lines)
 
     def test_check_without_modules_in_a_cache_layout_says_it_saw_one_module(self):

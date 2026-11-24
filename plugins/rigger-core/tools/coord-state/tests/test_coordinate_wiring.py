@@ -96,7 +96,7 @@ class CoordinateWiring(unittest.TestCase):
 
     def test_brief_step_loads_testing_and_keeps_the_full_suite(self):
         step_three = " ".join(COORDINATE[COORDINATE.index("\n3. "):COORDINATE.index("\n4. ")].split())
-        self.assertIn("loads `rigger-core:testing` and runs only those", step_three)
+        self.assertIn("loads the testing skill the Skill triggers table names and runs only those", step_three)
         self.assertIn("the full suite and the gate are yours, at checkpoints", step_three)
 
     def test_split_step_runs_heavy_parts_two_at_once_and_groups_light_ones(self):

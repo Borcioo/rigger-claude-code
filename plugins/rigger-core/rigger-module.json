@@ -7,6 +7,10 @@
     {
       "file": "rules/state-file.md",
       "audience": "main"
+    },
+    {
+      "file": "rules/skills.md",
+      "audience": "both"
     }
   ],
   "triggers": [
