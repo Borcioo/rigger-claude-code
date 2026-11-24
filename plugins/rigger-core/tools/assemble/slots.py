@@ -59,6 +59,7 @@ class Row:
     fillers: Tuple[str, ...]
     failure_mode: Optional[str]
     filled: bool
+    modes_differ: bool = False  # fillers declared both open and closed; failure_mode is then closed
 
 
 def _unsafe(text: str) -> bool:
@@ -322,8 +323,10 @@ def resolve_slots(levels: List[Tuple[str, dict]], modules: List[Module], enabled
         if KINDS[path] == ("hook",):
             fillers = tuple(module.name for module in modules if module.fills == path and module.name in enabled)
             modes = {module.failure_mode for module in modules if module.name in fillers}
+            differ = {"open", "closed"} <= modes  # the stricter mode wins: fail closed
+            mode = "closed" if differ else (modes.pop() if len(modes) == 1 else None)
             rows.append(Row(path, "hook", entry.get("target") if entry else None, None, source, fillers,
-                            modes.pop() if len(modes) == 1 else None, bool(fillers)))
+                            mode, bool(fillers), differ))
         elif entry is None:
             rows.append(Row(path, None, None, None, source, (), None, False))
         else:
@@ -375,6 +378,8 @@ def _target_cell(row: Row) -> str:
         return EMPTY
     if row.kind == "hook":
         mode = {"open": "fails open", "closed": "fails closed"}.get(row.failure_mode, "failure mode: undeclared")
+        if row.modes_differ:
+            mode = "failure mode: closed (fillers disagree)"
         return "%s (%s)" % (" + ".join(_cell(name) for name in row.fillers), mode)
     if row.kind == "command":
         return _cell(row.target[0]) + " …"
@@ -393,14 +398,14 @@ def table(rows: List[Row], command_line: Optional[str]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-_ROW_KEYS = ("path", "kind", "target", "model", "source", "fillers", "failure_mode", "filled")
+_ROW_KEYS = ("path", "kind", "target", "model", "source", "fillers", "failure_mode", "filled", "modes_differ")
 
 
 def as_snapshot(rows: List[Row], trusted: FrozenSet[str]) -> dict:
     return {
         "rows": [{"path": row.path, "kind": row.kind, "target": copy.deepcopy(row.target), "model": row.model,
                   "source": row.source, "fillers": list(row.fillers), "failure_mode": row.failure_mode,
-                  "filled": row.filled} for row in rows],
+                  "filled": row.filled, "modes_differ": row.modes_differ} for row in rows],
         "trusted": sorted(trusted),
     }
 
@@ -414,7 +419,7 @@ def _source_ok(source) -> bool:
 def _row_from(item) -> Optional[Row]:
     if not isinstance(item, dict) or set(item) != set(_ROW_KEYS):
         return None
-    path, kind, target, model, source, fillers, mode, filled = (item[key] for key in _ROW_KEYS)
+    path, kind, target, model, source, fillers, mode, filled, differ = (item[key] for key in _ROW_KEYS)
     if path not in SLOT_PATHS:
         return None
     if kind is not None and kind not in KINDS[path]:
@@ -435,7 +440,9 @@ def _row_from(item) -> Optional[Row]:
         return None
     if mode is not None and mode not in manifest.FAILURE_MODES:
         return None
-    return Row(path, kind, copy.deepcopy(target), model, source, tuple(fillers), mode, filled)
+    if not isinstance(differ, bool) or (differ and mode != "closed"):
+        return None
+    return Row(path, kind, copy.deepcopy(target), model, source, tuple(fillers), mode, filled, differ)
 
 
 def from_snapshot(data: object) -> Optional[Tuple[List[Row], FrozenSet[str]]]:

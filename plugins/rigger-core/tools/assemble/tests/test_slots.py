@@ -402,12 +402,29 @@ class FillerTests(SlotsTestCase):
         other = self.module("other-guard", fills="shell-guard", failure_mode="open")
         rows, _, _, notices = self.resolve(modules=self.modules + [other], enabled=ENABLED | {"other-guard"})
         row = rows["shell-guard"]
-        self.assertEqual((row.fillers, row.failure_mode), (("rigger-windows", "other-guard"), "open"))
+        self.assertEqual((row.fillers, row.failure_mode, row.modes_differ),
+                         (("rigger-windows", "other-guard"), "open", False))
         self.assertEqual(notices, ["rigger: slot shell-guard is filled by rigger-windows and other-guard; "
                                    "disable one with claude plugin disable <name>"])
-        other.failure_mode = "closed"
-        rows, _, _, _ = self.resolve(modules=self.modules + [other], enabled=ENABLED | {"other-guard"})
-        self.assertIsNone(rows["shell-guard"].failure_mode)
+
+    def test_fillers_that_disagree_fail_closed(self):
+        cases = [
+            # (failure modes of rigger-windows and the extra fillers, expected mode, modes differ)
+            (("open", "closed"), "closed", True),
+            (("closed", "open"), "closed", True),
+            (("open", "closed", None), "closed", True),
+            (("closed", "closed"), "closed", False),
+            (("open", None), None, False),
+        ]
+        for number, (modes, mode, differ) in enumerate(cases):
+            with self.subTest(modes=modes):
+                self.windows.failure_mode = modes[0]
+                extra = [self.module("guard-%d-%d" % (number, index), fills="shell-guard", failure_mode=value)
+                         for index, value in enumerate(modes[1:])]
+                enabled = ENABLED | {item.name for item in extra}
+                rows, _, _, _ = self.resolve(modules=self.modules + extra, enabled=enabled)
+                row = rows["shell-guard"]
+                self.assertEqual((row.failure_mode, row.modes_differ), (mode, differ))
 
     def test_expected_filler_missing_above_level_one_gives_a_notice(self):
         _, _, _, notices = self.resolve(l3=level({"lessons": {"target": "my-lessons"}}))
@@ -509,9 +526,9 @@ class EntryRuleTests(SlotsTestCase):
         self.assertEqual(reason, "kind a\\u2028b not allowed for worker")
 
 
-def row(path, kind, target, model, source, fillers=(), mode=None, filled=True):
+def row(path, kind, target, model, source, fillers=(), mode=None, filled=True, differ=False):
     return slots.Row(path=path, kind=kind, target=target, model=model, source=source, fillers=tuple(fillers),
-                     failure_mode=mode, filled=filled)
+                     failure_mode=mode, filled=filled, modes_differ=differ)
 
 
 FIVE_ROWS = [
@@ -544,6 +561,8 @@ class TableTests(unittest.TestCase):
              "| lessons | hook | rigger-lessons (failure mode: undeclared) | — | default |\n"),
             (row("shell-guard", "hook", "x", None, "default", ("x",), "closed"),
              "| shell-guard | hook | x (fails closed) | — | default |\n"),
+            (row("shell-guard", "hook", "x", None, "default", ("a", "b"), "closed", differ=True),
+             "| shell-guard | hook | a + b (failure mode: closed (fillers disagree)) | — | default |\n"),
             (row("shell-guard", "hook", "rigger-windows", None, "default", (), None, False),
              "| shell-guard | hook | — | — | default |\n"),
         ]
@@ -606,6 +625,9 @@ class TargetsAndSnapshotTests(SlotsTestCase):
         listed = [rows[path] for path in order]
         data = json.loads(json.dumps(slots.as_snapshot(listed, trusted)))
         self.assertEqual(slots.from_snapshot(data), (listed, frozenset(["reviewer"])))
+        disagree = [row("shell-guard", "hook", "x", None, "default", ("a", "b"), "closed", differ=True)]
+        self.assertEqual(slots.from_snapshot(json.loads(json.dumps(slots.as_snapshot(disagree, frozenset())))),
+                         (disagree, frozenset()))
 
         good_row = data["rows"][0]
         self.assertEqual(good_row["path"], "reviewer")
@@ -643,6 +665,9 @@ class TargetsAndSnapshotTests(SlotsTestCase):
             ("fillers a string", with_row(fillers="rigger-windows")),
             ("fillers of numbers", with_row(fillers=[5])),
             ("failure mode unknown", with_row(failure_mode="maybe")),
+            ("modes differ a number", with_row(modes_differ=1, failure_mode="closed")),
+            ("modes differ without closed", with_row(modes_differ=True, failure_mode="open")),
+            ("modes differ missing", without("modes_differ")),
             ("filled a number", with_row(filled=1)),
             ("row a list of the keys", dict(data, rows=[list(good_row)])),
             ("kind of another path", with_row(kind="skill", target="rigger-core:reviewer")),
@@ -661,6 +686,7 @@ class TargetsAndSnapshotTests(SlotsTestCase):
             with_row(source="personal"),
             with_row(source="default"),
             with_row(kind=None, target=None, model=None, filled=False),
+            with_row(modes_differ=True, failure_mode="closed"),
         ]
         for value in good:
             with self.subTest(value=value["rows"][0]):
