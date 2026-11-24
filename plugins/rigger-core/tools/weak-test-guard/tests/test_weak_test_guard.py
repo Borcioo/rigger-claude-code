@@ -582,6 +582,132 @@ class SubstitutionTests(unittest.TestCase):
                 self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests: removed test"), reason)
 
 
+UNCLEAR = "weak-test-guard: cannot tell what this commit holds: "
+
+# (command, tool, the step the denial names): a step before the commit that changes the index, or changes a test
+# file a later staging step picks up. The guard cannot replay it, so it denies without claiming a weakening.
+UNCLEAR_ROWS = [
+    ("rm tests/test_parser.py && git commit -am x", "Bash", "`rm`"),
+    ("rm -f tests/test_parser.py && git add -A && git commit -m x", "Bash", "`rm`"),
+    ("rm -r tests && git commit -am x", "Bash", "`rm`"),
+    ("rm tests/*.py && git add -A && git commit -m x", "Bash", "`rm`"),
+    ("rm ../*.py && git add -A && git commit -m x", "Bash", "`rm`"),
+    ("rm tests/test_parser.py && git commit -m x tests/test_parser.py", "Bash", "`rm`"),
+    ("sed --in-place '/rejects/d' tests/test_parser.py && git commit -am x", "Bash", "`sed`"),
+    ("mv tests/test_parser.py old.py && git add -A && git commit -m x", "Bash", "`mv`"),
+    ("cp src/parser.py tests/test_parser.py && git commit -am x", "Bash", "`cp`"),
+    ("sed -i '/rejects/d' tests/test_parser.py && git add tests && git commit -m x", "Bash", "`sed`"),
+    ("Remove-Item tests/test_parser.py; git commit -am x", "PowerShell", "`Remove-Item`"),
+    ("Move-Item tests/test_parser.py old.py; git add -A; git commit -m x", "PowerShell", "`Move-Item`"),
+    ("Copy-Item src/parser.py tests/test_parser.py; git commit -am x", "PowerShell", "`Copy-Item`"),
+    ("Set-Content tests/test_parser.py 'x'; git commit -am x", "PowerShell", "`Set-Content`"),
+    ("Add-Content -Path tests/test_parser.py -Value 'x'; git commit -am x", "PowerShell", "`Add-Content`"),
+    ("'x' | Out-File tests/test_parser.py; git commit -am x", "PowerShell", "`Out-File`"),
+    ("git checkout HEAD~1 -- tests && git commit -m x", "Bash", "`git checkout`"),
+    ("git checkout -b topic HEAD~1 && git commit -m x", "Bash", "`git checkout`"),
+    ("git switch other && git commit -am x", "Bash", "`git switch`"),
+    ("git restore --source HEAD~1 tests && git commit -am x", "Bash", "`git restore`"),
+    ("git reset -q HEAD~1 && git commit -am x", "Bash", "`git reset`"),
+    ("git stash pop && git commit -am x", "Bash", "`git stash`"),
+    ("git mv tests/test_parser.py tests/t.py && git commit -m x", "Bash", "`git mv`"),
+    ("git apply fix.patch && git commit -am x", "Bash", "`git apply`"),
+    ("git read-tree HEAD~1 && git commit -m x", "Bash", "`git read-tree`"),
+    ("git update-index --force-remove tests/test_parser.py && git commit -m x", "Bash", "`git update-index`"),
+]
+# Plain forms around those steps that must stay allowed on the same unchanged repository.
+AROUND_ROWS = [
+    ("rm notes.txt && git commit -am x", "Bash"),
+    ("rm src/sum.js && git add -A && git commit -m x", "Bash"),
+    ("rm ../outside.txt && git add -A && git commit -m x", "Bash"),
+    ("cp tests/test_parser.py backup.py && git add -A && git commit -m x", "Bash"),
+    ("Copy-Item tests/test_parser.py backup.py; git add -A; git commit -m x", "PowerShell"),
+    ("git add -A && rm tests/test_parser.py && git commit -m x", "Bash"),
+    ("rm tests/test_parser.py && git commit -m x", "Bash"),
+    ("sed 's/a/b/' tests/test_parser.py > out.txt && git commit -am x", "Bash"),
+    ("Remove-Item notes.txt; git add -A; git commit -m x", "PowerShell"),
+    ("Set-Content CHANGELOG.md 'x'; git add CHANGELOG.md; git commit -m x", "PowerShell"),
+    ("git checkout -b topic && git commit -am x", "Bash"),
+    ("git checkout -q -b topic && git commit -am x", "Bash"),
+    ("git switch -c topic --quiet && git add -A && git commit -m x", "Bash"),
+    ("/usr/bin/sed 's/a/b/' tests/test_parser.py > out.txt && git commit -am x", "Bash"),
+    ("git status --short && git diff --stat && git add -A && git commit -m x", "Bash"),
+    ("python fmt.py && git add -A && git commit -m x", "Bash"),
+    ("git commit -am x && git checkout develop && git merge --squash topic", "Bash"),
+    ("python gen.py && git add made.py && git commit -m x", "Bash"),
+]
+
+
+class UnclearTests(unittest.TestCase):
+    def test_a_step_the_guard_cannot_replay_is_denied_with_a_hint(self):
+        repo = Repo(self, BASE)
+        for command, tool, step in UNCLEAR_ROWS:
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root, tool=tool))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR), reason)
+                self.assertIn(step, reason)
+                self.assertIn("in its own call", reason)
+                self.assertNotIn("weakens tests", reason)
+
+    def test_plain_forms_around_those_steps_pass(self):
+        repo = Repo(self, BASE)
+        for command, tool in AROUND_ROWS:
+            with self.subTest(command=command):
+                self.assertIsNone(reason_of(run_hook(command, repo.root, tool=tool)))
+
+    def test_a_path_the_command_makes_is_a_new_file(self):
+        # No file and no index entry yet: something before `git add` makes it. A tracked path deleted from disk is
+        # not new: adding it stages the deletion.
+        for command, prepare in (('python gen.py && git add made.py tests/test_parser.py && git commit -m "x"',
+                                  lambda repo: repo.change(WEAK, stage=False)),
+                                 ('git add made.py tests/test_parser.py && git commit -m "x"',
+                                  lambda repo: (repo.root / "tests" / "test_parser.py").unlink())):
+            with self.subTest(command=command):
+                repo = Repo(self, BASE)
+                prepare(repo)
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests: removed test"), reason)
+        repo = Repo(self, BASE)   # `-A` limited to a new path stages only that path
+        repo.change(WEAK, stage=False)
+        self.assertIsNone(reason_of(run_hook('python gen.py && git add -A made.py && git commit -m "x"', repo.root)))
+
+    def test_a_stated_reason_passes_a_step_it_cannot_replay(self):
+        repo = Repo(self, BASE)
+        self.assertIsNone(reason_of(run_hook('rm tests/test_parser.py && git commit -am x -m "%s"' % REASON, repo.root)))
+
+    def test_an_operation_in_progress_comes_first(self):
+        repo = Repo(self, BASE)
+        git(repo.root, "switch", "-q", "-c", "other")
+        repo.change(WEAK)
+        git(repo.root, "commit", "-q", "-m", "weaken")
+        git(repo.root, "switch", "-q", "develop")
+        git(repo.root, "merge", "-q", "--no-ff", "--no-commit", "other")
+        self.assertIsNone(reason_of(run_hook("git checkout --theirs tests && git add -A && git commit -m x", repo.root)))
+
+    def test_a_merge_before_the_commit_is_not_checked(self):
+        # Its content comes from commits the guard has already checked, as for a merge in progress.
+        repo = Repo(self, BASE)
+        repo.change(WEAK)
+        for command in ("git merge --squash topic && git commit -m x", "git pull --ff-only && git commit -m x",
+                        "git cherry-pick -n abc && git commit -m x", "git revert -n abc && git commit -m x",
+                        "git rebase -q main && git commit -m x", "git am fix.patch && git commit -m x"):
+            with self.subTest(command=command):
+                self.assertIsNone(reason_of(run_hook(command, repo.root)))
+
+    def test_a_soft_reset_squash_is_read_against_its_new_base(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK)
+        git(repo.root, "commit", "-q", "-m", "weaken", "-m", REASON)
+        git(repo.root, "commit", "-q", "--allow-empty", "-m", "more")
+        reason = reason_of(run_hook("git reset --soft HEAD~2 && git commit -m squash", repo.root))
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests: removed test"), reason)
+        self.assertIsNone(reason_of(run_hook("git reset --soft HEAD~1 && git commit -m squash", repo.root)))
+        self.assertIsNone(reason_of(run_hook('git reset --soft HEAD~2 && git commit -m squash -m "%s"' % REASON,
+                                             repo.root)))
+
+
 class DiffSourceTests(unittest.TestCase):
     def test_unstaged_weakening_is_not_in_a_plain_commit(self):
         repo = Repo(self, BASE)
@@ -697,12 +823,18 @@ class DiffSourceTests(unittest.TestCase):
         self.assertIsNotNone(reason_of(run_hook('git commit --amend tests/test_parser.py -m "x"', repo.root)))
         self.assertIsNone(reason_of(run_hook('git commit --amend src/parser.py -m "x"', repo.root)))
 
-    def test_a_shell_glob_or_brace_in_bash_fails_open(self):
+    def test_a_shell_glob_or_brace_in_bash_cannot_be_told(self):
+        # The shell and git expand these differently: read as git does, the commit may take more.
         for command in ('git add *.py && git commit -m "x"', 'git add tests/{test_parser.py,x.py} && git commit -m "x"'):
             with self.subTest(command=command):
                 repo = Repo(self, BASE)
                 repo.change(WEAK, stage=False)
-                self.assertIsNone(reason_of(run_hook(command, repo.root)))
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR), reason)
+        clean = Repo(self, BASE)   # git's reading weakens nothing either: no denial
+        clean.change({"src/parser.py": PY_CODE + "\n# more\n"}, stage=False)
+        self.assertIsNone(reason_of(run_hook('git add *.py && git commit -m "x"', clean.root)))
         repo = Repo(self, BASE)
         repo.change(WEAK, stage=False)
         self.assertIsNotNone(reason_of(run_hook("git add *.py; git commit -m 'x'", repo.root, tool="PowerShell")))
@@ -907,7 +1039,6 @@ class FailOpenTests(unittest.TestCase):
                                    ('gh pr create --body "then git commit"', repo.root, "Bash"),
                                    ("git -C $repo commit -m 'x'", repo.root, "PowerShell"),
                                    ('cd "$HOME/x" && git commit -m "x"', repo.root, "Bash"),
-                                   ('git mv tests/test_parser.py tests/t.py && git commit -m "x"', repo.root, "Bash"),
                                    ('git commit -m "x"', not_a_repo, "Bash"), ('git commit -m "x"', repo.root, "Write")):
             with self.subTest(command=command, tool=tool):
                 self.assertIsNone(reason_of(run_hook(command, cwd, tool=tool)))

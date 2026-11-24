@@ -33,14 +33,23 @@ commit is the first simple command whose program is git and whose subcommand is 
 `Set-Location` and `git -C` before it set the folder. The diff is the index against HEAD (`HEAD~1` with
 `--amend`). When the command also stages (`git add`/`git rm` before the commit, `commit -a`, `-i <paths>`),
 those are replayed on a copy of the index; `git commit <paths>` without `-i` commits HEAD plus those paths,
-replayed on `read-tree HEAD`. Redirections are no words; in Bash a staged word with `* ? [ {` fails open
-(the shell and git expand it differently). The replay uses `GIT_INDEX_FILE` (`git rm` as `rm --cached`) and
+replayed on `read-tree HEAD`. Redirections are no words; in Bash a staged word with `* ? [ {` is replayed as git
+reads it (see "cannot tell" below). The replay uses `GIT_INDEX_FILE` (`git rm` as `rm --cached`) and
 that copy is diffed. The hook runs before the command is approved, so git runs with `core.fsmonitor=false`,
 `log` with `--no-show-signature`, the replay with every filter driver of its folder switched off, and a
-reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked.
+reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked,
+nor a commit after a `git merge`, `pull`, `cherry-pick`, `revert`, `rebase` or `am` in the same command.
+
+Denied as "cannot tell what this commit holds", with a hint to run that step in its own call (a stated reason still
+passes): another index writer before the commit (`git checkout`, `switch`, `restore`, `reset`, `stash`, `mv`,
+`apply`, `read-tree`, `update-index`; not `checkout -b`/`switch -c <name>` alone, and `reset --soft <rev>` becomes
+the diff base), a file writer (`rm`, `mv`, `cp`, `sed -i`, `Remove-Item`, `Move-Item`, `Copy-Item`, `Set-Content`,
+`Add-Content`, `Out-File`) whose targets hold a tracked test file when a later `git add`, `-a` or pathspec picks
+them up, a replayed step git rejects, and a Bash glob or brace that, read as git does, weakens tests. A staged path
+that names no file and no index entry yet is a new file the command makes, and is left out of the replay.
 
 Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
-folder, `git mv`, an interactive add, staging outside the repository,
+folder, an interactive add, staging outside the repository, another program that writes files,
 no repository (a folder named by a variable or `~` is read literally and fails here), a git error, 8 s of
 git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
 Loosening an assertion in place (`toBe(3)` to `toBeTruthy()`), a test replaced by a vacuous one, data
@@ -102,6 +111,13 @@ DECORATOR = re.compile(r"\s*(?:@|#\[|/\*\*|\*|$)")   # decorators, attributes, a
 COMMENT = re.compile(r"\s*(?:#(?!\[)|//|/\*|\*|<!--|\|(?!\|))")   # `|` opens a Laravel docblock line
 STRING = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\\n]|\\.)*`")
 
+UNCLEAR = "cannot tell what this commit holds:"
+HISTORY = frozenset(("merge", "pull", "cherry-pick", "revert", "rebase", "am"))   # content of commits already made
+INDEX_WRITERS = frozenset(("checkout", "switch", "restore", "reset", "stash", "mv", "apply", "read-tree",
+                           "update-index"))
+# Programs that change files a later `git add`, `-a` or pathspec picks up: which of their words are targets.
+FILE_WRITERS = {"rm": "all", "mv": "all", "cp": "last", "sed": "all", "remove-item": "all", "move-item": "all",
+                "copy-item": "last", "set-content": "all", "add-content": "all", "out-file": "all"}
 CD = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
 READERS = frozenset(("cat", "get-content", "gc", "type"))   # a file piped into `git commit -F -`
 COMMIT_VALUE_LONG = frozenset(("message", "file", "reuse-message", "reedit-message", "author", "date", "template",
@@ -511,6 +527,13 @@ class Commit:
         self.pathspecs = []
         self.stages = []            # (subcommand, folder, args) before the commit
         self.powershell = False
+        self.unclear = None         # why a step before the commit cannot be replayed
+        self.touched = []           # (folder, program, targets) of file writes a later staging step picks up
+        self.base = None            # the commit a `git reset --soft <rev>` before it moves HEAD to
+
+
+class Unclear(Exception):
+    """The command changes the files or the index before the commit in a way the guard cannot replay."""
 
 
 def _git_parts(words, folder, powershell):
@@ -589,6 +612,7 @@ def read_command(command, cwd, powershell):
     """The Commit of the first `git commit` in the command, None when there is none or its folder is unknown."""
     folder = cwd
     stages, readers = [], []
+    unclear, base, writes, touched = None, None, [], []
     for simple in split_command(command, powershell):
         words = simple.words
         while not powershell and words and re.match(r"[A-Za-z_]\w*=", words[0]):
@@ -606,12 +630,28 @@ def read_command(command, cwd, powershell):
         if head in READERS and folder is not None:
             readers = [os.path.join(folder, w) for w in words[1:] if not w.startswith("-")]
             continue
+        program = head.replace("\\", "/").rsplit("/", 1)[-1]
+        kind = FILE_WRITERS.get(program)
+        if kind and (program != "sed" or any(w.startswith("--in-place") or re.match(r"-[^-]*i", w) for w in words[1:])):
+            targets = [w for w in words[1:] if not w.startswith("-")]
+            writes.append((folder, words[0], targets[-1:] if kind == "last" else targets))
+            continue
         parts = _git_parts(words, folder, powershell)
         if parts is None:
             continue
         git_folder, sub, args = parts
-        if sub in ("add", "rm", "mv"):
+        if sub in HISTORY:
+            return None   # what follows commits content the guard read when it was committed
+        if sub in INDEX_WRITERS and unclear is None:
+            revs = [a for a in args if not a.startswith("-")]
+            loud = [a for a in args if a not in ("-q", "--quiet")]
+            if sub == "reset" and "--soft" in args and len(revs) <= 1:
+                base = revs[0] if revs else base
+            elif not (sub in ("checkout", "switch") and len(loud) == 2 and loud[0] in ("-b", "-B", "-c", "-C")):
+                unclear = "`git %s` runs before it" % sub
+        if sub in ("add", "rm"):
             stages.append((sub, git_folder, args))
+            touched, writes = touched + writes, []
         elif sub == "commit":
             if git_folder is None:
                 return None
@@ -619,6 +659,9 @@ def read_command(command, cwd, powershell):
             commit.folder, commit.stages, commit.powershell = git_folder, stages, powershell
             commit.message_sources = readers
             _commit_options(commit, args)
+            if commit.all or commit.pathspecs:
+                touched, writes = touched + writes, []
+            commit.unclear, commit.base, commit.touched = unclear, base, touched
             return commit
     return None
 
@@ -669,6 +712,10 @@ def _interactive(args):
     return False
 
 
+class GitFailed(RuntimeError):
+    pass
+
+
 def _git(args, cwd, env=None):
     left = _deadline[0] - time.monotonic()
     if left <= 0:
@@ -676,8 +723,21 @@ def _git(args, cwd, env=None):
     proc = subprocess.run(GIT + args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, timeout=min(GIT_TIMEOUT, left), env=_git_env(env))
     if proc.returncode != 0:
-        raise RuntimeError("git %s failed" % args[0])
+        raise GitFailed("git %s failed" % args[0])
     return proc.stdout
+
+
+def _holds_tests(folder, targets, top):
+    """True when a target names a tracked test file or a folder or glob that holds one."""
+    specs = [t if any(ch in t for ch in "*?[") else ":(literal)" + t for t in targets
+             if any(ch in t for ch in "*?[") or _inside(os.path.join(folder, t), top)]
+    if not specs:
+        return False
+    try:
+        listed = _git(["ls-files", "-z", "--"] + specs, folder).decode("utf-8", "replace")
+    except GitFailed:
+        return True   # a target git cannot read (a glob outside the repository): it may hold tests
+    return any(is_test_path(path) for path in listed.split("\0") if path)
 
 
 def _no_filters(folder):
@@ -736,38 +796,62 @@ def _inside(folder, top):
 
 
 def _replay(commit, index, top):
-    """Apply the command's staging to the index copy at `index`; False when it cannot be replayed."""
+    """Apply the command's staging to the index copy at `index`; False when it cannot be replayed. Raises Unclear
+    when git rejects a replayed step."""
     env = {"GIT_INDEX_FILE": index}
     off = {}
 
-    def git_off(args, folder):
+    def git_off(args, folder, step):
         if folder not in off:
             off[folder] = _no_filters(folder)
-        _git(off[folder] + args, folder, env)
+        try:
+            _git(off[folder] + args, folder, env)
+        except GitFailed:
+            raise Unclear("replaying `git %s` failed" % " ".join(step)[:80])
 
     only = bool(commit.pathspecs) and not commit.include
-    words = [a for _, _, args in ([] if only else commit.stages) for a in args] + commit.pathspecs
-    if not commit.powershell and any(ch in a for a in words for ch in "*?[{"):
-        return False   # the shell and git would expand these differently
     if only:
         _git(["read-tree", "HEAD"], top, env)   # with --amend too: HEAD's tree plus the paths, diffed against HEAD~1
     else:
         for sub, folder, args in commit.stages:
-            if (folder is None or not _inside(folder, top) or sub == "mv"
-                    or _interactive(args)):
+            if folder is None or not _inside(folder, top) or _interactive(args):
                 return False
             if sub == "add":
                 if any(a in ("-n", "--dry-run") for a in args):
                     continue
-                git_off(["add"] + args, folder)
+                new = _not_yet(args, folder, env)
+                if new and all(a in new or a.startswith("-") for a in args):
+                    continue
+                git_off(["add"] + [a for a in args if a not in new], folder, [sub] + args)
             else:
                 paths = [a for a in args if not a.startswith("-") or a == "--"]
-                git_off(["rm", "--cached", "-r", "-q", "--ignore-unmatch"] + paths, folder)
+                git_off(["rm", "--cached", "-r", "-q", "--ignore-unmatch"] + paths, folder, [sub] + args)
         if commit.all:
-            git_off(["add", "-u"], top)
+            git_off(["add", "-u"], top, ["commit", "-a"])
     if commit.pathspecs:
-        git_off(["add", "--"] + commit.pathspecs, commit.folder)
+        git_off(["add", "--"] + commit.pathspecs, commit.folder, ["commit", "--"] + commit.pathspecs)
     return True
+
+
+def _not_yet(args, folder, env):
+    """The literal paths of a `git add` that name nothing yet, no file and no index entry: the same command makes
+    them, so they are new files, which remove no test."""
+    paths = [a for a in args if not a.startswith("-") and not any(ch in a for ch in "*?[{")
+             and not os.path.lexists(os.path.join(folder, a))]
+    if not paths:
+        return set()
+    listed = _git(["ls-files", "-z", "--"] + [":(literal)" + p for p in paths], folder, env).decode("utf-8", "replace")
+    tracked = [path for path in listed.split("\0") if path]
+    return {p for p in paths
+            if not any(t == p.replace("\\", "/").rstrip("/") or t.startswith(p.replace("\\", "/").rstrip("/") + "/")
+                       for t in tracked)}
+
+
+def _globbed(commit):
+    """True when a staged word holds a Bash glob or brace, which the shell and git expand differently."""
+    only = bool(commit.pathspecs) and not commit.include
+    words = [a for _, _, args in ([] if only else commit.stages) for a in args] + commit.pathspecs
+    return not commit.powershell and any(ch in a for a in words for ch in "*?[{")
 
 
 def check(command, cwd, powershell):
@@ -784,8 +868,13 @@ def check(command, cwd, powershell):
     top = paths[0]
     if any(os.path.exists(os.path.join(commit.folder, p)) for p in paths[2:]):
         return None
-    base = "HEAD~1" if commit.amend else "HEAD"
-    args = ["diff", "-M", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/",
+    if commit.unclear:
+        raise Unclear(commit.unclear)
+    for folder, program, targets in commit.touched:
+        if folder is None or _holds_tests(folder, targets, top):
+            raise Unclear("`%s` changes test files a later step stages" % program)
+    base = (commit.base or "HEAD") + ("~1" if commit.amend else "")
+    args =["diff", "-M", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/",
             "--dst-prefix=b/", "--cached", base, "--"]
     args += ["*" + ext for ext in CODE_EXT]
     if commit.stages or commit.all or commit.pathspecs:
@@ -806,6 +895,9 @@ def check(command, cwd, powershell):
     if not found:
         return None
     listed = "; ".join(found[:SHOWN]) + ("; and %d more" % (len(found) - SHOWN) if len(found) > SHOWN else "")
+    if _globbed(commit):
+        raise Unclear("a glob or brace in the staged paths is expanded by the shell and by git differently; read "
+                      "as git does, the commit weakens tests: " + listed)
     return ("%s this commit weakens tests: %s. If that is intended (the code a test covered is gone, cases folded "
             "into a table, the test was wrong, a flaky test has a task), add a `%s <why>` line to the commit "
             "message as a trailer and commit again; otherwise restore the tests and fix the code."
@@ -819,6 +911,10 @@ def main():
         return 0
     try:
         reason = check(event["tool_input"]["command"], event.get("cwd"), tool == "PowerShell")
+    except Unclear as why:
+        reason = ("%s %s %s. Run that step in its own call and commit in the next one, so the guard reads what it "
+                  "left; if the commit removes or skips tests on purpose, add a `%s <why>` line to its message."
+                  % (PREFIX, UNCLEAR, why, TRAILER))
     except RuntimeError:   # a git call failed or ran out of time (a blob a partial clone lacks): fail open
         return 0
     if reason:
