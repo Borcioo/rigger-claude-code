@@ -337,6 +337,21 @@ class ResolveTests(unittest.TestCase):
         allowed = resolve(l4={"schema": 1, "expects": ["x"]})
         self.assertEqual((allowed.effective["expects"], allowed.notices), (["x"], []))
 
+    def test_trust_outside_the_personal_file_is_refused(self):
+        # D33: only the personal file (level 3) may trust a project command; a cloned project's file or a company
+        # module setting `trust` is dropped with a notice.
+        trust = {"project_commands": ["reviewer"]}
+        rows = [
+            ("project file", resolve(l4={"schema": 1, "trust": trust}),
+             "rigger: config %s key trust not allowed at level 4; ignored" % PATHS[4]),
+            ("company module", resolve(l2=[("company-a", {"trust": trust})]),
+             "rigger: config module company-a key trust not allowed at level 2; ignored"),
+        ]
+        for row, got, notice in rows:
+            with self.subTest(row=row):
+                self.assertEqual(got.notices, [notice])
+                self.assertNotIn("trust", got.effective)
+
     def test_sources_name_the_level_file(self):
         row = {"before": "writing meeting notes", "load": ["notes-style"]}
         got = resolve(l3={"schema": 1, "triggers": {"personal.notes": row, "rigger-core.testing": row}})
