@@ -78,6 +78,8 @@ TIMEOUT = 120
 TIMEOUTS = {
     "plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300,
     "tests/test_assembly_golden.py": 300,  # 507 sh and 302 python starts; 33 s alone, 45-65 s in the gate
+    # 580 git and 375 hook (python) starts, each hook run starting git again; 110 s alone
+    "plugins/rigger-core/tools/weak-test-guard/tests/test_weak_test_guard.py": 300,
 }
 KILL_TIMEOUT = 10
 # At most this many failed files are rerun alone; more is a real break, not load.
