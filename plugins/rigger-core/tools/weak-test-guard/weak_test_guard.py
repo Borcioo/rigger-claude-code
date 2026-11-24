@@ -29,30 +29,36 @@ message on `--amend`. Otherwise the hook denies it and lists the findings. `--dr
 
 The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs, a bash
 `"$(...)"` as one word, the body when it is `cat` of a heredoc, `$'...'`, `$((...))`; bash keywords, `env`,
-`command`, `time`, `nohup` and `exec` in front of a program are dropped). The
-commit is the first simple command whose program is git and whose subcommand is `commit`; `cd`,
-`Set-Location` and `git -C` before it set the folder. The diff is the index against HEAD (`HEAD~1` with
-`--amend`). When the command also stages (`git add`/`git rm` before the commit, `commit -a`, `-i <paths>`),
-those are replayed on a copy of the index; `git commit <paths>` without `-i` commits HEAD plus those paths,
-replayed on `read-tree HEAD`. Redirections are no words; in Bash a staged word with `* ? [ {` is replayed as git
-reads it (see "cannot tell" below). The replay uses `GIT_INDEX_FILE` (`git rm` as `rm --cached`) and
-that copy is diffed. The hook runs before the command is approved, so git runs with `core.fsmonitor=false`,
+`command`, `time`, `nohup` and `exec` in front of a program are dropped). A commit is a simple command whose
+program is git and whose subcommand is `commit`; `cd`, `Set-Location` and `git -C` before it set the folder. Every
+commit of the command is read (a `--dry-run` is none): their staging adds up, and the index is diffed once against
+HEAD (`HEAD~1` when the first one amends). When the command also stages (`git add`/`git rm` before a commit,
+`commit -a`, `-i <paths>`), those are replayed on a copy of the index; a single `git commit <paths>` without `-i`
+commits HEAD plus those paths, replayed on `read-tree HEAD`. Redirections are no words; in Bash a staged word with
+`* ? [ {` is replayed as git reads it (see "cannot tell" below). The replay uses `GIT_INDEX_FILE` (`git rm` as
+`rm --cached`) and that copy is diffed; `git add` writes the blobs it stages into the object store. The hook runs
+before the command is approved, so git runs with `core.fsmonitor=false`,
 `log` with `--no-show-signature`, the replay with every filter driver of its folder switched off, and a
 reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked,
-nor a commit after a `git merge`, `pull`, `cherry-pick`, `revert`, `rebase` or `am` in the same command.
+nor a commit after a `git merge`, `pull`, `cherry-pick`, `revert` or `rebase` in the same command when that is the
+only step that changes the index (`--abort` and `--quit` are index writers; `--help` and `--show-current-patch`
+change nothing).
 
 Denied as "cannot tell what this commit holds", with a hint to run that step in its own call (a stated reason still
 passes): another index writer before the commit (`git checkout`, `switch`, `restore`, `reset`, `stash`, `mv`,
-`apply`, `read-tree`, `update-index`; not `checkout -b`/`switch -c <name>` alone, and `reset --soft <rev>` becomes
-the diff base), a file writer (`rm`, `mv`, `cp`, `sed -i`, `Remove-Item`, `Move-Item`, `Copy-Item`, `Set-Content`,
-`Add-Content`, `Out-File`) whose targets hold a tracked test file when a later `git add`, `-a` or pathspec picks
-them up, a replayed step git rejects, a Bash glob or brace that, read as git does, weakens tests, a command it
-cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and a `git commit` where a command
-starts that the parse did not read (in a string `bash -c` runs, after `sudo` or `xargs`). A staged path
-that names no file and no index entry yet is a new file the command makes, and is left out of the replay.
+`apply`, `am`, `read-tree`, `update-index`, `--pathspec-from-file`; not `checkout -b`/`switch -c <name>` alone, and
+`reset --soft <rev>` becomes the diff base), a history step with another change to the index, a file writer (`rm`,
+`mv`, `cp` and `Copy-Item` by their destination, `sed -i`, `Remove-Item`, `Move-Item`, `Set-Content`,
+`Add-Content`, `Out-File`, their PowerShell aliases, any redirection target) whose targets hold a tracked test
+file, or a variable, `~`, backtick or brace, when a later `git add`, `-a` or pathspec picks them up, a replayed
+step git rejects, a Bash glob or brace that, read as git does, weakens tests, commits in more than one
+repository, a command it cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and
+`git [options] commit` in the text outside every commit the parse read (in a string another shell runs, after
+`sudo`, `eval` or `timeout`, or only named in an `echo`). A staged path that names no file and no index entry yet
+is a new file the command makes, and is left out of the replay.
 
 Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
-folder, an interactive add, staging outside the repository, another program that writes files,
+folder, an interactive add, staging outside the repository, another program that writes files (`python x.py`),
 no repository (a folder named by a variable or `~` is read literally and fails here), a git error, 8 s of
 git calls, a diff over MAX_DIFF bytes, or any exception prints nothing.
 Loosening an assertion in place (`toBe(3)` to `toBeTruthy()`), a test replaced by a vacuous one, data
@@ -115,12 +121,16 @@ COMMENT = re.compile(r"\s*(?:#(?!\[)|//|/\*|\*|<!--|\|(?!\|))")   # `|` opens a 
 STRING = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`(?:[^`\\\n]|\\.)*`")
 
 UNCLEAR = "cannot tell what this commit holds:"
-HISTORY = frozenset(("merge", "pull", "cherry-pick", "revert", "rebase", "am"))   # content of commits already made
-INDEX_WRITERS = frozenset(("checkout", "switch", "restore", "reset", "stash", "mv", "apply", "read-tree",
+HISTORY = frozenset(("merge", "pull", "cherry-pick", "revert", "rebase"))   # content of commits already made
+INDEX_WRITERS = frozenset(("checkout", "switch", "restore", "reset", "stash", "mv", "apply", "am", "read-tree",
                            "update-index"))
-# Programs that change files a later `git add`, `-a` or pathspec picks up: which of their words are targets.
-FILE_WRITERS = {"rm": "all", "mv": "all", "cp": "last", "sed": "all", "remove-item": "all", "move-item": "all",
-                "copy-item": "last", "set-content": "all", "add-content": "all", "out-file": "all"}
+# Programs (and PowerShell aliases) that change files a later `git add`, `-a` or pathspec picks up: which of their
+# words are targets. A redirection target of any program is one too.
+FILE_WRITERS = {"rm": "all", "del": "all", "erase": "all", "ri": "all", "rd": "all", "rmdir": "all",
+                "remove-item": "all", "mv": "all", "move": "all", "mi": "all", "move-item": "all", "cp": "copy",
+                "copy": "copy", "cpi": "copy", "copy-item": "copy", "sed": "all", "set-content": "all", "sc": "all",
+                "add-content": "all", "ac": "all", "out-file": "all"}
+NO_FILE = frozenset(("/dev/null", "$null", "nul"))
 CD = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
 READERS = frozenset(("cat", "get-content", "gc", "type"))   # a file piped into `git commit -F -`
 COMMIT_VALUE_LONG = frozenset(("message", "file", "reuse-message", "reedit-message", "author", "date", "template",
@@ -315,19 +325,21 @@ def findings(diff_text):
 # --- the command -----------------------------------------------------------------------------------------------
 
 class Simple:
-    """One simple command: its words (a here-string is one word; a heredoc body is none)."""
+    """One simple command: its words (a here-string is one word; a heredoc body is none), the targets of its
+    redirections, and the spans of the text it covers (from the end of the separator before it, and its heredoc
+    bodies)."""
 
-    def __init__(self):
+    def __init__(self, start=0):
         self.words = []
+        self.redirects = []
+        self.spans = [[start, start]]
 
 
 HEREDOC_CAT = re.compile(r"\s*cat\s*<<-?[ \t]*(['\"]?)(\w+)\1[ \t]*\n")
-# A `git commit` where a command starts: after a separator, a wrapper, or inside the string another shell runs.
-RAW_COMMIT = re.compile(
-    r"(?:^|[;&|({\n`]|\b(?:sudo|exec|nohup|command|xargs|time)[ \t]"
-    r"|\b(?:ba|z)?sh(?:\.exe)?[ \t]+-c[ \t]+[\"']?|\b(?:pwsh|powershell)(?:\.exe)?[ \t]+-(?:c|Command)[ \t]+[\"']?)"
-    r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:env[ \t]+(?:-\S+[ \t]+)*(?:[A-Za-z_]\w*=\S*[ \t]+)*)?"
-    r"(?:[\w.:/\\~-]*[/\\])?git(?:\.exe)?(?:[ \t]+-\S+(?:[ \t]+[^\s;&|-][^\s;&|]*)?)*?[ \t]+commit\b")
+COMMIT_WORD = re.compile(r"(?<=[ \t])commit(?=[\s;&|)\"'`]|$)")
+COMMIT_WORD_PS = re.compile(COMMIT_WORD.pattern, re.I)
+TOKEN = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|\S+")
+LOOKBACK = 24   # tokens between `git` and `commit`: options and the values of -C and -c
 KEYWORDS = frozenset(("then", "do", "else", "elif", "if", "while", "until", "!", "{", "time", "command", "nohup",
                       "exec"))
 
@@ -449,6 +461,7 @@ def split_command(text, powershell):
         if has_word:
             if drop_next:
                 drop_next = False
+                current.redirects.append("".join(word))
             else:
                 current.words.append("".join(word))
         word, has_word = [], False
@@ -457,9 +470,10 @@ def split_command(text, powershell):
         nonlocal current, drop_next
         end_word()
         drop_next = False
-        if current.words:
+        current.spans[0][1] = i
+        if current.words or current.redirects:
             out.append(current)
-        current = Simple()
+        current = Simple(i)
 
     while i < n:
         c = text[i]
@@ -477,11 +491,13 @@ def split_command(text, powershell):
         elif c == "\n":
             end_simple()
             i += 1
-            for delimiter in pending:
+            for delimiter, owner in pending:
                 end = text.find("\n" + delimiter + "\n", i - 1)
                 stop = end if end >= 0 else n
+                owner.spans.append([i, stop])
                 i = stop + len(delimiter) + 2 if end >= 0 else n
             pending = []
+            current = Simple(i)
         elif c == "#" and not has_word:
             end = text.find("\n", i)
             i = end if end >= 0 else n
@@ -499,7 +515,7 @@ def split_command(text, powershell):
             k = j
             while k < n and text[k] not in " \t\n;|&<>":
                 k += 1
-            pending.append(text[j:k].strip("'\""))
+            pending.append((text[j:k].strip("'\""), current))
             i = k
         elif c in "<>":
             if has_word and ("".join(word).isdigit() or "".join(word) == "*"):
@@ -590,6 +606,7 @@ class Commit:
         self.unclear = None         # why a step before the commit cannot be replayed
         self.touched = []           # (folder, program, targets) of file writes a later staging step picks up
         self.base = None            # the commit a `git reset --soft <rev>` before it moves HEAD to
+        self.parts = [self]         # every commit of the command this one adds up
 
 
 class Unclear(Exception):
@@ -603,6 +620,16 @@ class Unclear(Exception):
 
 READ_HINT = "Commit in a command of its own, with the message in `-m` or in a file read by `-F`"
 RUN_HINT = "Run `git commit` itself in the command, not in a string, a function or another shell"
+
+
+def _copy_targets(args):
+    """The destination of a `cp` or `Copy-Item`: the value of `-t`, `--target-directory` or `-Destination`, else the
+    last word that is no option."""
+    for k, arg in enumerate(args):
+        name, eq, value = arg.partition("=")
+        if name in ("-t", "--target-directory") or name.lower().startswith("-dest"):
+            return [value] if eq else args[k + 1:k + 2]
+    return [a for a in args if not a.startswith("-")][-1:]
 
 
 def _command_words(words, powershell):
@@ -692,21 +719,25 @@ def _commit_options(commit, args):
 
 
 def read_command(command, cwd, powershell):
-    """The Commit of the first `git commit` in the command, None when there is none or its folder is unknown."""
+    """The Commit the command's `git commit`s add up to (the last one, holding the others in `parts`), None when
+    there is none, a commit's folder is unknown, or they follow a history step. Raises Unclear as the docstring above
+    says."""
     try:
-        simples = [_command_words(simple.words, powershell) for simple in split_command(command, powershell)]
+        parsed = split_command(command, powershell)
     except Unparsed as why:
         if re.search(r"\bgit\b[\s\S]*\bcommit\b", command):
             raise Unclear("the guard cannot read the command (%s)" % why, READ_HINT)
         return None
-    seen = sum(1 for words in simples if words and (_git_parts(words, cwd, powershell) or "--")[1] == "commit")
-    if len(RAW_COMMIT.findall(command)) > seen:
-        raise Unclear("a `git commit` stands where the guard cannot read it (in a string, a function or another "
-                      "shell)", RUN_HINT)
+    simples = [(_command_words(simple.words, powershell), simple) for simple in parsed]
+    _unread_commit(command, [s for words, s in simples
+                             if words and (_git_parts(words, cwd, powershell) or "--")[1] == "commit"], powershell)
     folder = cwd
-    stages, readers = [], []
-    unclear, base, writes, touched = None, None, [], []
-    for words in simples:
+    stages, readers, commits = [], [], []
+    unclear, base, writes, touched, history, dirty = None, None, [], [], None, False
+    for words, simple in simples:
+        targets = [t for t in simple.redirects if t.lower() not in NO_FILE]
+        if targets:
+            writes.append((folder, (words or ["a redirection"])[0], targets))
         if not words:
             continue
         head = words[0].lower()
@@ -720,40 +751,84 @@ def read_command(command, cwd, powershell):
         if head in READERS and folder is not None:
             readers = [os.path.join(folder, w) for w in words[1:] if not w.startswith("-")]
             continue
-        program = head.replace("\\", "/").rsplit("/", 1)[-1]
+        program = re.sub(r"\.exe$", "", head.replace("\\", "/").rsplit("/", 1)[-1])
         kind = FILE_WRITERS.get(program)
         if kind and (program != "sed" or any(w.startswith("--in-place") or re.match(r"-[^-]*i", w) for w in words[1:])):
-            targets = [w for w in words[1:] if not w.startswith("-")]
-            writes.append((folder, words[0], targets[-1:] if kind == "last" else targets))
+            names = [w for w in words[1:] if not w.startswith("-")]
+            writes.append((folder, words[0], _copy_targets(words[1:]) if kind == "copy" else names))
             continue
         parts = _git_parts(words, folder, powershell)
         if parts is None:
             continue
         git_folder, sub, args = parts
-        if sub in HISTORY:
-            return None   # what follows commits content the guard read when it was committed
-        if sub in INDEX_WRITERS and unclear is None:
+        if any(a in ("--help", "-h", "--show-current-patch") for a in args):
+            continue
+        if any(a.startswith("--pathspec-from-file") for a in args) and sub in ("add", "rm", "commit"):
+            unclear = unclear or "`--pathspec-from-file` names its paths in a file"
+        if sub in HISTORY and not any(a in ("--abort", "--quit") for a in args):
+            history = history or sub   # what follows commits content the guard read when it was committed
+            continue
+        if sub in INDEX_WRITERS or sub in HISTORY:
             revs = [a for a in args if not a.startswith("-")]
             loud = [a for a in args if a not in ("-q", "--quiet")]
             if sub == "reset" and "--soft" in args and len(revs) <= 1:
                 base = revs[0] if revs else base
             elif not (sub in ("checkout", "switch") and len(loud) == 2 and loud[0] in ("-b", "-B", "-c", "-C")):
-                unclear = "`git %s` runs before it" % sub
+                unclear, dirty = unclear or "`git %s` runs before it" % sub, True
         if sub in ("add", "rm"):
             stages.append((sub, git_folder, args))
-            touched, writes = touched + writes, []
+            touched, writes, dirty = touched + writes, [], True
         elif sub == "commit":
+            commit = Commit()
+            _commit_options(commit, args)
+            if commit.dry_run:
+                continue
             if git_folder is None:
                 return None
-            commit = Commit()
-            commit.folder, commit.stages, commit.powershell = git_folder, stages, powershell
-            commit.message_sources = readers
-            _commit_options(commit, args)
             if commit.all or commit.pathspecs:
-                touched, writes = touched + writes, []
-            commit.unclear, commit.base, commit.touched = unclear, base, touched
-            return commit
-    return None
+                touched, writes, dirty = touched + writes, [], True
+            if history:
+                if dirty:
+                    raise Unclear("`git %s` and another change to the index run before it" % history)
+                continue
+            commit.folder, commit.stages, commit.powershell = git_folder, list(stages), powershell
+            commit.message_sources, commit.touched, dirty = readers, list(touched), False
+            commit.unclear, commit.base = unclear, base   # a step after the last commit changes nothing it holds
+            commits.append(commit)
+            if commit.all:
+                stages.append(("add", git_folder, ["-u"]))
+            if commit.pathspecs:
+                stages.append(("add", git_folder, ["--"] + commit.pathspecs))
+    if not commits:
+        return None
+    commit = commits[-1]
+    commit.parts, commit.amend = commits, commits[0].amend
+    if len(commits) > 1:
+        commit.include = True   # the paths join what the earlier commits staged
+    return commit
+
+
+def _unread_commit(command, read, powershell):
+    """Raise Unclear when the text holds `git [options] commit` outside every commit the parse read. Loose on
+    purpose: it knows no wrapper, so text that only names a commit (`echo git commit`) is refused too."""
+    covered = [span for simple in read for span in simple.spans]
+    for match in (COMMIT_WORD_PS if powershell else COMMIT_WORD).finditer(command):
+        at = match.start()
+        if any(start <= at < end for start, end in covered):
+            continue
+        line = command[max(command.rfind("\n", 0, at) + 1, at - 40 * LOOKBACK):at]
+        tokens = TOKEN.findall(line)[-LOOKBACK:]
+        k = len(tokens) - 1
+        while k >= 0:
+            name = tokens[k].strip("\"'`($").replace("\\", "/").rsplit("/", 1)[-1]
+            if (name.lower() if powershell else name) in ("git", "git.exe"):
+                raise Unclear("a git commit the guard could not parse stands in it", RUN_HINT)
+            if tokens[k].startswith("-"):
+                k -= 1
+            elif k >= 1 and tokens[k - 1] in ("-C", "-c"):
+                k -= 2
+            else:
+                break
 
 
 def has_reason(text):
@@ -818,7 +893,10 @@ def _git(args, cwd, env=None):
 
 
 def _holds_tests(folder, targets, top):
-    """True when a target names a tracked test file or a folder or glob that holds one."""
+    """True when a target names a tracked test file or a folder or glob that holds one, or the shell expands it
+    (a variable, `~`, a backtick, a brace) to a name the guard cannot see."""
+    if any(ch in t for t in targets for ch in "$~`{"):
+        return True
     specs = [t if any(ch in t for ch in "*?[") else ":(literal)" + t for t in targets
              if any(ch in t for ch in "*?[") or _inside(os.path.join(folder, t), top)]
     if not specs:
@@ -851,9 +929,12 @@ def _no_filters(folder):
 
 
 def _stated(commit, command):
+    """True when the message of the command or of one of its commits states a reason."""
+    return has_reason(command) or any(_stated_one(part) for part in commit.parts)
+
+
+def _stated_one(commit):
     """True when the commit's message states a reason (read without git where it can be)."""
-    if has_reason(command):
-        return True
     if commit.message_file == "-":
         return any(has_reason(_read(path)) for path in commit.message_sources)
     if commit.message_file:
@@ -925,8 +1006,8 @@ def _replay(commit, index, top):
 
 def _not_yet(args, folder, env):
     """The literal paths of a `git add` that name nothing yet, no file and no index entry: the same command makes
-    them, so they are new files, which remove no test."""
-    paths = [a for a in args if not a.startswith("-") and not any(ch in a for ch in "*?[{")
+    them, so they are new files, which remove no test. A magic pathspec (`:(...)`) is never one."""
+    paths = [a for a in args if not a.startswith(("-", ":")) and not any(ch in a for ch in "*?[{")
              and not os.path.lexists(os.path.join(folder, a))]
     if not paths:
         return set()
@@ -965,6 +1046,14 @@ def check(command, cwd, powershell):
         return None
     if commit.unclear:
         raise Unclear(commit.unclear)
+    for folder in {os.path.normcase(os.path.abspath(part.folder)) for part in commit.parts} - {
+            os.path.normcase(os.path.abspath(commit.folder))}:
+        try:
+            other = _git(["rev-parse", "--show-toplevel"], folder).decode("utf-8", "replace").strip()
+        except (GitFailed, OSError):
+            other = None
+        if other is None or not _inside(other, top) or not _inside(top, other):
+            raise Unclear("commits in more than one repository")
     for folder, program, targets in commit.touched:
         if folder is None or _holds_tests(folder, targets, top):
             raise Unclear("`%s` changes test files a later step stages" % program)

@@ -444,7 +444,7 @@ class PatternTests(unittest.TestCase):
                   "env ", "X=1 ", "sh -c '"]
         patterns = [GUARD.TEST_DEF, GUARD.SKIP, GUARD.ASSERT, GUARD.DEFINES, GUARD.COMMENT, GUARD.DECORATOR,
                     GUARD.PHP_METHOD, GUARD.PHP_TEST_MARK, GUARD.TEST_FILE, GUARD.TEST_AFFIX, GUARD.FOLDS, GUARD.STRING,
-                    GUARD.HEREDOC_CAT, GUARD.RAW_COMMIT]
+                    GUARD.HEREDOC_CAT, GUARD.COMMIT_WORD, GUARD.COMMIT_WORD_PS, GUARD.TOKEN]
         for repeat in (40, 2000):
             start = time.perf_counter()
             for token in tokens:
@@ -457,6 +457,12 @@ class PatternTests(unittest.TestCase):
                             GUARD.split_command(text, powershell)
                         except GUARD.Unparsed:   # an unclosed construct: refused, which is what the hook needs
                             pass
+            for powershell in (False, True):   # a `commit` after many `git` and options words
+                for text in ("git -C " * repeat + "commit", " commit" * repeat, "git " + "-x " * repeat + "commit"):
+                    try:
+                        GUARD._unread_commit(text, [], powershell)
+                    except GUARD.Unclear:
+                        pass
             self.assertLess(time.perf_counter() - start, 5.0, "repeat %d" % repeat)
 
 
@@ -610,7 +616,18 @@ UNREADABLE = ['echo "$(case a in a) echo b;; esac)" && git commit -am x',
               "echo $'unclosed && git commit -am x", "echo $((1 && git commit -am x"]
 # A `git commit` that runs where the guard cannot read it.
 HIDDEN = ['bash -c "git commit -am x"', "sudo git commit -am x", "xargs git commit -am x < /dev/null",
-          "pwsh -c 'git commit -am x'"]
+          "pwsh -c 'git commit -am x'", "env -u X git commit -am x", "exec -a n git commit -am x",
+          "time -p git commit -am x", "eval 'git commit -am x'", "timeout 5 git commit -am x",
+          'echo "$(git commit -am x)"',
+          # The parse reads one commit and the text holds one more: the pairing is by place, not by count.
+          'git -C "a b" commit -am x && bash -c "git commit -am y"',
+          # Text that only names a commit is refused the same way: the check is loose on purpose.
+          "echo 'next: git commit -m x'", "echo git commit -m x", 'gh pr create --body "then git commit"',
+          "wsl -- git -C '/srv/a b' -c user.name=x commit -am x", 'wsl -- git -C "/srv/a b" commit -am x',
+          "ssh host git --no-pager commit -am x",
+          # A heredoc body belongs to the command that opened it, not to the next one.
+          "cat > notes.txt <<'EOF'\ngit commit -am x\nEOF\ngit commit -am y"]
+POWERSHELL_HIDDEN = ["Invoke-Expression 'GIT COMMIT -am x'", "$s = { Git -C repo Commit -am x }; & $s"]
 # Shell keywords and wrappers in front of a commit the guard reads.
 WRAPPED = ["if true; then git commit -am x; fi", "while false; do :; done; command git commit -am x",
            "env -i X=1 git commit -am x", "time git commit -am x", "for f in a; do git commit -am x; done",
@@ -651,10 +668,24 @@ class ReadingTests(unittest.TestCase):
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root))
                 self.assertIsNotNone(reason)
-                self.assertTrue(reason.startswith(UNCLEAR + "a `git commit` stands where the guard cannot read it"),
-                                reason)
+                self.assertTrue(reason.startswith(UNCLEAR + "a git commit the guard could not parse"), reason)
                 self.assertIn("Run `git commit` itself", reason)
+        for command in POWERSHELL_HIDDEN:
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root, tool="PowerShell"))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR + "a git commit the guard could not parse"), reason)
         self.assertIsNone(reason_of(run_hook('bash -c "git commit -am x -m \'%s\'"' % REASON, repo.root)))
+
+    def test_a_commit_message_that_names_git_commit_is_read(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        for command in ("git commit -a -F - <<'EOF'\nfix: x\n\nrun git commit -am later\nEOF",
+                        'git commit -am "fix: git commit hook"'):
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
 
     def test_keywords_and_wrappers_before_a_commit_are_read(self):
         repo = Repo(self, BASE)
@@ -694,7 +725,25 @@ UNCLEAR_ROWS = [
     ("git apply fix.patch && git commit -am x", "Bash", "`git apply`"),
     ("git read-tree HEAD~1 && git commit -m x", "Bash", "`git read-tree`"),
     ("git update-index --force-remove tests/test_parser.py && git commit -m x", "Bash", "`git update-index`"),
-]
+    ("git am fix.patch && git commit -m x", "Bash", "`git am`"),
+    ("git merge --abort && git commit -m x", "Bash", "`git merge`"),
+    ("git cherry-pick --quit && git commit -m x", "Bash", "`git cherry-pick`"),
+    ("git stash pop && git merge --squash topic && git commit -m x", "Bash", "`git merge`"),
+    ("git add -A && git merge --squash topic && git commit -m x", "Bash", "`git merge`"),
+    ("git merge --squash topic && git commit -am x", "Bash", "`git merge`"),
+    ("git merge --squash topic && rm tests/test_parser.py && git add -A && git commit -m x", "Bash", "`git merge`"),
+    ("git add --pathspec-from-file=list.txt && git commit -m x", "Bash", "`--pathspec-from-file`"),
+    ("rm.exe tests/test_parser.py && git commit -am x", "Bash", "`rm.exe`"),
+    ("cp -t tests src/parser.py && git commit -am x", "Bash", "`cp`"),
+    ("cp --target-directory=tests src/parser.py && git commit -am x", "Bash", "`cp`"),
+    ("Copy-Item -Destination tests/test_parser.py src/parser.py; git commit -am x", "PowerShell", "`Copy-Item`"),
+    ("cat src/parser.py > tests/test_parser.py && git commit -am x", "Bash", "`cat`"),
+    ("rm $DIR/test_parser.py && git commit -am x", "Bash", "`rm`"),
+    ("rm ~/x && git add -A && git commit -m x", "Bash", "`rm`"),
+    ("rm tests/{a,b}.py && git add -A && git commit -m x", "Bash", "`rm`"),
+    ("rm `cat list` && git commit -am x", "Bash", "`rm`"),
+] + [("%s tests/test_parser.py; git commit -am x" % alias, "PowerShell", "`%s`" % alias)
+     for alias in ("del", "erase", "ri", "rd", "rmdir", "move", "mi", "copy", "cpi", "sc", "ac")]
 # Plain forms around those steps that must stay allowed on the same unchanged repository.
 AROUND_ROWS = [
     ("rm notes.txt && git commit -am x", "Bash"),
@@ -715,6 +764,14 @@ AROUND_ROWS = [
     ("python fmt.py && git add -A && git commit -m x", "Bash"),
     ("git commit -am x && git checkout develop && git merge --squash topic", "Bash"),
     ("python gen.py && git add made.py && git commit -m x", "Bash"),
+    ("cp -t backup tests/test_parser.py && git add -A && git commit -m x", "Bash"),
+    ("Copy-Item -Destination backup.py tests/test_parser.py; git add -A; git commit -m x", "PowerShell"),
+    ("echo x > notes.txt && git add -A && git commit -m x", "Bash"),
+    ("git add -A > /dev/null && git commit -m x 2>&1", "Bash"),
+    ("rm $TMPDIR/x && git commit -m x", "Bash"),
+    ("git merge --squash topic && git diff --cached --stat && git commit -m x", "Bash"),
+    ("git add -A 2>$null; git commit -m x", "PowerShell"),
+    ("git add -A && git commit -m a && git merge --squash topic && git commit -m b", "Bash"),
 ]
 
 
@@ -742,7 +799,9 @@ class UnclearTests(unittest.TestCase):
         for command, prepare in (('python gen.py && git add made.py tests/test_parser.py && git commit -m "x"',
                                   lambda repo: repo.change(WEAK, stage=False)),
                                  ('git add made.py tests/test_parser.py && git commit -m "x"',
-                                  lambda repo: (repo.root / "tests" / "test_parser.py").unlink())):
+                                  lambda repo: (repo.root / "tests" / "test_parser.py").unlink()),
+                                 ("git add ':(literal)tests/test_parser.py' made.py && git commit -m x",
+                                  lambda repo: repo.change(WEAK, stage=False))):
             with self.subTest(command=command):
                 repo = Repo(self, BASE)
                 prepare(repo)
@@ -767,14 +826,71 @@ class UnclearTests(unittest.TestCase):
         self.assertIsNone(reason_of(run_hook("git checkout --theirs tests && git add -A && git commit -m x", repo.root)))
 
     def test_a_merge_before_the_commit_is_not_checked(self):
-        # Its content comes from commits the guard has already checked, as for a merge in progress.
+        # Its content comes from commits the guard has already checked, as for a merge in progress, when it is the
+        # only step that changes the index.
         repo = Repo(self, BASE)
         repo.change(WEAK)
         for command in ("git merge --squash topic && git commit -m x", "git pull --ff-only && git commit -m x",
                         "git cherry-pick -n abc && git commit -m x", "git revert -n abc && git commit -m x",
-                        "git rebase -q main && git commit -m x", "git am fix.patch && git commit -m x"):
+                        "git rebase -q main && git commit -m x"):
             with self.subTest(command=command):
                 self.assertIsNone(reason_of(run_hook(command, repo.root)))
+        for command in ("git merge --help && git commit -m x", "git rebase --show-current-patch && git commit -m x",
+                        "git revert -h && git commit -m x"):
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
+
+    def test_every_commit_of_the_command_is_checked(self):
+        for command in ('git commit -m first -- src/sum.js && git commit -am second',
+                        'git commit --dry-run -a && git commit -am x',
+                        'git add src/parser.py && git commit -m a && git add -A && git commit -m b',
+                        'git commit -am a && git commit --amend -m b',
+                        'git commit -m a -- tests/test_parser.py && git commit --allow-empty -m b',
+                        'git commit -am a && git commit -m b -- src/sum.js'):
+            with self.subTest(command=command):
+                repo = Repo(self, BASE)
+                repo.change(WEAK, stage=False)
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests: removed test"), reason)
+        repo = Repo(self, BASE)   # a dry run stages nothing, and a reason in any commit's message counts
+        repo.change(WEAK, stage=False)
+        (repo.root / "msg.txt").write_text("fix: x\n\n" + REASON + "\n", encoding="utf-8")
+        for command in ('git commit --dry-run -a && git commit -m x',
+                        'git commit -F msg.txt -- src/sum.js && git commit -am b'):
+            with self.subTest(command=command):
+                self.assertIsNone(reason_of(run_hook(command, repo.root)))
+
+    def test_a_later_amend_keeps_the_base_of_the_first_commit(self):
+        # The amend rewrites the commit this command just made, so the commits together sit on HEAD.
+        repo = Repo(self, BASE)
+        repo.change(WEAK)
+        git(repo.root, "commit", "-q", "-m", "weaken", "-m", REASON)
+        repo.change({"src/parser.py": PY_CODE + "\n# more\n"}, stage=False)
+        self.assertIsNone(reason_of(run_hook("git commit -m a -- src/parser.py && git commit --amend -m b", repo.root)))
+        self.assertIsNotNone(reason_of(run_hook("git commit --amend -m a -- src/parser.py && git commit -m b",
+                                                repo.root)))
+
+    def test_commits_in_two_repositories_cannot_be_told(self):
+        repo, other = Repo(self, BASE), Repo(self, BASE)
+        reason = reason_of(run_hook('git commit -am a && cd "%s" && git commit -am b' % other.root.as_posix(), repo.root))
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith(UNCLEAR + "commits in more than one repository"), reason)
+        nested = repo.root / "nested"   # a repository inside the first one is another one
+        nested.mkdir()
+        git(nested, "init", "-q")
+        for command in ("git commit -am a && cd nested && git commit -am b",
+                        "cd nested && git commit -am a && cd .. && git commit -am b"):
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR + "commits in more than one repository"), reason)
+        repo.change(WEAK, stage=False)   # a subfolder of the same repository is read as one
+        reason = reason_of(run_hook('git commit -m a -- src/sum.js && cd tests && git commit -am b', repo.root))
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
 
     def test_a_soft_reset_squash_is_read_against_its_new_base(self):
         repo = Repo(self, BASE)
@@ -1115,9 +1231,9 @@ class FailOpenTests(unittest.TestCase):
         not_a_repo = Path(tempfile.mkdtemp(prefix="weak test guard plain "))
         self.addCleanup(shutil.rmtree, not_a_repo, True)
         for command, cwd, tool in (("git status", repo.root, "Bash"), ("echo commit", repo.root, "Bash"),
-                                   ("echo 'next: git commit -m x'", repo.root, "Bash"),
-                                   ("echo git commit -m x", repo.root, "Bash"),
-                                   ('gh pr create --body "then git commit"', repo.root, "Bash"),
+                                   ("echo git\necho commit", repo.root, "Bash"),
+                                   ("git log --grep commit", repo.root, "Bash"),
+                                   ("git log --oneline -1; echo commit", repo.root, "Bash"),
                                    ("git -C $repo commit -m 'x'", repo.root, "PowerShell"),
                                    ('cd "$HOME/x" && git commit -m "x"', repo.root, "Bash"),
                                    ('git commit -m "x"', not_a_repo, "Bash"), ('git commit -m "x"', repo.root, "Write")):
