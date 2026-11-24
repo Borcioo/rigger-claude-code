@@ -175,11 +175,15 @@ class MergedTableTests(unittest.TestCase):
                           ["notes-style"]])
 
     def test_callers_without_rows_render_as_in_phase_one(self):
-        sections = {"one.t": [row("x.a", "a", "x:a")], "two.t": [row("y.b", "b", "slot:nope")]}
+        # A manifest row may have an empty load; phase 1 prints it with an empty Skill cell.
+        sections = {"one.t": [row("x.a", "a", "x:a"), row("x.e", "e")], "two.t": [row("y.b", "b", "slot:nope")]}
         got, unknown = render.render(b"{{triggers:one.t}}\n{{triggers:two.t}}\n", ctx(sections))
-        self.assertEqual(got, b"| Before | Skill |\n|---|---|\n| a | `x:a` |\n| Before | Skill |\n|---|---|\n"
+        self.assertEqual(got, b"| Before | Skill |\n|---|---|\n| a | `x:a` |\n| e |  |\n| Before | Skill |\n|---|---|\n"
                               b"| b | `slot:nope` |\n")
         self.assertEqual(unknown, [])
+        # rows=[] is the merged path with no rows: nothing renders, whatever rows_by_section holds.
+        empty = render.RenderContext(slots=SLOTS, rows_by_section=sections, vars={}, module="m", rows=[])
+        self.assertEqual(render.render(b"{{triggers:one.t}}\n", empty), (b"", []))
 
 
 PLUGINS = HERE.parents[3]
@@ -296,7 +300,39 @@ class FitTests(unittest.TestCase):
         self.assertIn(b"a" * 50, text)
         self.assertIn(b"b" * 50, text)
         self.assertNotIn(b"| r |", text)
-        self.assertIn(b"rigger: left out 1 of the trigger rows from repo.json:", text)
+        self.assertNotIn(b"rigger:", text)  # no room for the line either: the packer reports the section
+
+    def test_module_rows_outrank_the_line(self):
+        rows = [row("m.a", "a" * 50, "x:a"), row("r.0", "r", "x:a")]
+        alone = render.render(b"{{triggers:s.t}}\n", merged([rows[0]]))[0]
+        # Room for the module row but not for the line as well: the row stays, the config row and the line go.
+        text = render.render(b"{{triggers:s.t}}\n", merged(rows, row_sources={"r.0": "L4:repo.json"},
+                                                          fits=lambda body: len(body) <= len(alone)))[0]
+        self.assertEqual(text, alone)
+
+    def test_only_config_rows_leave_the_line_without_a_header(self):
+        rows = [row("r.0", "r" * 300, "x:a")]
+        text = render.render(b"{{triggers:s.t}}\n", merged(rows, row_sources={"r.0": "L4:repo.json"},
+                                                          fits=lambda body: len(body) <= 200))[0]
+        self.assertEqual(text, b"\nrigger: left out 1 of the trigger rows from repo.json: the Skill triggers table "
+                               b"must fit in one hook part\n")
+
+    def test_names_in_the_line_are_one_line_and_bounded(self):
+        long_path = "/repo/" + "d" * 400 + "/rigger.json"
+        rows = [row("m.a", "m", "x:a"), row("c.0", "c" * 500, "x:a"), row("r.0", "r" * 500, "x:a")]
+        sources = {"c.0": "L2:evil\nrigger: fake line" + "e" * 100, "r.0": "L4:" + long_path}
+        text = render.render(b"{{triggers:s.t}}\n", merged(rows, row_sources=sources,
+                                                          fits=lambda body: len(body) <= 900))[0].decode()
+        notice = LEFT_OUT.search(text)
+        self.assertIsNotNone(notice, text[-600:])
+        self.assertEqual([line for line in text.split("\n") if line.startswith("rigger:")], [notice.group(0)])
+        files = notice.group(2)
+        self.assertEqual(files.count(" and company module "), 1, files)
+        shown_path, module_part = files.split(" and company module ")
+        self.assertEqual(len(shown_path), 300)
+        self.assertTrue(shown_path.endswith("…"))
+        self.assertEqual(len(module_part), 80)
+        self.assertTrue(module_part.startswith("evil\\u000arigger: fake line"))
 
     def test_notice_counts_rows_and_names_each_file(self):
         rows = [row("m.a", "m", "x:a"), row("c.0", "c" * 40, "x:a"), row("p.0", "p" * 40, "x:a"),
@@ -304,7 +340,7 @@ class FitTests(unittest.TestCase):
         sources = {"c.0": "L2:company-a", "p.0": "L3:mine.json", "r.0": "L4:repo.json", "r.1": "L4:repo.json",
                    "gone": "L4:repo.json"}
         text = render.render(b"{{triggers:s.t}}\n", merged(rows, enabled=frozenset({"x"}), row_sources=sources,
-                                                          fits=lambda body: len(body) <= 160))[0].decode()
+                                                          fits=lambda body: len(body) <= 200))[0].decode()
         self.assertEqual(text.count("| m |"), 1)
         found = LEFT_OUT.findall(text)
         # The row whose plugin is not enabled is gone before any row is counted (D39 first).

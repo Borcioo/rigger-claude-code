@@ -186,12 +186,12 @@ def _fitted_table(ctx: RenderContext, before: bytes, after: bytes) -> bytes:
     queue = [row.id for prefix in DROP_ORDER for row, _ in reversed(pairs)
              if sources.get(row.id, "").startswith(prefix)]
 
-    def build(count: int) -> bytes:
+    def build(count: int, line: bool = True) -> bytes:
         dropped = set(queue[:count])
         rows = [replaced.get(row.id) if row.id in dropped else row for row, _ in pairs]
         kept = visible([row for row in rows if row is not None], ctx.slots, ctx.enabled)
         text = HEADER + _row_lines(kept) if kept else b""
-        if count:
+        if count and line:
             names = []  # type: List[str]
             for row_id in queue[:count]:
                 name = _source_name(sources[row_id])
@@ -206,12 +206,13 @@ def _fitted_table(ctx: RenderContext, before: bytes, after: bytes) -> bytes:
 
     if fits(0):
         return build(0)
-    low, high = 0, len(queue)  # build(low) does not fit; build(high) fits or keeps only what must stay
-    if fits(high):
-        while high - low > 1:
-            middle = (low + high) // 2
-            if fits(middle):
-                high = middle
-            else:
-                low = middle
+    low, high = 0, len(queue)  # build(low) does not fit; build(high) does
+    if not fits(high):
+        return build(high, line=False)  # module and level-1 rows outrank the line
+    while high - low > 1:
+        middle = (low + high) // 2
+        if fits(middle):
+            high = middle
+        else:
+            low = middle
     return build(high)
