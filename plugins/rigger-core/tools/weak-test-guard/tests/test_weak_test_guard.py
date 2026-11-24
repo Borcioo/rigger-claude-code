@@ -765,19 +765,42 @@ class ReadingTests(unittest.TestCase):
                     got = "could not parse" in str(why)
                 self.assertEqual(got, refused)
 
-    def test_a_commit_run_through_wsl_or_ssh_is_unchecked(self):
+    def test_a_commit_in_the_linux_file_system_or_over_ssh_is_unchecked(self):
         # It works on a repository the hook cannot read: a stated limit, not a denial only a trailer gets past.
         repo = Repo(self, BASE)
         repo.change(WEAK, stage=False)
         for command, tool in (("wsl git -C /srv/x commit -am x", "Bash"), ("wsl.exe -e git -C /srv/x commit -am x", "Bash"),
                               ("wsl -- git -C '/srv/a b' -c user.name=x commit -am x", "Bash"),
+                              ("wsl --cd ~ git commit -am x", "Bash"), ("wsl --cd /srv/repo git commit -am x", "Bash"),
+                              ('wsl -d Ubuntu -- bash -lc "cd ~/repo && git add -A && git commit -m x"', "Bash"),
+                              ("wsl -d Ubuntu bash -c 'cd; cd repo; git -c a=b commit -am x'", "PowerShell"),
+                              ("wsl bash -c 'git -C ~/r commit -am x'", "Bash"),
                               ("ssh host git --no-pager commit -am x", "Bash"),
                               ('ssh host "cd /srv/x && git commit -am x"', "Bash"),
                               ("wsl -d Ubuntu -- git -C /srv/x commit -am x", "PowerShell"),
-                              ("ssh.exe host git -C /srv/x commit -am x", "PowerShell")):
+                              ("ssh.exe host git -C /srv/x commit -am x", "PowerShell")) + (
+                # Off Windows an absolute path is local to the hook, so only Windows has a Linux-only one to name.
+                (('wsl bash -c "cd /srv/r && git commit -am x"', "Bash"),) if os.name == "nt" else ()):
             with self.subTest(command=command):
                 self.assertIsNone(reason_of(run_hook(command, repo.root, tool)))
-        for command in ('wsl echo "$(git commit -am x)"', "wsl true; eval 'git commit -am x'"):
+
+    def test_a_commit_through_wsl_on_a_windows_folder_is_checked(self):
+        # WSL starts in the Windows folder and reaches the drives under /mnt/<d>: the repository the hook reads.
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        root = str(repo.root)
+        mounted = "/mnt/" + root[0].lower() + root[2:].replace("\\", "/") if os.name == "nt" else root
+        for command, tool in (("wsl git commit -am x", "Bash"), ("wsl -e git commit -am x", "Bash"),
+                              ('wsl git -C "%s" commit -am x' % mounted, "Bash"),
+                              ('wsl --cd "%s" git commit -am x' % mounted, "Bash"),
+                              ("wsl -d Ubuntu -- git commit -am x", "PowerShell")):
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root, tool))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
+        for command in ('wsl echo "$(git commit -am x)"', "wsl true; eval 'git commit -am x'",
+                        'wsl bash -c "git commit -am x"', 'wsl bash -c "cd %s && git commit -am x"' % "/".join(("", "mnt", "c", "x")),
+                        "wsl bash -c \"cd ~/r && eval 'git commit -am x'\"", "wsl --exotic git commit -am x", "wsl bash -c 'cd ~/r && git commit -am \"$(x'"):
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root))
                 self.assertIsNotNone(reason)
@@ -793,7 +816,10 @@ class ReadingTests(unittest.TestCase):
                     ("$wt = '%s'; Set-Location $WT; git commit -m x" % root, "PowerShell"),
                     ('$env:WT = "%s"; git -C "$env:WT" commit -m x' % root, "PowerShell"),
                     ('wt="%s"; git -C "$wt" commit -m x' % drive, "Bash"),
-                    ('export WT="%s" && cd "${WT}" && git commit -m x' % drive, "Bash")]
+                    ('export WT="%s" && cd "${WT}" && git commit -m x' % drive, "Bash"),
+                    # in the same `&&` chain as the git step: when it does not run, neither does the step
+                    ('true && wt="%s" && git -C "$wt" commit -m x' % drive, "Bash"),
+                    ('if true; then :; fi; wt="%s"; git -C "$wt" commit -m x' % drive, "Bash")]   # after the block
         for command, tool in resolved:
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root, tool))
@@ -806,7 +832,29 @@ class ReadingTests(unittest.TestCase):
                               ("$wt = Join-Path $x 'y'; git -C $wt commit -m x", "PowerShell"),
                               ("git -C $wt add -A; git commit -m x", "PowerShell"),
                               ('wt=%s git -C "$wt" commit -m x' % drive.replace(" ", "\\ "), "Bash"),   # set after expansion
-                              ("cd `pwd` && git commit -m x", "Bash")):
+                              ("cd `pwd` && git commit -m x", "Bash")) + tuple(
+                # An assignment that may not run, runs elsewhere, or is not the only one to the name is not trusted.
+                (command % (drive if tool == "Bash" else root), tool) for command, tool in (
+                    ('false || wt="%s"; git -C "$wt" commit -m x', "Bash"),
+                    ('false && wt="%s"; git -C "$wt" commit -m x', "Bash"),
+                    ('(wt="%s"); git -C "$wt" commit -m x', "Bash"),
+                    ('(true; wt="%s"); git -C "$wt" commit -m x', "Bash"),
+                    ('true |\nwt="%s"; git -C "$wt" commit -m x', "Bash"),
+                    ("if ($true) { $null; $wt = '%s' }; git -C $wt commit -m x", "PowerShell"),
+                    ('if true; then\nwt="%s"\nfi\ngit -C "$wt" commit -m x', "Bash"),
+                    ('wt="%s" | cat; git -C "$wt" commit -m x', "Bash"),
+                    ('wt="%s" & git -C "$wt" commit -m x', "Bash"),
+                    ('wt="%s"; wt+=/sub; git -C "$wt" commit -m x', "Bash"),
+                    ('wt="%s"; read wt < /dev/null; git -C "$wt" commit -m x', "Bash"),
+                    ('wt=x; wt="%s"; git -C "$wt" commit -m x', "Bash"),
+                    ('for wt in "%s"; do :; done; git -C "$wt" commit -m x', "Bash"),
+                    ("if ($true) { $wt = '%s' }; git -C $wt commit -m x", "PowerShell"),
+                    ("$wt = '%s'; $wt += 'x'; git -C $wt commit -m x", "PowerShell"),
+                    ("foreach ($wt in @('%s')) { }; git -C $wt commit -m x", "PowerShell"),
+                    ("$wt = '%s'; foreach ($wt in @('x')) { }; git -C $wt commit -m x", "PowerShell"),
+                    ("$wt = '%s'; Get-Item x -OutVariable wt; git -C $wt commit -m x", "PowerShell"),
+                    ("$wt = '%s'; Set-Variable wt 'x'; git -C $wt commit -m x", "PowerShell"),
+                    ("& { $wt = '%s' }; git -C $wt commit -m x", "PowerShell"))):
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root, tool))
                 self.assertIsNotNone(reason)
