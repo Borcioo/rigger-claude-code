@@ -255,6 +255,16 @@ def _load(root: Path, marketplace: Optional[str], origin: str, label: str, notic
         return None
 
 
+def _plugin_name(root: Path) -> Optional[str]:
+    """The string `name` of root's .claude-plugin/plugin.json, None when it has none."""
+    try:
+        data = _read_json(root / ".claude-plugin" / "plugin.json")
+    except _Unreadable:
+        return None
+    name = data.get("name") if isinstance(data, dict) else None
+    return name if isinstance(name, str) else None
+
+
 def discover(config_dir: Path, project_dir: Path, environ: Mapping[str, str], self_root: Path) -> Discovery:
     notices = []  # type: List[str]
     flags = _enabled_flags(config_dir, project_dir, notices)
@@ -305,6 +315,10 @@ def discover(config_dir: Path, project_dir: Path, environ: Mapping[str, str], se
             notices.append("rigger: %s entry %s is not a directory; skipped" % (MODULE_DIRS, shown))
             continue
         if not (root / MANIFEST).is_file():
+            name = _plugin_name(root)
+            if name is not None:  # a plugin that is not a module, such as superpowers in a stub run (D39)
+                enabled.add(name)
+                continue
             notices.append("rigger: %s entry %s holds no %s; skipped" % (MODULE_DIRS, shown, MANIFEST))
             continue
         module = _load(root, INLINE, "dirs", entry, notices)
