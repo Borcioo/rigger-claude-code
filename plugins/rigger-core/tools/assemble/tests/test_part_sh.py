@@ -78,6 +78,9 @@ class PartShTests(unittest.TestCase):
         return done.stdout
 
     def test_no_python_prints_visible_line(self):
+        for candidate in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3"):
+            if os.name != "nt" and os.path.exists(candidate):
+                self.skipTest("%s exists, so py.sh finds a real Python here" % candidate)
         stubs = self.tmp / "stubs"
         stubs.mkdir()
         for name in ("py", "python", "python3"):
