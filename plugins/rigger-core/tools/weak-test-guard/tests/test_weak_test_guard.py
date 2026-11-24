@@ -460,7 +460,7 @@ class PatternTests(unittest.TestCase):
                   "env ", "X=1 ", "sh -c '"]
         patterns = [GUARD.TEST_DEF, GUARD.SKIP, GUARD.ASSERT, GUARD.DEFINES, GUARD.COMMENT, GUARD.DECORATOR,
                     GUARD.PHP_METHOD, GUARD.PHP_TEST_MARK, GUARD.TEST_FILE, GUARD.TEST_AFFIX, GUARD.FOLDS, GUARD.STRING,
-                    GUARD.HEREDOC_CAT, GUARD.COMMIT_WORD, GUARD.COMMIT_WORD_PS, GUARD.TOKEN]
+                    GUARD.HEREDOC_CAT, GUARD.SEGMENT, GUARD.SEGMENT_PS]
         for repeat in (40, 2000):
             start = time.perf_counter()
             for token in tokens:
@@ -654,7 +654,19 @@ HIDDEN = ['bash -c "git commit -am x"', "sudo git commit -am x", "xargs git comm
           "ssh host git --no-pager commit -am x",
           # A heredoc body belongs to the command that opened it, not to the next one.
           "cat > notes.txt <<'EOF'\ngit commit -am x\nEOF\ngit commit -am y"]
-POWERSHELL_HIDDEN = ["Invoke-Expression 'GIT COMMIT -am x'", "$s = { Git -C repo Commit -am x }; & $s"]
+HIDDEN += [
+    # Inside a commit the guard reads, only text that cannot run counts as read.
+    'git commit -am x -m "$(git commit -a -m y)"', 'git commit -am x -m "`git commit -a -m y`"',
+    "git commit -a -F - <<EOF\n$(git commit -a -m y)\nEOF", 'git commit -am x -m "$((0)) $(git commit -a -m y)"',
+    # No lookback window: any distance between `git` and `commit` in one segment.
+    "sudo git " + "--opt " * 40 + "commit -am x", "echo git" + " x" * 400 + " commit",
+    "git log --grep commit",   # loose by ruling: a read-only git that names `commit` is refused too
+    # Arithmetic, a bare backtick and an expanding `cat` heredoc run what they hold.
+    "git commit -am x -m $(( $(git commit -a -m y) ))", "git commit -am x -m `git commit -a -m y`",
+    'git commit -am x -m "$(cat <<EOF\n$(git commit -a -m y)\nEOF\n)"',
+]
+POWERSHELL_HIDDEN = ['git commit -am x -m "$(git commit -a -m y)"', "git commit -am x -m @\"\n$(git commit -a)\n\"@",
+"Invoke-Expression 'GIT COMMIT -am x'", "$s = { Git -C repo Commit -am x }; & $s"]
 # Shell keywords and wrappers in front of a commit the guard reads.
 WRAPPED = ["if true; then git commit -am x; fi", "while false; do :; done; command git commit -am x",
            "env -i X=1 git commit -am x", "time git commit -am x", "for f in a; do git commit -am x; done",
@@ -708,7 +720,10 @@ class ReadingTests(unittest.TestCase):
         repo = Repo(self, BASE)
         repo.change(WEAK, stage=False)
         for command in ("git commit -a -F - <<'EOF'\nfix: x\n\nrun git commit -am later\nEOF",
-                        'git commit -am "fix: git commit hook"'):
+                        'git commit -am "fix: git commit hook"',
+                        # a quoted heredoc is literal text: a `$(` in it runs nothing
+                        "git commit -a -F - <<'EOF'\nfix: x\n\nsee $(git commit -h)\nEOF",
+                        "git commit -am \"$(cat <<'EOF'\nfix: x\n\nsee $(git commit -h)\nEOF\n)\""):
             with self.subTest(command=command):
                 reason = reason_of(run_hook(command, repo.root))
                 self.assertIsNotNone(reason)
@@ -1089,6 +1104,23 @@ class DiffSourceTests(unittest.TestCase):
         self.assertIsNotNone(reason)
         self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
 
+    def test_a_help_option_value_or_path_does_not_turn_a_commit_off(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        reason = reason_of(run_hook("git commit -a -m -h", repo.root))
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
+        self.assertIsNotNone(reason_of(run_hook("git commit -a -m x -- --help", repo.root)))
+        reason = reason_of(run_hook("git merge -m -h topic && git commit -am x", repo.root))   # a merge, not help
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith(UNCLEAR + "`git merge`"), reason)
+        reason = reason_of(run_hook("git merge topic -- --help && git commit -am x", repo.root))   # a path
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith(UNCLEAR + "`git merge`"), reason)
+        reason = reason_of(run_hook("git commit -a --help", repo.root))   # never skipped for a commit
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
+
     def test_a_dry_run_is_no_commit(self):
         repo = Repo(self, BASE)
         repo.change(WEAK)
@@ -1273,7 +1305,6 @@ class FailOpenTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, not_a_repo, True)
         for command, cwd, tool in (("git status", repo.root, "Bash"), ("echo commit", repo.root, "Bash"),
                                    ("echo git\necho commit", repo.root, "Bash"),
-                                   ("git log --grep commit", repo.root, "Bash"),
                                    ("git log --oneline -1; echo commit", repo.root, "Bash"),
                                    ("git -C $repo commit -m 'x'", repo.root, "PowerShell"),
                                    ('cd "$HOME/x" && git commit -m "x"', repo.root, "Bash"),

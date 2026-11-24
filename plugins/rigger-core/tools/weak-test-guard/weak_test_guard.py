@@ -41,8 +41,9 @@ before the command is approved, so git runs with `core.fsmonitor=false`,
 `log` with `--no-show-signature`, the replay with every filter driver of its folder switched off, and a
 reused ref that looks like an option is not read. A merge, cherry-pick or revert in progress is not checked,
 nor a commit after a `git merge`, `pull`, `cherry-pick`, `revert` or `rebase` in the same command when that is the
-only step that changes the index (`--abort` and `--quit` are index writers; `--help` and `--show-current-patch`
-change nothing).
+only step that changes the index (`--abort` and `--quit` are index writers; a history step's `--help`, `-h` and
+`--show-current-patch` before `--`, with no `-m`/`-F`/`-X`/`-s`/`--strategy`, change nothing; a commit is never
+taken for help).
 
 Denied as "cannot tell what this commit holds", with a hint to run that step in its own call (a stated reason still
 passes): another index writer before the commit (`git checkout`, `switch`, `restore`, `reset`, `stash`, `mv`,
@@ -53,8 +54,11 @@ passes): another index writer before the commit (`git checkout`, `switch`, `rest
 file, or a variable, `~`, backtick or brace, when a later `git add`, `-a` or pathspec picks them up, a replayed
 step git rejects, a Bash glob or brace that, read as git does, weakens tests, commits in more than one
 repository, a command it cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and
-`git [options] commit` in the text outside every commit the parse read (in a string another shell runs, after
-`sudo`, `eval` or `timeout`, or only named in an `echo`). A staged path that names no file and no index entry yet
+a `git` followed by a `commit` between two of `; & | ( ) { } !` or a newline, anywhere in the text (inside quotes
+too, at any distance), unless it lies in the literal text of a commit the parse read: a substitution, backtick,
+`$((...))` or unquoted heredoc part runs what it holds and covers nothing. So a commit in a string another shell
+runs, after `sudo`, `eval` or `timeout`, inside a substitution, or only named in an `echo` or `git log --grep` is
+denied. A staged path that names no file and no index entry yet
 is a new file the command makes, and is left out of the replay.
 
 Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
@@ -343,13 +347,13 @@ class Simple:
         self.words = []
         self.redirects = []
         self.spans = [[start, start]]
+        self.runs = []   # spans inside it that run as commands: substitutions, backticks, expanding heredoc parts
 
 
 HEREDOC_CAT = re.compile(r"\s*cat\s*<<-?[ \t]*(['\"]?)(\w+)\1[ \t]*\n")
-COMMIT_WORD = re.compile(r"(?<=[ \t])commit(?=[\s;&|)\"'`]|$)")
-COMMIT_WORD_PS = re.compile(COMMIT_WORD.pattern, re.I)
-TOKEN = re.compile(r"\"[^\"\n]*\"|'[^'\n]*'|\S+")
-LOOKBACK = 24   # tokens between `git` and `commit`: options and the values of -C and -c
+# The loose cross-check: a `git` and a later `commit` between two of these separators.
+SEGMENT = re.compile(r"[;&|(){}!\n]|\bgit\b|\bcommit\b")
+SEGMENT_PS = re.compile(SEGMENT.pattern, re.I)
 KEYWORDS = frozenset(("then", "do", "else", "elif", "if", "while", "until", "!", "{", "time", "command", "nohup",
                       "exec"))
 
@@ -445,6 +449,25 @@ def _substitution_end(text, i):
     return j
 
 
+def _backtick_end(text, i):
+    """The index just past the backtick that closes the one at i (a backslash escapes the next character)."""
+    j = i + 1
+    while j < len(text):
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == "`":
+            return j + 1
+        else:
+            j += 1
+    raise Unparsed("an unclosed backtick")
+
+
+def _runs_nothing(inner):
+    """True when `$(<inner>)` is `cat` of one heredoc with a quoted delimiter: its body is text that runs nothing."""
+    head = HEREDOC_CAT.match(inner)
+    return bool(head and head.group(1)) and _substitution_word(inner) != "$(" + inner + ")"
+
+
 def _substitution_word(inner):
     """The word bash makes of `$(<inner>)` when it is `cat` of one heredoc (its body without the trailing newlines),
     else the text itself."""
@@ -490,7 +513,10 @@ def split_command(text, powershell):
         if powershell and not has_word and text.startswith(("@'", '@"'), i) and text[i + 2:i + 3] in ("\n", "\r"):
             closer = "\n" + text[i + 1] + "@"
             end = text.find(closer, i + 2)
-            body = text[text.index("\n", i) + 1:end if end >= 0 else n]
+            start = text.index("\n", i) + 1
+            body = text[start:end if end >= 0 else n]
+            if text[i + 1] == '"' and "$(" in body:   # a subexpression runs
+                current.runs.append([start + body.index("$("), start + len(body)])
             word.append(body)
             has_word = True
             i = end + len(closer) if end >= 0 else n
@@ -501,10 +527,13 @@ def split_command(text, powershell):
         elif c == "\n":
             end_simple()
             i += 1
-            for delimiter, owner in pending:
+            for delimiter, owner, quoted in pending:
                 end = text.find("\n" + delimiter + "\n", i - 1)
                 stop = end if end >= 0 else n
                 owner.spans.append([i, stop])
+                runs = [k for k in (text.find("$(", i, stop), text.find("`", i, stop)) if k >= 0]
+                if not quoted and runs:   # an unquoted body expands, and its substitutions run
+                    owner.runs.append([min(runs), stop])
                 i = stop + len(delimiter) + 2 if end >= 0 else n
             pending = []
             current = Simple(i)
@@ -525,7 +554,7 @@ def split_command(text, powershell):
             k = j
             while k < n and text[k] not in " \t\n;|&<>":
                 k += 1
-            pending.append((text[j:k].strip("'\""), current))
+            pending.append((text[j:k].strip("'\""), current, text[j:j + 1] in "'\"\\"))
             i = k
         elif c in "<>":
             if has_word and ("".join(word).isdigit() or "".join(word) == "*"):
@@ -543,6 +572,14 @@ def split_command(text, powershell):
             i = j
         elif not powershell and text.startswith(("$'", "$(("), i):
             end = (_ansi_end if text[i + 1] == "'" else _arith_end)(text, i)
+            if text[i + 1] == "(":
+                current.runs.append([i, end])   # arithmetic may hold a substitution
+            word.append(text[i:end])
+            has_word = True
+            i = end
+        elif not powershell and c == "`":
+            end = _backtick_end(text, i)
+            current.runs.append([i, end])
             word.append(text[i:end])
             has_word = True
             i = end
@@ -572,11 +609,21 @@ def split_command(text, powershell):
                     continue
                 if not powershell and text.startswith("$(", j):
                     end = _substitution_end(text, j)
+                    if not _runs_nothing(text[j + 2:end - 1]):
+                        current.runs.append([j, end])
                     word.append(_substitution_word(text[j + 2:end - 1]))
+                    j = end
+                    continue
+                if not powershell and text[j] == "`":
+                    end = _backtick_end(text, j)
+                    current.runs.append([j, end])
+                    word.append(text[j:end])
                     j = end
                     continue
                 word.append(text[j])
                 j += 1
+            if powershell and "$(" in text[i:j]:   # a subexpression runs
+                current.runs.append([text.index("$(", i), j])
             i = j + 1
             has_word = True
         elif c == ("`" if powershell else "\\") and i + 1 < n:
@@ -773,8 +820,10 @@ def read_command(command, cwd, powershell):
         if parts is None:
             continue
         git_folder, sub, args = parts
-        if any(a in ("--help", "-h", "--show-current-patch") for a in args):
-            continue
+        options = args[:args.index("--")] if "--" in args else args
+        if sub in HISTORY and any(a in ("--help", "-h", "--show-current-patch") for a in options) \
+                and not any(a in ("-m", "-F", "-X", "-s", "--strategy") for a in options):
+            continue   # help changes nothing; `-m -h` gives a message
         if any(a.startswith("--pathspec-from-file") for a in args) and sub in ("add", "rm", "commit"):
             unclear = unclear or "`--pathspec-from-file` names its paths in a file"
         if sub in HISTORY and not any(a in ("--abort", "--quit") for a in args):
@@ -821,26 +870,21 @@ def read_command(command, cwd, powershell):
 
 
 def _unread_commit(command, read, powershell):
-    """Raise Unclear when the text holds `git [options] commit` outside every commit the parse read. Loose on
-    purpose: it knows no wrapper, so text that only names a commit (`echo git commit`) is refused too."""
-    covered = [span for simple in read for span in simple.spans]
-    for match in (COMMIT_WORD_PS if powershell else COMMIT_WORD).finditer(command):
-        at = match.start()
-        if any(start <= at < end for start, end in covered):
-            continue
-        line = command[max(command.rfind("\n", 0, at) + 1, at - 40 * LOOKBACK):at]
-        tokens = TOKEN.findall(line)[-LOOKBACK:]
-        k = len(tokens) - 1
-        while k >= 0:
-            name = tokens[k].strip("\"'`($").replace("\\", "/").rsplit("/", 1)[-1]
-            if (name.lower() if powershell else name) in ("git", "git.exe"):
-                raise Unclear("a git commit the guard could not parse stands in it", RUN_HINT)
-            if tokens[k].startswith("-"):
-                k -= 1
-            elif k >= 1 and tokens[k - 1] in ("-C", "-c"):
-                k -= 2
-            else:
-                break
+    """Raise Unclear when a `commit` word follows a `git` word between two separators (`;&|(){}!`, a newline)
+    outside the text of every commit the parse read, where a substitution, backtick or expanding heredoc part inside
+    a commit is no text of it. Loose on purpose: it knows no wrapper, so text that only names a commit
+    (`echo git commit`) is refused too."""
+    git_seen = False
+    for token in (SEGMENT_PS if powershell else SEGMENT).finditer(command):
+        word = token.group(0).lower()
+        if word == "git":
+            git_seen = True
+        elif word != "commit":
+            git_seen = False   # a separator ends the segment
+        elif git_seen and not any(
+                any(start <= token.start() < end for start, end in simple.spans)
+                and not any(start <= token.start() < end for start, end in simple.runs) for simple in read):
+            raise Unclear("a git commit the guard could not parse stands in it", RUN_HINT)
 
 
 def has_reason(text, quoted=True):
