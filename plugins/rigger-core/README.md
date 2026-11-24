@@ -151,7 +151,10 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   `CLAUDE_*`, `HARNESS_*`, `GIT_*` and `RIGGER_MODULE_DIRS`. The command's `PATH` keeps only absolute
   entries outside the repository and the working directory (a virtualenv or `node_modules/.bin` inside
   the repository is dropped), and on Windows `NoDefaultCurrentDirectoryInExePath=1` is set, so a
-  program the command starts by bare name is never one the repository holds. It stops the whole process tree past
+  program the command starts by bare name through the operating system's lookup is never one the
+  repository holds (known limit: a lookup the command's own code does that searches the working
+  directory first, as Python 3.11's `shutil.which` and npm's `which` do on Windows, can still find a
+  program in the repository root; trust only a command whose lookups you know). It stops the whole process tree past
   900 s or 1,000,000 bytes of console output, when a process the command started still holds the
   console 5 s after the command exits (`child process left running`), and after every run (known limit:
   on POSIX a process the command detaches with `setsid` leaves the tree and can outlive the run). It then

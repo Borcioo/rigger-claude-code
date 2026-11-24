@@ -16,10 +16,13 @@ an `.exe` or `.com` file runs.
 
 The command runs from the repository root, with every CLAUDE_*, HARNESS_* and GIT_* variable and
 RIGGER_MODULE_DIRS removed, PATH cut to the entries that lookup searches and, on Windows,
-NoDefaultCurrentDirectoryInExePath set, so a program the command starts by bare name is never the
-repository's; stdin closed, and stdout and stderr on one pipe that a thread reads and counts:
+NoDefaultCurrentDirectoryInExePath set, so a program the command starts by bare name through the operating
+system's lookup is never the repository's. Known limit: a lookup the command's own code does that searches the
+working directory first (on Windows, Python 3.11's shutil.which and npm's `which`) can still find a program in
+the repository root. stdin is closed, and stdout and stderr on one pipe that a thread reads and counts:
 past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
-has exited but a process it started still holds the console after EXIT_GRACE seconds, and after every run. The console text kept
+has exited but a process it started still holds the console after EXIT_GRACE seconds, and after every run
+(known limit: on POSIX a process that left the process group with setsid can outlive the run). The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
 ids, `{out}` the output file and `{scope}` a file of `<verdict><TAB><path>` lines from
 `review_scope.scope()`, all in a fresh folder in the temp directory that is kept for the caller.
@@ -87,7 +90,8 @@ def strip_env(environ: Mapping[str, str]) -> Dict[str, str]:
 def child_env(environ: Mapping[str, str], repo: Path, cwd: str) -> Dict[str, str]:
     """The command's environment: `strip_env(environ)` with PATH cut to the entries `review_scope.searchable`
     keeps (no PATH at all when none is left: an empty one would search the working directory on POSIX), and on
-    Windows NO_CWD_SETTING set, so what the command starts by bare name is never a file of the repository."""
+    Windows NO_CWD_SETTING set, so what the command starts by bare name through the operating system's lookup is
+    never a file of the repository (a lookup of the command's own that searches the cwd first is not covered)."""
     env = strip_env(environ)
     for name in [name for name in env if name.upper() == "PATH"]:
         kept = [entry for entry in env[name].split(os.pathsep) if review_scope.searchable(entry, repo, cwd)]
