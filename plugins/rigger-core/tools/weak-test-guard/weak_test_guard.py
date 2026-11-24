@@ -28,7 +28,8 @@ message on `--amend`. Otherwise the hook denies it and lists the findings. `--dr
 `-F -` has no other source: a message fed to stdin any other way is judged by the command text alone.
 
 The command is split into words and simple commands (quotes, PowerShell here-strings, bash heredocs, a bash
-`"$(...)"` as one word, the body when it is `cat` of a heredoc). The
+`"$(...)"` as one word, the body when it is `cat` of a heredoc, `$'...'`, `$((...))`; bash keywords, `env`,
+`command`, `time`, `nohup` and `exec` in front of a program are dropped). The
 commit is the first simple command whose program is git and whose subcommand is `commit`; `cd`,
 `Set-Location` and `git -C` before it set the folder. The diff is the index against HEAD (`HEAD~1` with
 `--amend`). When the command also stages (`git add`/`git rm` before the commit, `commit -a`, `-i <paths>`),
@@ -45,7 +46,9 @@ passes): another index writer before the commit (`git checkout`, `switch`, `rest
 `apply`, `read-tree`, `update-index`; not `checkout -b`/`switch -c <name>` alone, and `reset --soft <rev>` becomes
 the diff base), a file writer (`rm`, `mv`, `cp`, `sed -i`, `Remove-Item`, `Move-Item`, `Copy-Item`, `Set-Content`,
 `Add-Content`, `Out-File`) whose targets hold a tracked test file when a later `git add`, `-a` or pathspec picks
-them up, a replayed step git rejects, and a Bash glob or brace that, read as git does, weakens tests. A staged path
+them up, a replayed step git rejects, a Bash glob or brace that, read as git does, weakens tests, a command it
+cannot read (a `$(` or `$((` or `$'` nothing closes, a `case` inside `$(...)`), and a `git commit` where a command
+starts that the parse did not read (in a string `bash -c` runs, after `sudo` or `xargs`). A staged path
 that names no file and no index entry yet is a new file the command makes, and is left out of the replay.
 
 Fails open: no commit, a `-F <file>` that cannot be read (the command may still write it), `cd` without a
@@ -319,11 +322,50 @@ class Simple:
 
 
 HEREDOC_CAT = re.compile(r"\s*cat\s*<<-?[ \t]*(['\"]?)(\w+)\1[ \t]*\n")
+# A `git commit` where a command starts: after a separator, a wrapper, or inside the string another shell runs.
+RAW_COMMIT = re.compile(
+    r"(?:^|[;&|({\n`]|\b(?:sudo|exec|nohup|command|xargs|time)[ \t]"
+    r"|\b(?:ba|z)?sh(?:\.exe)?[ \t]+-c[ \t]+[\"']?|\b(?:pwsh|powershell)(?:\.exe)?[ \t]+-(?:c|Command)[ \t]+[\"']?)"
+    r"[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:env[ \t]+(?:-\S+[ \t]+)*(?:[A-Za-z_]\w*=\S*[ \t]+)*)?"
+    r"(?:[\w.:/\\~-]*[/\\])?git(?:\.exe)?(?:[ \t]+-\S+(?:[ \t]+[^\s;&|-][^\s;&|]*)?)*?[ \t]+commit\b")
+KEYWORDS = frozenset(("then", "do", "else", "elif", "if", "while", "until", "!", "{", "time", "command", "nohup",
+                      "exec"))
+
+
+class Unparsed(Exception):
+    """A bash construct the guard does not model, or one that does not end."""
+
+
+def _arith_end(text, i):
+    """The index just past the `))` closing the bash `$((` at i."""
+    depth, j = 0, i + 1
+    while j < len(text):
+        depth += {"(": 1, ")": -1}.get(text[j], 0)
+        j += 1
+        if depth == 0:
+            return j
+    raise Unparsed("an unclosed `$((`")
+
+
+def _ansi_end(text, i):
+    """The index just past the `'` closing the bash `$'` at i (a backslash escapes the next character)."""
+    j = i + 2
+    while j < len(text):
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == "'":
+            return j + 1
+        else:
+            j += 1
+    raise Unparsed("an unclosed `$'`")
 
 
 def _substitution_end(text, i):
-    """The index just past the `)` that closes the bash `$(` at i (len(text) when none does). Quotes, nested
-    substitutions and heredoc bodies inside it are skipped as bash reads them, so a `"` or `)` there ends nothing."""
+    """The index just past the `)` that closes the bash `$(` at i. Quotes, `$'...'`, `$((...))`, comments, nested
+    substitutions and heredoc bodies inside it are skipped as bash reads them, so a `"` or `)` there ends nothing.
+    Raises Unparsed when nothing closes it or it holds a `case` (whose patterns end in `)`)."""
+    if text.startswith("$((", i):
+        return _arith_end(text, i)
     stack, j, n, pending = ["("], i + 2, len(text), []
     while j < n and stack:
         c = text[j]
@@ -333,6 +375,8 @@ def _substitution_end(text, i):
             elif c == '"':
                 stack.pop()
                 j += 1
+            elif text.startswith("$((", j):
+                j = _arith_end(text, j)
             elif text.startswith("$(", j):
                 stack.append("(")
                 j += 2
@@ -340,9 +384,18 @@ def _substitution_end(text, i):
                 j += 1
         elif c == "\\":
             j += 2
+        elif text.startswith("$((", j):
+            j = _arith_end(text, j)
+        elif text.startswith("$'", j):
+            j = _ansi_end(text, j)
         elif c == "'":
             end = text.find("'", j + 1)
             j = n if end < 0 else end + 1
+        elif c == "#" and text[j - 1] in " \t\n;|&(":
+            end = text.find("\n", j)
+            j = n if end < 0 else end
+        elif re.match(r"case\s", text[j:j + 5]) and text[j - 1] in " \t\n;|&(":
+            raise Unparsed("a `case` inside `$(...)`")
         elif c in '"(':
             stack.append(c)
             j += 1
@@ -365,7 +418,9 @@ def _substitution_end(text, i):
             pending = []
         else:
             j += 1
-    return n if stack else j
+    if stack:
+        raise Unparsed("an unclosed `$(`")
+    return j
 
 
 def _substitution_word(inner):
@@ -460,6 +515,11 @@ def split_command(text, powershell):
             else:
                 drop_next = True
             i = j
+        elif not powershell and text.startswith(("$'", "$(("), i):
+            end = (_ansi_end if text[i + 1] == "'" else _arith_end)(text, i)
+            word.append(text[i:end])
+            has_word = True
+            i = end
         elif c == "'":
             j = i + 1
             while True:
@@ -533,7 +593,30 @@ class Commit:
 
 
 class Unclear(Exception):
-    """The command changes the files or the index before the commit in a way the guard cannot replay."""
+    """The guard cannot tell what the commit holds: the reason, and the hint the denial gives."""
+
+    def __init__(self, why, hint=None):
+        Exception.__init__(self, why)
+        self.hint = hint or ("Run that step in its own call and commit in the next one, so the guard reads what it "
+                             "left")
+
+
+READ_HINT = "Commit in a command of its own, with the message in `-m` or in a file read by `-F`"
+RUN_HINT = "Run `git commit` itself in the command, not in a string, a function or another shell"
+
+
+def _command_words(words, powershell):
+    """The words from the program on: bash assignments, keywords and `env` with its options in front dropped."""
+    while words and not powershell:
+        if re.match(r"[A-Za-z_]\w*=", words[0]) or words[0] in KEYWORDS:
+            words = words[1:]
+        elif words[0] == "env":
+            words = words[1:]
+            while words and (words[0].startswith("-") or re.match(r"[A-Za-z_]\w*=", words[0])):
+                words = words[1:]
+        else:
+            break
+    return words
 
 
 def _git_parts(words, folder, powershell):
@@ -610,13 +693,20 @@ def _commit_options(commit, args):
 
 def read_command(command, cwd, powershell):
     """The Commit of the first `git commit` in the command, None when there is none or its folder is unknown."""
+    try:
+        simples = [_command_words(simple.words, powershell) for simple in split_command(command, powershell)]
+    except Unparsed as why:
+        if re.search(r"\bgit\b[\s\S]*\bcommit\b", command):
+            raise Unclear("the guard cannot read the command (%s)" % why, READ_HINT)
+        return None
+    seen = sum(1 for words in simples if words and (_git_parts(words, cwd, powershell) or "--")[1] == "commit")
+    if len(RAW_COMMIT.findall(command)) > seen:
+        raise Unclear("a `git commit` stands where the guard cannot read it (in a string, a function or another "
+                      "shell)", RUN_HINT)
     folder = cwd
     stages, readers = [], []
     unclear, base, writes, touched = None, None, [], []
-    for simple in split_command(command, powershell):
-        words = simple.words
-        while not powershell and words and re.match(r"[A-Za-z_]\w*=", words[0]):
-            words = words[1:]
+    for words in simples:
         if not words:
             continue
         head = words[0].lower()
@@ -859,7 +949,12 @@ def check(command, cwd, powershell):
     _deadline[0] = time.monotonic() + DEADLINE
     if not cwd:
         return None
-    commit = read_command(command, cwd, powershell)
+    try:
+        commit = read_command(command, cwd, powershell)
+    except Unclear:
+        if has_reason(command):
+            return None
+        raise
     if commit is None or commit.dry_run or _stated(commit, command):
         return None
     paths = _git(["rev-parse", "--show-toplevel", "--git-path", "index", "--git-path", "MERGE_HEAD",
@@ -912,9 +1007,8 @@ def main():
     try:
         reason = check(event["tool_input"]["command"], event.get("cwd"), tool == "PowerShell")
     except Unclear as why:
-        reason = ("%s %s %s. Run that step in its own call and commit in the next one, so the guard reads what it "
-                  "left; if the commit removes or skips tests on purpose, add a `%s <why>` line to its message."
-                  % (PREFIX, UNCLEAR, why, TRAILER))
+        reason = ("%s %s %s. %s; if the commit removes or skips tests on purpose, add a `%s <why>` line to its "
+                  "message." % (PREFIX, UNCLEAR, why, why.hint, TRAILER))
     except RuntimeError:   # a git call failed or ran out of time (a blob a partial clone lacks): fail open
         return 0
     if reason:

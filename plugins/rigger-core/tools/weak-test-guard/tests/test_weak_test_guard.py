@@ -440,10 +440,11 @@ class PatternTests(unittest.TestCase):
     def test_regexes_stay_linear_on_repeated_tokens(self):
         tokens = [" ", "\t", "-", "--ab", "(", ")", "'", '"', "`", "it(", "it('", "test_", "def ", "func (", "const x = ",
                   "->", "::", ".", "assert", "expect(", "@", "#[", "/", "x", "a1", "|", "*", "export ",
-                  "$(", '"$(', "<<'EOF'\n", "cat <<", "\nEOF\n"]
+                  "$(", '"$(', "<<'EOF'\n", "cat <<", "\nEOF\n", "$((", "$'", "git ", "git -c a ", "-c ", " commit",
+                  "env ", "X=1 ", "sh -c '"]
         patterns = [GUARD.TEST_DEF, GUARD.SKIP, GUARD.ASSERT, GUARD.DEFINES, GUARD.COMMENT, GUARD.DECORATOR,
                     GUARD.PHP_METHOD, GUARD.PHP_TEST_MARK, GUARD.TEST_FILE, GUARD.TEST_AFFIX, GUARD.FOLDS, GUARD.STRING,
-                    GUARD.HEREDOC_CAT]
+                    GUARD.HEREDOC_CAT, GUARD.RAW_COMMIT]
         for repeat in (40, 2000):
             start = time.perf_counter()
             for token in tokens:
@@ -451,8 +452,11 @@ class PatternTests(unittest.TestCase):
                     text = token * repeat + tail
                     for pattern in patterns:
                         pattern.findall(text)
-                    GUARD.split_command(text, False)
-                    GUARD.split_command(text, True)
+                    for powershell in (False, True):
+                        try:
+                            GUARD.split_command(text, powershell)
+                        except GUARD.Unparsed:   # an unclosed construct: refused, which is what the hook needs
+                            pass
             self.assertLess(time.perf_counter() - start, 5.0, "repeat %d" % repeat)
 
 
@@ -583,6 +587,83 @@ class SubstitutionTests(unittest.TestCase):
 
 
 UNCLEAR = "weak-test-guard: cannot tell what this commit holds: "
+
+# (command, the words bash gives its first simple command): constructs that hold a `'`, `"`, `)` or `<<` bash does
+# not read as a quote, an end or a heredoc. Each is followed by a commit the guard must still see.
+MODELLED = [
+    ("echo $'it\\'s' && git commit -am x", ["echo", "$'it\\'s'"]),
+    ("echo \"$(printf %s $'a\\' \"q')\" && git commit -am x", ["echo", "$(printf %s $'a\\' \"q')"]),
+    ("echo \"$(echo a # it's )\n)\" && git commit -am x", ["echo", "$(echo a # it's )\n)"]),
+    ("echo \"$(echo x#y)\" && git commit -am x", ["echo", "$(echo x#y)"]),
+    ("echo $((1<<2))\ngit commit -am x", ["echo", "$((1<<2))"]),
+    ("echo \"$((1<<2))\"\ngit commit -am x", ["echo", "$((1<<2))"]),
+    ("echo \"$(echo $((1<<2)) )\"\ngit commit -am x", ["echo", "$(echo $((1<<2)) )"]),
+    ("echo \"$(echo \"$((1<<2))\")\"\ngit commit -am x", ["echo", "$(echo \"$((1<<2))\")"]),
+    # A newline inside makes a `<<` read as a heredoc swallow the rest.
+    ("echo \"$((1<<2\n))\"\ngit commit -am x", ["echo", "$((1<<2\n))"]),
+    ("echo \"$(echo $((1<<2))\necho y)\"\ngit commit -am x", ["echo", "$(echo $((1<<2))\necho y)"]),
+    ("echo \"$(echo \"$((1<<2))\"\necho y)\"\ngit commit -am x", ["echo", "$(echo \"$((1<<2))\"\necho y)"]),
+]
+# Commands the guard cannot read: it denies instead of reading the rest as one word.
+UNREADABLE = ['echo "$(case a in a) echo b;; esac)" && git commit -am x',
+              "git commit -am \"$(cat <<'EOF'\nmsg\nEOF\n\"",
+              "echo $'unclosed && git commit -am x", "echo $((1 && git commit -am x"]
+# A `git commit` that runs where the guard cannot read it.
+HIDDEN = ['bash -c "git commit -am x"', "sudo git commit -am x", "xargs git commit -am x < /dev/null",
+          "pwsh -c 'git commit -am x'"]
+# Shell keywords and wrappers in front of a commit the guard reads.
+WRAPPED = ["if true; then git commit -am x; fi", "while false; do :; done; command git commit -am x",
+           "env -i X=1 git commit -am x", "time git commit -am x", "for f in a; do git commit -am x; done",
+           "f() { git commit -am x; }; f", "nohup git commit -am x", "! exec git commit -am x",
+           "if git commit -am x; then :; fi", "while git commit -am x; do break; done",
+           "until git commit -am x; do :; done", "if false; then :; else git commit -am x; fi",
+           "if false; then :; elif git commit -am x; then :; fi"]
+
+
+class ReadingTests(unittest.TestCase):
+    def test_constructs_bash_reads_are_modelled(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        for command, words in MODELLED:
+            with self.subTest(command=command):
+                try:
+                    read = [s.words for s in GUARD.split_command(command, False)]
+                except GUARD.Unparsed as why:
+                    read = "refused: %s" % why
+                self.assertEqual(read, [words, ["git", "commit", "-am", "x"]])
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
+
+    def test_a_command_it_cannot_read_is_denied(self):
+        repo = Repo(self, BASE)
+        for command in UNREADABLE:
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR + "the guard cannot read the command"), reason)
+                self.assertIn("Commit in a command of its own", reason)
+        self.assertIsNone(reason_of(run_hook("echo $'unclosed commit", repo.root)))   # no git commit in it
+
+    def test_a_commit_it_cannot_read_is_denied(self):
+        repo = Repo(self, BASE)
+        for command in HIDDEN:
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith(UNCLEAR + "a `git commit` stands where the guard cannot read it"),
+                                reason)
+                self.assertIn("Run `git commit` itself", reason)
+        self.assertIsNone(reason_of(run_hook('bash -c "git commit -am x -m \'%s\'"' % REASON, repo.root)))
+
+    def test_keywords_and_wrappers_before_a_commit_are_read(self):
+        repo = Repo(self, BASE)
+        repo.change(WEAK, stage=False)
+        for command in WRAPPED:
+            with self.subTest(command=command):
+                reason = reason_of(run_hook(command, repo.root))
+                self.assertIsNotNone(reason)
+                self.assertTrue(reason.startswith("weak-test-guard: this commit weakens tests"), reason)
 
 # (command, tool, the step the denial names): a step before the commit that changes the index, or changes a test
 # file a later staging step picks up. The guard cannot replay it, so it denies without claiming a weakening.
