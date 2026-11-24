@@ -5,9 +5,10 @@ Usage: python -I scripts/run_tests.py [--no-claude] [--min-files N] [--jobs N] [
 
 Discovers tests/test_*.py, plugins/*/tests/test_*.py and plugins/*/tools/*/tests/test_*.py and
 runs each as `<python> -I -X utf8 <file>` from the repo root, in an environment without CLAUDE_*
-and HARNESS_* variables. A file passes only when it exits 0, prints a test summary (unittest's
-"Ran N tests", or a custom runner's last "#" line with "N passed") and that summary reports no
-failure (a custom runner's "M failed" on the same line). A custom runner's "#" line with
+and HARNESS_* variables and without RIGGER_MODULE_DIRS (a test that needs it sets it itself). A
+file passes only when it exits 0, prints a test summary (unittest's "Ran N tests", or a custom
+runner's last "#" line with "N passed") and that summary reports no failure (a custom runner's "M
+failed" on the same line). A custom runner's "#" line with
 "skipped" and a reason after a colon counts as skipped checks (its number, else 1); a custom runner
 with no count line is SKIP when it printed such a line, and one that ran 0 checks without it is FAIL.
 Exit 1 on any failure, when no test was executed, or when fewer files are found than
@@ -74,7 +75,10 @@ MIN_FILE = "scripts/run_tests.min"
 TIMEOUT = 120
 # A file that spawns hundreds of git and shell processes by design has its own limit: its quiet run takes 60-90 s
 # and a loaded gate nearly doubles that. Add a file here only with the spawn count that shows it.
-TIMEOUTS = {"plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300}
+TIMEOUTS = {
+    "plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300,
+    "tests/test_assembly_golden.py": 300,  # 507 sh and 302 python starts; 33 s alone, 45-65 s in the gate
+}
 KILL_TIMEOUT = 10
 # At most this many failed files are rerun alone; more is a real break, not load.
 RERUN_LIMIT = 5
@@ -85,6 +89,7 @@ LOG_FOLDER = "harness-tests"
 # Wall-time budgets, live machine readings, or hundreds of process trees close to TIMEOUT: another
 # file's load fails them.
 SERIAL = (
+    "plugins/rigger-core/tools/assemble/tests/test_stub_session.py",
     "plugins/rigger-rules/tests/test_reinject.py",
     "plugins/rigger-windows/tools/mem-check/mem-check.tests.ps1",
     "plugins/rigger-windows/tools/shell-guard/tests/test_rules.py",
@@ -92,6 +97,8 @@ SERIAL = (
     "tests/test_sweep.py",
 )
 DROPPED_PREFIXES = ("CLAUDE_", "HARNESS_")
+# Other RIGGER_* names are red-run knobs of existing tests and pass through.
+DROPPED_NAMES = ("RIGGER_MODULE_DIRS",)
 
 RAN_RE = re.compile(r"^Ran (\d+) tests? in ", re.M)
 RESULT_RE = re.compile(r"^(OK|FAILED)(?: \(([^)]*)\))?[ \t]*$", re.M)
@@ -111,7 +118,11 @@ class FirstFailure(Exception):
 
 
 def clean_env(environ, no_claude=False):
-    env = {key: value for key, value in environ.items() if not key.upper().startswith(DROPPED_PREFIXES)}
+    env = {
+        key: value
+        for key, value in environ.items()
+        if not key.upper().startswith(DROPPED_PREFIXES) and key.upper() not in DROPPED_NAMES
+    }
     if no_claude:
         env["HARNESS_NO_CLAUDE"] = "1"
     return env

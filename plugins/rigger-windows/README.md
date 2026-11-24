@@ -17,7 +17,7 @@ claude plugin install rigger-windows@rigger
 
 ## Rules
 
-The plugin injects rules on startup, clear and compact: the meaning of `<rigger-windows root>` (the folder this plugin is installed in), the default shell (PowerShell) and the skill triggers. Subagents get the same two files through `SubagentStart`, except the built-in Explore and Plan agents and rigger-core's implementer and mapper, which get nothing.
+rigger-core prints this plugin's rules on startup, clear and compact (the files `rigger-module.json` lists): the meaning of `<rigger-windows root>` (the folder this plugin is installed in), the default shell (PowerShell) and the skill triggers. Subagents get the same two files, except the built-in Explore and Plan agents and rigger-core's implementer and mapper, which get nothing.
 
 ## Hooks that read your session
 

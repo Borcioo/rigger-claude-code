@@ -2,6 +2,8 @@
 Stubs, fixtures and the run helper are in doctor_sh_harness.py."""
 
 import json
+import os
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -9,10 +11,12 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from doctor_sh_harness import (  # noqa: E402
+    ASSEMBLER_OK,
     DoctorShCase,
     PooledSuite,
     DRIVE,
     PLUGIN,
+    REPO_PLUGINS,
     REQUIRED,
     STAMP,
     VERSION,
@@ -304,6 +308,129 @@ class DoctorShTests(DoctorShCase):
         result = self.run_doctor()
         self.assertRow(result, "superpowers", "WARN", "5.0.7, disabled")
         self.assertEqual(result.fixes["superpowers"], ["claude plugin enable superpowers@superpowers-marketplace"])
+
+
+    # -- rules assembly (assemble.py --doctor through a real interpreter) ------------------------
+
+    def run_assembly(self, *dirs, kernel=None):
+        """doctor.sh with this test's own Python and RIGGER_MODULE_DIRS naming the repo's rigger-rules and `dirs`."""
+        roots = [str(REPO_PLUGINS / "rigger-rules")] + [str(d) for d in dirs]
+        kernel = kernel or ("MINGW64_NT-10.0-26100" if os.name == "nt" else "Linux")
+        return self.run_doctor(kernel, path=self.real_python_path(), env={"RIGGER_MODULE_DIRS": os.pathsep.join(roots)})
+
+    def rows(self, result, prefix):
+        return {name: row for name, row in result.checks.items() if name.startswith(prefix)}
+
+    def test_clean_layout_gives_rules_assembly_ok(self):
+        result = self.run_assembly()
+        self.assertRow(result, "rules-assembly", "OK")
+        self.assertRegex(result.checks["rules-assembly"][1], r"^modules 2, sections [1-9]\d*$")
+        self.assertEqual(self.rows(result, "config-inactive"), {})
+        self.assertEqual(self.rows(result, "rule-override"), {})
+        self.assertEqual(self.rows(result, "expects"), {})
+
+    def test_personal_override_gives_one_rule_override_row(self):
+        self.write_file(self.config / "rigger" / "rules.d" / "tests.md", "## Tests\n- mine\n")
+        result = self.run_assembly()
+        self.assertEqual(
+            self.rows(result, "rule-override"),
+            {"rule-override tests.tests": ("INFO", "rules.d/tests.md replaces rule tests.tests", "assemble.py --doctor")},
+        )
+        self.assertRow(result, "rules-assembly", "OK")
+
+    def test_override_of_a_subagent_only_section_gives_a_rule_override_row(self):
+        self.write_file(self.config / "rigger" / "rules.d" / "lessons-subagent.md", "## Lessons (mine)\n- mine\n")
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons")
+        self.assertEqual(
+            self.rows(result, "rule-override"),
+            {"rule-override lessons-subagent.lessons": (
+                "INFO", "rules.d/lessons-subagent.md replaces rule lessons-subagent.lessons", "assemble.py --doctor")},
+        )
+        self.assertRow(result, "rules-assembly", "OK")
+
+    def test_planted_duplicate_warns(self):
+        mod = self.tmp / "mods" / "mod-dup"
+        self.write_file(mod / ".claude-plugin" / "plugin.json", json.dumps({"name": "mod-dup"}))
+        manifest = {"schema": 1, "name": "mod-dup", "layer": "general", "fills": None,
+                    "rules": [{"file": "rules/tests.md", "audience": "both"}], "triggers": []}
+        self.write_file(mod / "rigger-module.json", json.dumps(manifest))
+        self.write_file(mod / "rules" / "tests.md", "## Tests\n- planted\n")
+        result = self.run_assembly(mod)
+        # Modules outside a marketplace listing come in name order (D9), so mod-dup is read first and kept.
+        self.assertRow(result, "rules-assembly", "WARN", "rigger: rule id tests.tests in mod-dup and rigger-rules; kept mod-dup")
+
+    def test_keys_without_effect_give_config_inactive_rows(self):
+        path = self.config / "rigger" / "config.json"
+        self.write_file(path, json.dumps({"schema": 1, "leak_guard": {"denylist": "~/terms.txt"},
+                                          "slots": {"reviewer": {"model": "opus"}}}))
+        result = self.run_assembly()
+        shown = str(path)
+        self.assertEqual(
+            self.rows(result, "config-inactive"),
+            {
+                "config-inactive leak_guard.denylist": (
+                    "INFO", "leak_guard.denylist in %s: no effect in this release" % shown, "assemble.py --doctor"),
+                "config-inactive slots.reviewer.model": (
+                    "INFO", "slots.reviewer.model in %s: no effect in this release" % shown, "assemble.py --doctor"),
+            },
+        )
+        self.assertRow(result, "rules-assembly", "OK")
+
+    def test_expected_module_missing_gets_an_install_fix(self):
+        hostile = "mod-x; rm -rf ~"
+        self.write_file(self.work / ".claude" / "rigger.json",
+                        json.dumps({"schema": 1, "expects": ["rigger-rules", "mod-absent", hostile, "mod-absent"]}))
+        result = self.run_assembly()
+        self.assertEqual(
+            self.rows(result, "expects"),
+            {
+                "expects mod-absent": ("MISSING", "not installed and enabled", "assemble.py --doctor"),
+                "expects " + hostile: ("MISSING", "not installed and enabled", "assemble.py --doctor"),
+            },
+        )
+        self.assertEqual(result.fixes["expects mod-absent"], ["claude plugin install mod-absent"])
+        self.assertIsNone(result.fixes["expects " + hostile])
+        self.assertRow(result, "rules-assembly", "OK")
+
+    def test_real_assembler_run_writes_no_bytecode(self):
+        """doctor.sh writes no file: the assembler's imports leave no __pycache__ in a copy of the plugin."""
+        copy = self.tmp / "plugin copy" / "rigger-core"
+        shutil.copytree(str(PLUGIN), str(copy), ignore=shutil.ignore_patterns("__pycache__", "tests"))
+        self.assertEqual(list(copy.rglob("__pycache__")), [])
+        kernel = "MINGW64_NT-10.0-26100" if os.name == "nt" else "Linux"
+        result = self.run_doctor(kernel, path=self.real_python_path(), script=copy / "tools" / "doctor" / "doctor.sh")
+        self.assertRow(result, "rules-assembly", "OK")
+        self.assertEqual(list(copy.rglob("__pycache__")), [])
+
+    def test_only_whole_assembler_rows_pass(self):
+        answer = ASSEMBLER_OK.replace(
+            "'; exit 0",
+            "not a row\\nCHECK\\tconfig-inactive a.b\\tINFO\\tx\\ty\\textra\\nCHECK\\tos\\tWARN\\tforged\\tz\\n"
+            "FIX\\tos\\tforged\\nCHECK\\texpects mod-y\\tMISSING\\tnot installed and enabled\\tassemble.py --doctor\\n'; exit 0",
+        )
+        self.stub_python("python3", assembler=answer)
+        result = self.run_doctor("Linux")
+        self.assertRow(result, "rules-assembly", "OK", "stub")
+        self.assertRow(result, "os", "OK", "Linux")
+        self.assertNotIn("os", result.fixes)
+        self.assertEqual(self.rows(result, "config-inactive"), {})
+        self.assertRow(result, "expects mod-y", "MISSING")
+
+    def test_rules_assembly_warns_without_python(self):
+        self.skip_if_system_python_candidates()
+        result = self.run_doctor("Linux")
+        self.assertRow(result, "python", "MISSING")
+        self.assertRow(result, "rules-assembly", "WARN", "not checked: no Python 3.9+")
+
+    def test_rules_assembly_warns_when_the_assembler_prints_no_row(self):
+        for name, answer in (("junk", "printf 'Traceback\\n'; exit 0"), ("exit 1", ASSEMBLER_OK.replace("exit 0", "exit 1"))):
+            with self.subTest(case=name):
+                self.stub_python("python3", assembler=answer)
+                result = self.run_doctor("Linux")
+                self.assertRow(result, "python", "OK")
+                self.assertRow(result, "rules-assembly", "WARN")
+                self.assertTrue(result.checks["rules-assembly"][1].startswith("not checked: assemble.py --doctor "),
+                                result.checks["rules-assembly"])
 
 
 def load_tests(loader, standard_tests, pattern):

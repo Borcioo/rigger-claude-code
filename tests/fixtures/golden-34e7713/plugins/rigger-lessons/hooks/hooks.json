@@ -1,0 +1,67 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" --notice \"${CLAUDE_PLUGIN_ROOT}/hooks/lessons_start.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" lessons.md",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh\" --subagent lessons-subagent.md",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/hooks/inbox_guard.py\" || true",
+            "timeout": 10,
+            "if": "Edit(*lessons-inbox.md)"
+          },
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/hooks/inbox_guard.py\" || true",
+            "timeout": 10,
+            "if": "Write(*lessons-inbox.md)"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/hooks/skill_lessons.py\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

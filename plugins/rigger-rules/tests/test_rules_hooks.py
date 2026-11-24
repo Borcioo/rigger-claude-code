@@ -1,4 +1,4 @@
-"""Tests for rules/rules_start.sh and hooks/hooks.json: each hook runs through a real POSIX sh."""
+"""Tests for rules/rules_start.sh (shipped one more release, run by no hook) and hooks/hooks.json, through a real sh."""
 
 import json
 import os
@@ -30,6 +30,7 @@ SUBAGENT_FILES = [
 SKIPPED_AGENTS = ["Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper"]
 WORKTREE_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/worktree_root.sh"'
 EXTRA_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_extra.sh"'
+CORE_CHECK_COMMAND = 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-rules'
 HOSTILE = 'back\\slash "quoted" \\u0041 tab\there äöüß → ≠\ntrailing backslash\\\n"\n\\\\\n'
 
 
@@ -56,6 +57,10 @@ def over_limit(paths, limit=SIZE_LIMIT):
 def load_hooks():
     with open(HOOKS_JSON, encoding="utf-8") as handle:
         return json.load(handle)["hooks"]
+
+
+def script_command(args):
+    return 'sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh" ' + args
 
 
 class Base(unittest.TestCase):
@@ -106,46 +111,33 @@ class Base(unittest.TestCase):
 
 
 class HooksJsonTests(unittest.TestCase):
-    def test_session_start_has_the_matcher_and_one_handler_per_file(self):
-        groups = load_hooks()["SessionStart"]
-        self.assertEqual(len(groups), 3)
-        self.assertEqual(groups[0]["matcher"], MATCHER)
-        commands = [handler["command"] for handler in groups[0]["hooks"]]
-        self.assertEqual(
-            commands, ['sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh" ' + name for name in SESSION_FILES]
-        )
-
-    def test_worktree_group_has_the_matcher_and_one_handler(self):
-        self.assertEqual(load_hooks()["SessionStart"][1], {
+    def test_session_start_runs_the_worktree_line_and_the_core_check(self):
+        self.assertEqual(load_hooks()["SessionStart"], [{
             "matcher": MATCHER, "hooks": [{"type": "command", "command": WORKTREE_COMMAND, "timeout": 10}],
-        })
+        }, {
+            "matcher": "startup|clear", "hooks": [{"type": "command", "command": CORE_CHECK_COMMAND, "timeout": 10}],
+        }])
 
-    def test_extra_rules_group_comes_last_with_the_matcher(self):
-        self.assertEqual(load_hooks()["SessionStart"][-1], {
-            "matcher": MATCHER, "hooks": [{"type": "command", "command": EXTRA_COMMAND, "timeout": 10}],
-        })
-
-    def test_every_rules_file_is_wired(self):
-        self.assertEqual(sorted(SESSION_FILES), sorted(path.name for path in (PLUGIN / "rules").glob("*.md")))
-
-    def test_subagent_start_has_no_matcher_and_one_handler_per_list(self):
-        groups = load_hooks()["SubagentStart"]
-        self.assertEqual(len(groups), 1)
-        self.assertNotIn("matcher", groups[0])
-        self.assertEqual(
-            [handler["command"] for handler in groups[0]["hooks"]],
-            ['sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh" --subagent ' + " ".join(names)
-             for names in SUBAGENT_FILES] + [EXTRA_COMMAND + " --subagent"],
-        )
+    def test_no_rules_handler_and_no_subagent_handler(self):
+        hooks = load_hooks()
+        self.assertNotIn("SubagentStart", hooks)
+        commands = [h["command"] for groups in hooks.values() for group in groups for h in group["hooks"]]
+        self.assertEqual([c for c in commands if "rules_start.sh" in c or EXTRA_COMMAND in c], [])
 
     def test_only_the_main_session_files_stay_out_of_subagents(self):
-        given = {name for names in SUBAGENT_FILES for name in names}
-        self.assertEqual(set(SESSION_FILES) - given, {"verify-main.md", "plans-main.md", "environment.md"})
+        with open(PLUGIN / "rigger-module.json", encoding="utf-8") as handle:
+            rules = json.load(handle)["rules"]
+        names = {entry["file"][len("rules/"):]: entry["audience"] for entry in rules}
+        self.assertEqual(sorted(names), sorted(SESSION_FILES))
+        self.assertEqual({name for name, audience in names.items() if audience == "main"},
+                         {"verify-main.md", "plans-main.md", "environment.md"})
+        self.assertEqual({name for name, audience in names.items() if audience == "both"},
+                         {name for names in SUBAGENT_FILES for name in names})
 
     def test_every_handler_is_a_forward_slash_command_with_a_timeout(self):
         hooks = load_hooks()
         handlers = [h for groups in hooks.values() for group in groups for h in group["hooks"]]
-        self.assertEqual(len(handlers), 18)
+        self.assertEqual(len(handlers), 2)
         for handler in handlers:
             self.assertEqual(handler["type"], "command")
             self.assertEqual(handler["timeout"], 10)
@@ -169,14 +161,12 @@ class WorktreeRootTests(Base):
 
 
 class SessionStartTests(Base):
-    def test_each_handler_prints_exactly_the_root_line_and_its_file(self):
-        handlers = load_hooks()["SessionStart"][0]["hooks"]
-        self.assertEqual(len(handlers), len(SESSION_FILES))
-        for handler, name in zip(handlers, SESSION_FILES):
+    def test_each_file_prints_exactly_the_root_line_and_its_text(self):
+        for name in SESSION_FILES:
             with self.subTest(file=name):
                 expected = ("Plugin root: %s\n" % PLUGIN.as_posix()).encode("utf-8")
                 expected += (PLUGIN / "rules" / name).read_bytes()
-                self.assertEqual(self.run_command(handler["command"]), expected)
+                self.assertEqual(self.run_command(script_command(name)), expected)
 
     def test_crlf_and_a_last_line_without_newline_print_as_clean_lines(self):
         root = self.fixture({"a.md": HOSTILE + "crlf line\r\nlast line"})
@@ -209,14 +199,14 @@ class SessionStartTests(Base):
 
 
 class SubagentStartTests(Base):
-    def test_shape_and_text_of_each_handler(self):
-        handlers = load_hooks()["SubagentStart"][0]["hooks"]
+    def test_shape_and_text_of_each_file_list(self):
         stdin = b'{"agent_type":"rigger-core:worker","hook_event_name":"SubagentStart"}'
-        for handler, names in zip(handlers, SUBAGENT_FILES):
+        for names in SUBAGENT_FILES:
             with self.subTest(files=names):
                 expected = "Plugin root: %s\n" % PLUGIN.as_posix()
                 expected += "".join((PLUGIN / "rules" / n).read_text(encoding="utf-8") for n in names)
-                self.assertEqual(self.context(self.run_command(handler["command"], stdin=stdin)), expected)
+                command = script_command("--subagent " + " ".join(names))
+                self.assertEqual(self.context(self.run_command(command, stdin=stdin)), expected)
 
     def test_skipped_agents_get_nothing(self):
         root = self.fixture({"a.md": "text\n"})
@@ -346,13 +336,13 @@ class RulesFilesTests(Base):
         long_root = self.tmp / ("r" * 150)
         for path in (PLUGIN / "rules").iterdir():
             write_bytes(long_root / "rules" / path.name, path.read_bytes().decode("utf-8"))
-        hooks = load_hooks()
-        handlers = hooks["SessionStart"][0]["hooks"] + hooks["SubagentStart"][0]["hooks"]
-        for handler in [h for h in handlers if "rules_start.sh" in h["command"]]:
-            with self.subTest(command=handler["command"]):
-                out = self.run_command(handler["command"], root=long_root, stdin=b'{"agent_type":"w"}')
+        commands = [script_command(name) for name in SESSION_FILES]
+        commands += [script_command("--subagent " + " ".join(names)) for names in SUBAGENT_FILES]
+        for command in commands:
+            with self.subTest(command=command):
+                out = self.run_command(command, root=long_root, stdin=b'{"agent_type":"w"}')
                 text = out.decode("utf-8")
-                text = self.context(out) if "--subagent" in handler["command"] else text
+                text = self.context(out) if "--subagent" in command else text
                 self.assertGreater(len(text), 100)
                 self.assertLessEqual(len(text), SIZE_LIMIT)
 

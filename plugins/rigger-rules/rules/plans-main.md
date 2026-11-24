@@ -1,7 +1,7 @@
 ## Plans: main session
 
 - A brief or full requirements never waive brainstorming or planning (with superpowers installed:
-  `superpowers:brainstorming`, then `superpowers:writing-plans`), the thinking pass (goal, reader,
+  {{slot:process.brainstorm}}, then {{slot:process.plans}}), the thinking pass (goal, reader,
   what exists, what can go wrong).
 - Every spec and plan states its estimate in agent working hours, lines of code and of tests,
   the simpler version and what it drops.

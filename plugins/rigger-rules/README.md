@@ -10,30 +10,42 @@ The rules speak to the model: "me" and "my OK" mean you, the person running the 
 
 ## What it prints
 
+rigger-core's assembler prints this plugin's rules together with the other Rigger plugins' rules:
+`Plugin root: <root>`, then the sections, on `SessionStart` (`startup|clear|compact`) and as JSON
+`additionalContext` on `SubagentStart`; then your `rules.d` files (below). `rigger-module.json`
+lists the rules files and their audience; rigger-core's README has the handlers. This plugin's own
+hooks:
+
 | Event | Matcher | What it prints |
 |---|---|---|
-| `SessionStart` | `startup\|clear\|compact` | one handler per rules file: `Plugin root: <root>`, then the file |
 | `SessionStart` | `startup\|clear\|compact` | `hooks/worktree_root.sh`: `Worktree root: <path>` when `HARNESS_WORKTREE_ROOT` is set, nothing otherwise |
-| `SessionStart` | `startup\|clear\|compact` | `rules/rules_extra.sh`: your own rules from `rules.d` (below) |
-| `SubagentStart` | none | as JSON `additionalContext`: `00-scope`, `english`, `scope`, `git`, `tests`; `verify`, `plans`, `defects`; `skills`; then your `rules.d` files except `*-main.md` |
+| `SessionStart` | `startup\|clear` | `hooks/core_check.sh rigger-rules`: one line when the installed rigger-core is too old to print the rules (rigger-core's README) |
 
-`SubagentStart` prints nothing for `Explore`, `Plan`, `rigger-core:implementer` and
-`rigger-core:mapper`, which run without `CLAUDE.md`. `resume` is left out of the matcher because the
-resumed transcript already holds the rules; `compact` is in it because compaction drops them.
+Subagents get nothing for `Explore`, `Plan`, `rigger-core:implementer` and `rigger-core:mapper`,
+which run without `CLAUDE.md`. `resume` prints nothing because the resumed transcript already holds
+the rules; `compact` prints them again because compaction drops them.
 
 `verify.md` and `plans.md` hold the lines subagents get; `verify-main.md`, `plans-main.md` and
-`environment.md` hold the lines only the main session gets. Keep a rule in one file: a test checks
-each handler's size (9,000 at most, counted with LF, because the hook text cap is 10,000
-characters).
+`environment.md` hold the lines only the main session gets. Keep a rule in one file: each section
+stays under 9,000 bytes, counted with LF, because the hook text cap is 10,000 characters.
 
 Set `HARNESS_WORKTREE_ROOT` to the folder where new git worktrees go; `git.md` sends them there.
 
 ## Your own rules: `rules.d`
 
 Put Markdown files in `<config dir>/rigger/rules.d/`, where `<config dir>` is `CLAUDE_CONFIG_DIR`
-if set, else `~/.claude`. They are printed after this plugin's rules:
+if set, else `~/.claude`. They are read while rigger-rules is enabled, and printed after the rules
+of every Rigger plugin:
 
 - every `*.md` file, sorted by name in byte order (`10-x.md` before `9-x.md`, `Z.md` before `a.md`);
+- a section whose id equals a Rigger section's id replaces that section in place, and the session
+  gets the line `rigger: rules.d/<file> replaces rule <id>` among the notices (past 2,000 bytes of notices the rest are folded into one `rigger: N more notices not shown` line); `/rigger-core:doctor` lists each as a
+  `rule-override` row. The id is the file stem, a dot and the heading slug: `rules.d/tests.md`
+  with `## Tests` replaces `tests.tests`. The slug is the heading cut at the first ` (`, `:`, ` — `
+  or ` - `, lower-cased, accents removed, every run of other characters turned into `-`;
+- a replacing section with only its heading removes the Rigger section;
+- a replacement reaches only the audience of the section it replaces (main session, subagents or
+  both); a `*-main.md` file stays main-only;
 - a name ending in `-main.md` goes to the main session only, every other file to subagents too;
 - no folder, or no `*.md` in it, prints nothing;
 - CR characters and other control characters except tab are dropped, so CRLF files are fine;
@@ -46,19 +58,22 @@ folder as `lessons.md`. Start a new session (or `/clear`) after changing a file.
 
 ## HARNESS_RULES_DROP
 
-Skips rules, for a variant run that measures what a rule is worth. The hooks read it from their
-environment, in `SessionStart` and `SubagentStart`, in every plugin that ships `rules_start.sh`; it
-does not apply to `rules.d`.
+Skips rules, for a variant run that measures what a rule is worth. rigger-core's assembler reads it
+from its environment, in `SessionStart` and `SubagentStart`, for the rules of every Rigger plugin;
+it does not apply to `rules.d`, including a `rules.d` section that replaced a Rigger one.
 
 - The value is a list of entries separated by `;` or a newline.
 - Each entry is trimmed (spaces, tabs, CR), then matched exactly and case-sensitively.
-- An entry is either a rules-file basename or a whole `## ` heading line:
+- An entry is a rules-file basename, a whole `## ` heading line as printed, or a section id:
 
 | Entry | Effect |
 |---|---|
-| `tests.md` | skips that file; no root line when the handler prints no other file |
+| `tests.md` | skips that file |
 | `## Tests` | skips that heading and its lines, up to the next `## ` heading or the end of the file |
+| `tests.tests` | skips the section with that id (`rules.d` above has the id form) |
 | `Tests`, `tests`, `## tests` | no match, nothing is skipped |
+
+A plugin with no section left prints no `Plugin root:` line.
 
 ```
 HARNESS_RULES_DROP='tests.md;## Plans: main session'

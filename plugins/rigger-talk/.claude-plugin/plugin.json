@@ -26,5 +26,8 @@
       "description": "Final-report length in lines.",
       "default": 15
     }
-  }
+  },
+  "dependencies": [
+    "rigger-core"
+  ]
 }

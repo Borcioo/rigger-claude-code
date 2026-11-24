@@ -20,23 +20,27 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from stub_api import StubApi  # noqa: E402
+from test_plugin_rules import Assembled  # noqa: E402
 
 PLUGINS = Path(__file__).resolve().parent.parent.parent
 INJECTED = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-windows", "rigger-wp")
-SUBAGENT_ONLY = {"lessons-subagent.md"}
 ANCESTOR_SENTINEL = "ancestor-claude-md-sentinel"
-
-
-def first_line(path):
-    return next(line for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+# A --plugin-dir plugin is in no Claude Code state file, so rigger-core's assembler finds it through this list.
+MODULE_DIRS = os.pathsep.join(str(PLUGINS / plugin) for plugin in INJECTED)
 
 
 def markers():
+    """{rules file: its first non-blank line as the session prints it} for every file a main session gets."""
     found = {}
+    rendered = Assembled(PLUGINS)
     for plugin in INJECTED:
-        for path in sorted((PLUGINS / plugin / "rules").glob("*.md")):
-            if path.name not in SUBAGENT_ONLY:
-                found[path.name] = first_line(path)
+        with open(PLUGINS / plugin / "rigger-module.json", encoding="utf-8") as handle:
+            rules = json.load(handle)["rules"]
+        for entry in rules:
+            if entry["audience"] != "subagent":
+                name = entry["file"][len("rules/"):]
+                text = rendered.text(plugin, name).decode("utf-8")
+                found[name] = next(line for line in text.splitlines() if line.strip())
     return found
 
 
@@ -79,6 +83,7 @@ class ReinjectTests(unittest.TestCase):
             CLAUDE_CONFIG_DIR=str(self.tmp / "cfg"),
             ANTHROPIC_BASE_URL=api.url,
             ANTHROPIC_API_KEY="stub-key",
+            RIGGER_MODULE_DIRS=MODULE_DIRS,
             HOME=str(self.tmp),
             USERPROFILE=str(self.tmp),
         )
@@ -140,7 +145,8 @@ class ReinjectTests(unittest.TestCase):
         resume hooks."""
         ran = [line for line in self.debug_text(turn).splitlines() if "Hooks: SessionStart:resume [" in line]
         self.assertEqual([line for line in ran if any(name in line for name in
-                                                      ("rules_start.sh", "talk_start.sh", "worktree_root.sh"))], [])
+                                                      ("part.sh", "rules_start.sh", "talk_start.sh",
+                                                       "worktree_root.sh"))], [])
         self.assertEqual(len([line for line in ran if "lessons_start.py" in line]), 1, ran)
 
 

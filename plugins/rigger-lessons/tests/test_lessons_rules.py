@@ -1,4 +1,4 @@
-"""Tests for the rules handlers in hooks/hooks.json: rules/lessons.md and its subagent short form."""
+"""Tests for rules/lessons.md and its subagent short form, as rigger-core's assembler prints them."""
 
 import importlib.util
 import json
@@ -15,14 +15,8 @@ sys.dont_write_bytecode = True
 
 PLUGIN = Path(__file__).resolve().parent.parent
 HOOKS_JSON = PLUGIN / "hooks" / "hooks.json"
-MATCHER = "startup|clear|compact"
-
-
-def find_sh():
-    if os.name == "nt":
-        git_sh = Path(os.environ["ProgramFiles"], "Git", "usr", "bin", "sh.exe")
-        return str(git_sh) if git_sh.is_file() else shutil.which("sh")
-    return "/bin/sh"
+CORE = PLUGIN.parent / "rigger-core"  # the repository layout; installed, rigger-core is found through its own root
+ASSEMBLE = CORE / "tools" / "assemble" / "assemble.py"
 
 
 def load_hooks():
@@ -34,58 +28,49 @@ class LessonsRulesTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="lessons-rules-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.sh = find_sh()
-        self.assertIsNotNone(self.sh, "no POSIX sh found (Windows needs Git for Windows)")
 
-    def run_command(self, command, stdin=b"{}"):
-        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_"))}
-        env["HOME"] = env["USERPROFILE"] = self.tmp
-        env["CLAUDE_PLUGIN_ROOT"] = PLUGIN.as_posix()
-        env["PATH"] = os.pathsep.join([str(Path(self.sh).parent), env.get("PATH", "")])
-        proc = subprocess.run([self.sh, "-c", command], input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    def render(self, *args):
+        """rigger-core's assembler with this plugin as the only listed module, a temp config dir and HOME."""
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
+        env.update({"HOME": self.tmp, "CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "config"),
+                    "CLAUDE_PLUGIN_ROOT": CORE.as_posix(), "RIGGER_MODULE_DIRS": str(PLUGIN)})
+        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", str(ASSEMBLE), "--render"] + list(args),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               env=env, cwd=self.tmp, timeout=60)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(proc.stderr, b"")
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         return proc.stdout
 
-    def test_session_start_group(self):
-        groups = [group for group in load_hooks()["SessionStart"] if "matcher" in group]
-        self.assertEqual(len(groups), 1)
-        self.assertEqual(groups[0]["matcher"], MATCHER)
-        self.assertEqual(
-            [handler["command"] for handler in groups[0]["hooks"]],
-            ['sh "${CLAUDE_PLUGIN_ROOT}/rules/rules_start.sh" lessons.md'],
-        )
+    def test_rules_come_from_the_manifest_and_no_rules_handler_is_left(self):
+        with open(PLUGIN / "rigger-module.json", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["rules"], [{"file": "rules/lessons.md", "audience": "main"},
+                                                          {"file": "rules/lessons-subagent.md", "audience": "subagent"}])
+        hooks = load_hooks()
+        self.assertNotIn("SubagentStart", hooks)
+        self.assertEqual(hooks["SessionStart"], [{"hooks": [{
+            "type": "command", "timeout": 10,
+            "command": 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" --notice "${CLAUDE_PLUGIN_ROOT}/hooks/lessons_start.py"'}]},
+            {"matcher": "startup|clear", "hooks": [{
+                "type": "command", "timeout": 10,
+                "command": 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh" rigger-lessons'}]}])
 
-    def test_session_start_prints_exactly_the_root_line_and_the_file(self):
-        group = next(group for group in load_hooks()["SessionStart"] if "matcher" in group)
+    def test_session_prints_the_root_line_and_the_file(self):
+        out = self.render()
         expected = ("Plugin root: %s\n" % PLUGIN.as_posix()).encode("utf-8")
         expected += (PLUGIN / "rules" / "lessons.md").read_bytes()
-        self.assertEqual(self.run_command(group["hooks"][0]["command"]), expected)
+        self.assertIn(expected, out)
+        self.assertNotIn(b"## Lessons (subagents)", out)
 
-    def test_subagent_start_has_no_matcher(self):
-        groups = load_hooks()["SubagentStart"]
-        self.assertEqual(len(groups), 1)
-        self.assertNotIn("matcher", groups[0])
-        self.assertEqual(len(groups[0]["hooks"]), 1)
-
-    def test_subagent_start_prints_the_short_form_as_json(self):
-        command = load_hooks()["SubagentStart"][0]["hooks"][0]["command"]
-        out = json.loads(self.run_command(command, b'{"agent_type":"rigger-core:worker"}').decode("utf-8"))
-        text = (PLUGIN / "rules" / "lessons-subagent.md").read_text(encoding="utf-8")
-        self.assertEqual(
-            out,
-            {"hookSpecificOutput": {"hookEventName": "SubagentStart",
-                                    "additionalContext": "Plugin root: %s\n%s" % (PLUGIN.as_posix(), text)}},
-        )
-        self.assertIn('under "Lessons"', text)
+    def test_subagent_gets_the_short_form_only(self):
+        out = self.render("--subagent", "--agent-type", "rigger-core:worker")
+        text = (PLUGIN / "rules" / "lessons-subagent.md").read_bytes()
+        self.assertIn(("Plugin root: %s\n" % PLUGIN.as_posix()).encode("utf-8") + text, out)
+        self.assertNotIn((PLUGIN / "rules" / "lessons.md").read_bytes().split(b"\n")[0], out)
+        self.assertIn(b'under "Lessons"', text)
 
     def test_subagent_start_skips_agents_without_claude_md(self):
-        command = load_hooks()["SubagentStart"][0]["hooks"][0]["command"]
         for agent in ("Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper"):
             with self.subTest(agent=agent):
-                stdin = ('{"agent_type":"%s"}' % agent).encode("utf-8")
-                self.assertEqual(self.run_command(command, stdin), b"")
+                self.assertEqual(self.render("--subagent", "--agent-type", agent), b"")
 
     def test_global_lessons_go_to_the_rules_d_file(self):
         target = "rigger/rules.d/lessons.md"

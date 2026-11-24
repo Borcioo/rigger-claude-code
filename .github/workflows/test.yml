@@ -50,3 +50,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -I -X utf8 scripts/run_tests.py --no-claude
+      - name: startup bench
+        continue-on-error: true
+        run: python -I -X utf8 scripts/startup_bench.py --runs 20

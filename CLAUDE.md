@@ -47,13 +47,28 @@ change: `CONTRIBUTING.md`.
 - **Before a stub URL or an isolation runs next to a real config,** list every inherited env override against each enabled hook with third-party plugins on, prove the isolation with a canary on a scratch config first, and abort on any FAIL.
 - **`autoCompactWindow` at or above the compaction guard's caps silently disables `safe_to_compact`** (`compact_guard.py` runs with `--hard-cap 560000` and, for a session that coordinates others, `--coordinator-cap 650000`; 450k is the script's default): before changing any threshold, list every other limit compared against it.
 - **A test of `gate.py`/`run_tests.py` `main` patches the part that runs things even when it expects an early exit:** a mutant that passes the flag check runs the whole suite recursively, and a red script that times out kills the process tree and checks for orphans.
+- **A time bound is measured at two sizes with realistic entries,** so growth shows: one at 100 short entries hid a quadratic awk scan (3.4 s at 500).
+- **A `sh` hook over `installed_plugins.json` scans it in one awk pass that reads the file as one record** (`RS` set to a byte JSON never holds) and spawns nothing per unrelated plugin; time it under mawk and busybox too: a subshell per entry cost 6.3 s at 100 plugins under Git Bash, and joining lines into one string is quadratic in mawk (3.9 s) and busybox (28 s) at 2,000 entries while gawk stays linear.
+- **Git Bash's gawk drops the CR of a CRLF line it reads:** a mutant that removes `\r` from an awk regex dies only on the POSIX leg, so run CR-sensitive mutants on both.
+- **`tests/test_shellcheck.py` lints tracked files only:** `git add` a new `.sh` file before its first run.
+- **One hook script copied into several plugins passes each plugin's name as an argument** (`core_check.sh <plugin>`): identical commands trip rigger-core's duplicate-hook warning, and the name keeps the lines apart.
+- **A module loaded through `--plugin-dir` or `RIGGER_MODULE_DIRS` reads its options from `pluginConfigs["<plugin>@inline"]`,** an installed one from `<plugin>@<marketplace>`: a test that writes `@rigger` for a dirs module silently gets the defaults.
+- **A hook-wiring test needs a fixture whose sections each fill a part:** joining the parts and comparing with `--render` passes with the last handler missing when the real rules fit in fewer parts.
+- **A red run that mutates discovery also mutates an expectation computed by the same code** (`--render`): pin the expected side to an independent source, such as the manifests.
+- **An invalid plugin `hooks.json` leaves the plugin in the init event's `plugins` list:** a hook-load proof reads the `Hooks: <Event>:<matcher>` debug lines.
+- **With `CLAUDE_CODE_PLUGIN_CACHE_DIR` set, `claude plugin install` writes `installed_plugins.json` under that cache dir,** not `<config>/plugins/`, so `core_check.sh` stays silent there.
+- **A plan's "base unchanged" check names the `rules/` and `hooks/` paths it is about,** never a whole plugin folder that an earlier task may add a file to.
+- **A path that only has to be absolute is made with `abspath`, not a Path's `resolve()`,** which rewrites a symlinked temp folder (`/var` to `/private/var` on macOS) and breaks a comparison with the temp path only there.
+- **A doctor test with a stub interpreter cannot see what the real one writes:** run the real interpreter once on a copy of the plugin and assert the copy is unchanged (`__pycache__` appeared where doctor promises no file).
 - **Gate:** `python -I scripts/gate.py` in the background (every input optional; `CONTRIBUTING.md`
   lists them); its first line names `status.txt`, read that instead of rerunning. A leg whose output
   has no count, or a count of 0, fails ("printed no count matching …" / "count 0 from …"); a PASS
   line ends with its count and, for the suites, the number of SKIP files; a leg it cannot run
   prints `SKIP <leg>: <reason>`. Between fixes `python -I scripts/run_tests.py --fix-round`, never
-  as the gate. A change to a rules file or a skill runs `test_plugin_rules` and `test_drift_lint`
-  before the merge, even when you ran only some test files before; a commit chained after a test
+  as the gate; add `--no-claude` when no `claude` run is allowed, or `test_reinject.py` starts
+  `claude -p`. A change to a rules file or a skill runs `test_plugin_rules` and `test_drift_lint` in
+  the same round as the edit (text moved into a placeholder leaves a stale drift-lint baseline row,
+  itself a finding) and again before the merge; a commit chained after a test
   runs only on that test's exit code, with the full output kept in a file. The status file's
   `TREE <id>` line and the pass line's `tree <id>` name the content the gate ran on; before a merge
   run `python -I scripts/gate.py --verify <status.txt>`, and when the base moved, rerun the gate.

@@ -14,7 +14,10 @@ It also warns about a `## ` heading of CLAUDE.md that a `rules/*.md` file of the
 plugins has too: the plugin injects that section, so CLAUDE.md should not repeat it. Headings are
 compared the way rules_start.sh compares them for HARNESS_RULES_DROP: a line that starts with
 `## `, trimmed of spaces, tabs and CR, matched exactly and case-sensitively. Lines inside fenced
-code blocks of CLAUDE.md are not headings. This check is silent when a file is missing or unreadable.
+code blocks of CLAUDE.md are not headings. A rules file is first rendered with Rigger's level-1
+slots, as the session prints it, so a `{{skill:…}}` placeholder in its heading compares as the
+backticked name; a file that fails to render is compared raw. This check is silent when a file is
+missing or unreadable.
 
 Prints one line per duplicate, per overlapping heading and per settings or hooks file it cannot
 read, nothing when all is clean. Always exits 0.
@@ -40,6 +43,7 @@ CLAUDE_MD = "CLAUDE.md"
 HEADING_PREFIX = "## "
 BLANK = " \t\r"  # what rules_start.sh trims from a heading line
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+ASSEMBLE_DIR = Path(__file__).resolve().parent.parent / "assemble"
 
 Handler = namedtuple("Handler", "source event matcher condition identity")
 
@@ -252,17 +256,42 @@ def rules_files(rules_dir):
         return []
 
 
+def level_one_renderer():
+    """A function rendering rules text with level-1 slots only, or None when the assembler is missing."""
+    try:
+        if str(ASSEMBLE_DIR) not in sys.path:
+            sys.path.insert(0, str(ASSEMBLE_DIR))
+        import config
+        import render
+        defaults, _ = config.load_level(config.defaults_path(ASSEMBLE_DIR.parent.parent), 1)
+        slots = defaults.get("slots") if isinstance(defaults.get("slots"), dict) else {}
+    except Exception:
+        return None
+
+    def rendered(text, plugin):
+        ctx = render.RenderContext(slots=slots, rows_by_section={}, vars={}, module=plugin)
+        return render.render(text.encode("utf-8"), ctx)[0].decode("utf-8")
+
+    return rendered
+
+
 def overlap_warnings(root, installs):
     """One line per `## ` heading of CLAUDE.md that a rules file of an installed plugin also has."""
     text = read_text(root / CLAUDE_MD, "utf-8-sig")
     wanted = list(dict.fromkeys(headings(text, True))) if text is not None else []
     sources = {}
+    renderer = level_one_renderer() if wanted else None
     for key, install_path in installs:
         rules_dir = Path(install_path) / "rules"
         for name in rules_files(rules_dir):
             content = read_text(rules_dir / name, "utf-8")
             if content is None:
                 continue
+            if renderer is not None:
+                try:
+                    content = renderer(content, key.split("@")[0])
+                except Exception:
+                    pass  # compared raw
             source = "%s/rules/%s" % (key.split("@")[0], name)
             for heading in headings(content, False):
                 if heading in wanted and (heading not in sources or source < sources[heading]):

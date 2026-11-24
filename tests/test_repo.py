@@ -18,13 +18,18 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "plugins" / "rigger-core" / "tools" / "assemble"))
 
+import eval_suite_check  # noqa: E402
+import manifest  # noqa: E402
 import run_tests  # noqa: E402
 import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-windows")
 PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
+# Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
+PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
 
 
 def load_json(path):
@@ -92,11 +97,77 @@ class ManifestTests(unittest.TestCase):
                 )
 
     def test_no_version_anywhere(self):
-        manifests = [MARKETPLACE] + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
-        self.assertEqual(len(manifests), 8)
+        manifests = (
+            [MARKETPLACE]
+            + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
+            + sorted(ROOT.glob("plugins/*/rigger-module.json"))
+        )
+        self.assertEqual(len(manifests), 15)
         for path in manifests:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertFalse(find_key(load_json(path), "version"))
+
+    def test_every_plugin_has_a_valid_module_manifest(self):
+        roots = sorted(path.parent.parent for path in ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
+        self.assertEqual(len(roots), 7)
+        for root in roots:
+            with self.subTest(plugin=root.name):
+                module = manifest.load_manifest(root, "rigger", "installed")
+                self.assertEqual(module.name, root.name)
+                self.assertEqual(module.layer, "general")
+                self.assertIsNone(module.fills)
+
+    def test_rules_lists_every_rules_file_once(self):
+        checked = 0
+        for root in sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json")):
+            plugin = root.parent.parent
+            with self.subTest(plugin=plugin.name):
+                listed = [entry.file for entry in manifest.load_manifest(plugin, "rigger", "installed").rules]
+                on_disk = sorted("rules/" + path.name for path in plugin.glob("rules/*.md"))
+                self.assertEqual(sorted(listed), on_disk)
+                self.assertEqual(len(listed), len(set(listed)))
+                checked += len(listed)
+        self.assertEqual(checked, 19)
+
+    def test_modules_with_rules_depend_on_core(self):
+        with_rules = 0
+        for root in sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json")):
+            plugin = root.parent.parent
+            if plugin.name == manifest.CORE:
+                continue
+            with self.subTest(plugin=plugin.name):
+                if manifest.load_manifest(plugin, "rigger", "installed").rules:
+                    with_rules += 1
+                    self.assertIn(manifest.CORE, load_json(root).get("dependencies", []))
+        self.assertEqual(with_rules, 5)
+
+    def test_eval_cases_load_their_dependencies(self):
+        cases_md = (ROOT / "evals" / "CASES.md").read_text(encoding="utf-8")
+        cases = 0
+        for evals in sorted(ROOT.glob("plugins/*/evals")):
+            plugin = evals.parent
+            with self.subTest(plugin=plugin.name):
+                self.assertEqual(eval_suite_check.check_suite(plugin, cases_md), [])
+                cases += len(eval_suite_check.case_dirs(plugin))
+        self.assertGreaterEqual(cases, 15)
+
+    def test_tests_paths_cover_every_discovered_test_file(self):
+        matched = 0
+        for path in run_tests.discover(ROOT):
+            parts = path.relative_to(ROOT).parts
+            if parts[0] != "plugins":
+                continue
+            plugin = ROOT / "plugins" / parts[1]
+            module = manifest.load_manifest(plugin, "rigger", "installed")
+            folders = [folder for pattern in module.tests["paths"] for folder in plugin.glob(pattern.rstrip("/"))]
+            with self.subTest(file=path.relative_to(ROOT).as_posix()):
+                self.assertTrue(any(folder in path.parents for folder in folders))
+            matched += 1
+        self.assertGreaterEqual(matched, 40)
+        for plugin in sorted(ROOT.glob("plugins/*/rigger-module.json")):
+            for pattern in manifest.load_manifest(plugin.parent, "rigger", "installed").tests["paths"]:
+                with self.subTest(plugin=plugin.parent.name, path=pattern):
+                    self.assertTrue(list(plugin.parent.glob(pattern.rstrip("/"))))
 
     def test_py_sh_copies_identical(self):
         copies = sorted(ROOT.glob("plugins/*/bin/py.sh"))
@@ -104,6 +175,14 @@ class ManifestTests(unittest.TestCase):
         for name in PLUGINS_WITH_PY_SH:
             self.assertIn(name, names)
         reference = (ROOT / "plugins" / "rigger-lessons" / "bin" / "py.sh").read_bytes()
+        for path in copies:
+            with self.subTest(path=path.relative_to(ROOT).as_posix()):
+                self.assertEqual(path.read_bytes(), reference)
+
+    def test_core_check_copies_identical(self):
+        copies = sorted(ROOT.glob("plugins/*/hooks/core_check.sh"))
+        self.assertEqual(sorted(path.parent.parent.name for path in copies), sorted(PLUGINS_WITH_CORE_CHECK))
+        reference = (ROOT / "plugins" / "rigger-rules" / "hooks" / "core_check.sh").read_bytes()
         for path in copies:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertEqual(path.read_bytes(), reference)
@@ -118,7 +197,9 @@ FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-windows")
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"
-RULES_SCRIPTS = ("rules_start.sh", "rules_extra.sh", "talk_start.sh")
+RULES_SCRIPTS = ("rules_start.sh", "rules_extra.sh", "talk_start.sh", "part.sh")
+SESSION_PARTS = 6
+SUBAGENT_PARTS = 4
 
 
 def is_function_hooks(path):
@@ -322,7 +403,7 @@ class HookFileTests(unittest.TestCase):
         for path in hook_files():
             plugin = path.parent.parent
             for event, _, handler in hook_handlers(path):
-                sh_only = any(name in handler["command"] for name in RULES_SCRIPTS)
+                sh_only = any(name in handler["command"] for name in RULES_SCRIPTS + ("core_check.sh",))
                 if event not in EXIT_2_BLOCKS and (plugin.name not in FAIL_OPEN_PLUGINS or sh_only):
                     continue
                 with self.subTest(hooks=path.relative_to(ROOT).as_posix(), event=event, command=handler["command"]):
@@ -332,6 +413,28 @@ class HookFileTests(unittest.TestCase):
                     self.assertIn(b"can't open file", proc.stderr, "the command never reached Python")
                     checked += 1
         self.assertGreaterEqual(checked, 11)
+
+    def test_a_missing_core_check_neither_blocks_nor_prints(self):
+        # RV5 M1: a half-written cache without hooks/core_check.sh. sh then exits 127 (Git Bash) or 2 (dash), so
+        # the handler must sit on an event where exit 2 blocks nothing, and print nothing to stdout.
+        checked = []
+        for path in hook_files():
+            plugin = path.parent.parent
+            for event, _, handler in hook_handlers(path):
+                if "core_check.sh" not in handler["command"]:
+                    continue
+                with self.subTest(plugin=plugin.name):
+                    self.assertNotIn(event, EXIT_2_BLOCKS)
+                    base = Path(tempfile.mkdtemp(prefix="hook root "))
+                    self.addCleanup(shutil.rmtree, base, True)
+                    (base / "plugin root" / "hooks").mkdir(parents=True)
+                    proc = self.run_hook(handler["command"], base / "plugin root", base / "data", b"{}")
+                    self.assertNotEqual(proc.returncode, 0, "the script ran after all")
+                    self.assertEqual(proc.stdout, b"")
+                    self.assertTrue(proc.stderr, "the command never ran")
+                    checked.append(plugin.name)
+        self.assertEqual(sorted(checked), ["rigger-lessons", "rigger-rules", "rigger-talk", "rigger-windows",
+                                           "rigger-wp"])
 
     def test_pretooluse_commands_still_deny_with_their_exit_zero(self):
         event = json.dumps(
@@ -428,7 +531,8 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 11)
+        self.assertEqual(len(names), moved + 15)
+        self.assertEqual(names.count("core_check.sh"), 4)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
@@ -436,6 +540,24 @@ class DuplicateHookTests(unittest.TestCase):
         self.assertEqual(names.count("report_shadow.py"), 1)
         self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
+
+    def test_the_core_checks_raise_no_duplicate_warning(self):
+        # One script in five plugins: rigger-core's startup check would tell the user to disable plugins.
+        found = self.plugin_handlers()
+        checks = sorted((item.source, item.event, item.matcher) for item in found if item.identity[1] == "core_check.sh")
+        self.assertEqual(checks, sorted(("plugin " + name, "SessionStart", "startup|clear")
+                                        for name in PLUGINS_WITH_CORE_CHECK))
+        self.assertEqual(harness_start.duplicate_warnings(found), [])
+
+    def test_rules_print_only_through_the_core_part_handlers(self):
+        found = self.plugin_handlers()
+        parts = [(item.source, item.event, item.identity[2]) for item in found if item.identity[1] == "part.sh"]
+        self.assertEqual(parts, [("plugin rigger-core", "SessionStart", (str(i),)) for i in range(1, SESSION_PARTS + 1)]
+                         + [("plugin rigger-core", "SubagentStart", (str(i), "--subagent"))
+                            for i in range(1, SUBAGENT_PARTS + 1)])
+        for name in ("rules_start.sh", "rules_extra.sh", "talk_start.sh"):
+            with self.subTest(script=name):
+                self.assertEqual([item.source for item in found if item.identity[1] == name], [])
 
     def test_all_moved_rows_are_named_on_a_hand_made_config(self):
         self.assertEqual(len(self.check(HAND_MADE_HOOKS)), len(self.rows("rigger-core", "rigger-windows")))

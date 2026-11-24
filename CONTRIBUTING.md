@@ -8,9 +8,10 @@ than a fix, so we can agree on the shape before you write it.
 - Everything under `plugins/` ships to other machines (macOS, Linux, Windows): no absolute paths,
   no personal, company or client names, no private hosts.
 - A rule changes in its rules file (`plugins/<plugin>/rules/*.md`), never in a `CLAUDE.md`. A rule
-  holds only what changes what the reader does. Each rules file is printed by one `SessionStart`
-  handler and stays under 9,000 bytes with LF endings (the hook text cap is 10,000 characters);
-  the tests enforce it.
+  holds only what changes what the reader does. A new rules file is listed in its plugin's
+  `rigger-module.json`. rigger-core's assembler prints every section; each section stays under 9,000
+  bytes with LF endings (the hook text cap is 10,000 characters). The tests and
+  `plugins/rigger-core/tools/assemble/assemble.py --check` enforce it.
 - `bin/py.sh` exists once per plugin as byte-identical copies: change all of them in one commit.
 - Every new test gets a red run: break the code it covers once and show the failing assertion.
 - Run every `claude` command, including `claude plugin validate`, under a temporary

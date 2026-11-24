@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "name": "rigger-lessons",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/lessons.md",
+      "audience": "main"
+    },
+    {
+      "file": "rules/lessons-subagent.md",
+      "audience": "subagent"
+    }
+  ],
+  "triggers": [],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": []
+  }
+}

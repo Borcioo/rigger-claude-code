@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "name": "rigger-core",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/state-file.md",
+      "audience": "main"
+    }
+  ],
+  "triggers": [
+    {
+      "id": "rigger-core.orchestrating-subagents",
+      "before": "dispatching subagents or running agents in parallel (briefs, models, load limit, fix rounds)",
+      "load": [
+        "rigger-core:orchestrating-subagents"
+      ],
+      "section": "skills.skill-triggers"
+    },
+    {
+      "id": "rigger-core.git-workflow",
+      "before": "branching, committing, PRs, merging, releases, tags, changelog, hotfixes, reading history to learn why code changed",
+      "load": [
+        "rigger-core:git-workflow"
+      ],
+      "section": "skills.skill-triggers"
+    },
+    {
+      "id": "rigger-core.web-ui-traps",
+      "before": "UI components, optimistic updates, per-item action buttons, ARIA, form and consent controls, translated labels, UI tests",
+      "load": [
+        "rigger-core:web-ui-traps"
+      ],
+      "section": "skills.skill-triggers"
+    },
+    {
+      "id": "rigger-core.e2e-playwright-speed",
+      "before": "writing or restructuring e2e tests, test gates for a task or an agent, a slow or flaky browser suite",
+      "load": [
+        "rigger-core:e2e-playwright-speed"
+      ],
+      "section": "skills.skill-triggers"
+    },
+    {
+      "id": "rigger-core.stack-tooling",
+      "before": "choosing, changing or upgrading lint/format/type-check/test tools, a slow phpcs/PHPStan/tsc/ESLint gate",
+      "load": [
+        "rigger-core:stack-tooling"
+      ],
+      "section": "skills.skill-triggers"
+    }
+  ],
+  "subagents": {},
+  "tests": {
+    "paths": [
+      "tests/",
+      "tools/*/tests/"
+    ],
+    "contract": []
+  }
+}
