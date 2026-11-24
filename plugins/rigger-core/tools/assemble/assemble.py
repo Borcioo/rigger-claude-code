@@ -861,12 +861,137 @@ def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
 
 
 _FIX_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")  # a name a FIX line may carry into a pasted shell command
+_TABLE_HEAD = re.compile(r"\|\s*Before\s*\|\s*Skill\s*\|")
+_SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
+TABLE_JSON_MAX = 1500
+
+# One doctor row: (name, status, detail, FIX command or None).
+_Row = Tuple[str, str, str, Optional[str]]
+
+
+def _empty_reason(row: slots.Row, level_one: dict, modules: List[Module], enabled: FrozenSet[str]) -> str:
+    if row.kind == "hook" and isinstance(row.target, str):
+        target = _shown(row.target)
+        return "%s does not fill it" % target if row.target in enabled else "plugin %s is not enabled" % target
+    if row.source != "default":
+        return "%s config leaves it empty" % _shown(row.source)
+    if row.kind == "hook":
+        return "no default"
+    entry = level_one.get(row.path)
+    problem = slots.entry_problem(row.path, entry, modules, enabled) if entry is not None else None
+    return _shown(problem, 300) if problem else "no default"
+
+
+def _slot_rows(found: Assembly, modules: List[Module], own: Set[str]) -> List[_Row]:
+    """One `slot` row per slot of the session, and `slot-checker` for a filled shell-guard (Task 18)."""
+    enabled = found.discovery.enabled
+    level_one = found.resolved.levels[0][1] if found.resolved is not None and found.resolved.levels else {}
+    l1_slots = level_one.get("slots") if isinstance(level_one.get("slots"), dict) else {}
+    level_one = slots.flatten(l1_slots)
+    rows = []  # type: List[_Row]
+    for row in found.slot_rows:
+        name = "slot " + row.path
+        fillers = [_shown(filler) for filler in row.fillers]
+        expected = row.kind == "hook" and row.source != "default" and isinstance(row.target, str) \
+            and row.target not in enabled
+        if len(fillers) > 1:
+            last = row.fillers[-1]
+            own.update(n for n in found.notices if n.startswith("rigger: slot %s is filled by " % row.path))
+            rows.append((name, "WARN", "filled by %s and %s" % (", ".join(fillers[:-1]), fillers[-1]),
+                         "claude plugin disable " + last if _FIX_NAME.fullmatch(last) else None))
+        elif expected:
+            own.update(n for n in found.notices if n.startswith("rigger: slot %s: expected " % row.path))
+            rows.append((name, "MISSING", "expected %s is not enabled" % _shown(row.target),
+                         "claude plugin install " + row.target if _FIX_NAME.fullmatch(row.target) else None))
+        elif row.filled and row.kind == "hook":
+            rows.append((name, "OK", slots._target_cell(row), None))
+        elif row.filled:
+            rows.append((name, "OK", "%s (%s)" % (slots._target_cell(row), _shown(row.source)), None))
+        else:
+            rows.append((name, "INFO", "empty: " + _empty_reason(row, level_one, modules, enabled), None))
+        if row.path == "shell-guard" and row.filled:
+            by_name = {m.name: m for m in modules}
+            checkers = [(by_name[f], by_name[f].provides.get("shell-guard", {}).get("rule_checker"))
+                        for f in row.fillers if f in by_name]
+            checkers = [(m, c) for m, c in checkers if isinstance(c, str)]
+            if checkers:
+                module, checker = checkers[0]
+                rows.append(("slot-checker shell-guard", "OK", _shown(root_text(module.root) + "/" + checker, 300),
+                             None))
+            else:
+                rows.append(("slot-checker shell-guard", "INFO",
+                             "no checker: live:<rule> lessons are reported as no checker", None))
+    return rows
+
+
+def _order_rows(found: Assembly) -> List[_Row]:
+    """A config trigger row that loads process.tdd without testing before it (D47)."""
+    rows = []  # type: List[_Row]
+    for row in found.rows:
+        if found.resolved is None or ("triggers", row.id, "before") not in found.resolved.sources:
+            continue
+        if "slot:process.tdd" in row.load and "slot:testing" not in row.load[:row.load.index("slot:process.tdd")]:
+            rows.append(("slot-order " + _shown(row.id), "WARN", "loads process.tdd without testing before it", None))
+    return rows
+
+
+def _table_rows(text: str) -> List[Tuple[str, List[str]]]:
+    """(before, load) for each body row of every `| Before | Skill |` table in a rules.d file."""
+    found = []
+    inside = False
+    for line in text.splitlines():
+        line = line.strip()
+        if _TABLE_HEAD.fullmatch(line):
+            inside = True
+        elif not inside or not line.startswith("|"):
+            inside = False
+        else:  # the |---|---| line holds no skill name and is skipped as an empty row
+            before, _, skill = line.strip("|").partition("|")
+            # Split first: findall over a long cell with no colon rescans the rest of it at every position.
+            load = [word for word in re.split(r"[\s`,;()]+", skill) if _SKILL_NAME.fullmatch(word)]
+            if before.strip() and load:
+                found.append((before.strip(), load))
+    return found
+
+
+def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> List[_Row]:
+    """A rules.d file that holds a trigger table, with its rows as `triggers` JSON (spec section 13, migration)."""
+    folder = inputs.config_dir / "rigger" / PERSONAL_DIR
+    try:
+        names = sorted(n for n in os.listdir(str(folder)) if n.endswith(".md") and not n.startswith("."))
+    except OSError:
+        return []
+    effective = found.resolved.effective if found.resolved is not None else {}
+    shipped = {row.before: row.id for row in collect_rows(modules, effective)}
+    rows = []  # type: List[_Row]
+    for name in names:
+        try:
+            table = _table_rows((folder / name).read_bytes().decode("utf-8", "replace"))
+        except OSError:
+            continue
+        if not table:
+            continue
+        stem = slug(name[:-len(".md")]) or "rules-d"
+        triggers = {}
+        for number, (before, load) in enumerate(table, 1):
+            row_id = shipped.get(before, "personal.%s-%d" % (stem, number))
+            triggers[row_id] = {"before": before, "load": load}
+        text = json.dumps({"triggers": triggers}, ensure_ascii=False)
+        text = _shown(text, len(text) + 1)  # one line: _shown writes a control character as a JSON \u escape
+        if len(text) > TABLE_JSON_MAX:
+            text = text[:TABLE_JSON_MAX] + " …"
+        rows.append(("rules-d-table " + _shown("%s/%s" % (PERSONAL_DIR, name)), "INFO",
+                     "holds a trigger table; move its rows to triggers in %s: %s"
+                     % (_shown(_personal_config(inputs), 300), text), None))
+    return rows
 
 
 def _doctor(environ: Mapping[str, str]) -> bytes:
     """The doctor rows: rules-assembly first (WARN with the first notice that has no row of its own), then one
-    rule-override, expects and config-inactive row per finding (D11)."""
-    found = assemble(_inputs(environ, {}), "main")
+    rule-override, expects and config-inactive row per finding (D11), then the slot, slot-checker, slot-order
+    and rules-d-table rows."""
+    inputs = _inputs(environ, {})
+    found = assemble(inputs, "main")
     modules = len([m for m in found.discovery.modules if m.origin != PERSONAL])
     how = "assemble.py --doctor"
     rows = []  # type: List[Tuple[str, str, str]]
@@ -892,7 +1017,13 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
         key = _shown(".".join(path))
         where = _shown(source.partition(":")[2], 300)  # L3/L4: the file; L2: the company module
         rows.append(("config-inactive " + key, "INFO", "%s in %s: no effect in this release" % (key, where)))
-    others = [notice for notice in found.notices if notice not in own]
+    plain = [m for m in found.discovery.modules if m.origin != PERSONAL]
+    for name, status, detail, fix in (_slot_rows(found, plain, own) + _order_rows(found)
+                                      + _rules_d_rows(inputs, found, plain)):
+        rows.append((name, status, detail))
+        if fix is not None:
+            fixes[len(rows) - 1] = fix
+    others =[notice for notice in found.notices if notice not in own]
     if others:
         head = ("rules-assembly", "WARN", others[0])
     else:
