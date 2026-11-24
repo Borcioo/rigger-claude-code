@@ -329,6 +329,61 @@ class ResolveTests(unittest.TestCase):
         self.assertFalse(any(path[:2] == ("triggers", "rigger-core.debugging") for path in got.sources))
         self.assertEqual(got.notices, [])
 
+    def test_load_entry_length(self):
+        mine = {"before": "my way", "load": ["me:testing"]}
+        at_cap = {"before": "a", "load": ["x:" + "a" * 198]}
+        over = {"before": "a", "load": ["x:" + "a" * 199]}
+        self.assertEqual((len(at_cap["load"][0]), len(over["load"][0])), (200, 201))
+        kept = resolve(l4={"schema": 1, "triggers": {"mine": at_cap}})
+        self.assertEqual((kept.effective["triggers"].get("mine"), kept.notices), (at_cap, []))
+        got = resolve(l3={"schema": 1, "triggers": {"mine": mine}}, l4={"schema": 1, "triggers": {"mine": over}})
+        self.assertEqual(got.notices, ["rigger: config %s trigger mine ignored: load entry over 200 characters" % PATHS[4]])
+        self.assertEqual(got.effective["triggers"]["mine"], mine)
+        self.assertEqual(got.sources[("triggers", "mine", "before")], "L3:" + PATHS[3])
+
+    def test_row_cap_per_level(self):
+        def rows(count, prefix):
+            # Ids in descending order, so file order differs from sorted order.
+            return {"%s%02d" % (prefix, i): {"before": "a", "load": ["x:y"]} for i in range(count - 1, -1, -1)}
+
+        def cap_notice(where, count):
+            return "rigger: config %s holds %d trigger rows; the last %d ignored (at most 50 per file)" % (
+                where, count, count - 50)
+
+        base = set(level_one()["triggers"])
+        many = rows(51, "p")
+        got = resolve(l4={"schema": 1, "triggers": many})
+        self.assertEqual(got.notices, [cap_notice(PATHS[4], 51)])
+        self.assertEqual(set(got.effective["triggers"]), base | set(list(many)[:50]))
+        self.assertNotIn("p00", got.effective["triggers"])
+
+        both = resolve(l3={"schema": 1, "triggers": rows(50, "m")}, l4={"schema": 1, "triggers": rows(50, "p")})
+        self.assertEqual(both.notices, [])
+        self.assertEqual(len(both.effective["triggers"]), len(base) + 100)
+
+        with_null = dict([("rigger-core.debugging", None)] + list(rows(50, "p").items()))
+        nulled = resolve(l4={"schema": 1, "triggers": with_null})
+        self.assertEqual(nulled.notices, [cap_notice(PATHS[4], 51)])
+        self.assertNotIn("rigger-core.debugging", nulled.effective["triggers"])
+        self.assertNotIn("p00", nulled.effective["triggers"])
+        self.assertIn("p01", nulled.effective["triggers"])
+
+        broken = dict(list(rows(50, "p").items()) + [("bad", {"before": "a\nb", "load": ["x:y"]})])
+        shaped = resolve(l4={"schema": 1, "triggers": broken})
+        self.assertEqual(shaped.notices, ["rigger: config %s trigger bad ignored: before holds a line break or control character" % PATHS[4]])
+        self.assertEqual(len(shaped.effective["triggers"]), len(base) + 50)
+
+        l1 = level_one()
+        l1["triggers"].update(rows(51, "d"))
+        defaults = resolve(l1=l1)
+        self.assertEqual(defaults.notices, [])
+        self.assertEqual(len(defaults.effective["triggers"]), len(base) + 51)
+
+        company = resolve(l2=[("company-a", {"triggers": rows(51, "c")})])
+        self.assertEqual(company.notices, [cap_notice("module company-a", 51)])
+        self.assertEqual(len(company.effective["triggers"]), len(base) + 50)
+        self.assertNotIn("c00", company.effective["triggers"])
+
 
 class DefaultsTests(unittest.TestCase):
     def test_defaults_file_matches_spec(self):

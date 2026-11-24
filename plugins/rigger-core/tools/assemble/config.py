@@ -34,6 +34,7 @@ ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects"))
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = manifest.BEFORE_MAX
 LOAD_MAX = manifest.LOAD_MAX
+ROWS_MAX = 50  # trigger rows per config level 2-4, after the shape check; level 1 is exempt
 _UNSAFE = manifest.UNSAFE
 
 Path_ = Tuple[str, ...]
@@ -146,6 +147,10 @@ def _validate(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
                     notices.append("rigger: config %s trigger %s ignored: %s" % (where, _shown(row_id), problem))
                 else:
                     rows[row_id] = row
+            if level > 1 and len(rows) > ROWS_MAX:
+                notices.append("rigger: config %s holds %d trigger rows; the last %d ignored (at most %d per file)"
+                               % (where, len(rows), len(rows) - ROWS_MAX, ROWS_MAX))
+                rows = dict(list(rows.items())[:ROWS_MAX])
             value = rows
         clean[key] = value
     return clean, notices
