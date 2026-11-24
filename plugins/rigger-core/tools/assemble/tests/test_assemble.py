@@ -905,6 +905,15 @@ class CheckTests(unittest.TestCase):
         self.assertRegex(lines[-1], r"^# check: modules 7, rules files (1[9]|[2-9]\d), findings 0$")
         self.assertIn("# external: superpowers", lines)
 
+    def test_check_without_modules_in_a_cache_layout_says_it_saw_one_module(self):
+        cached = self.tmp / "cache" / "rigger" / "rigger-core" / "1.0.0"
+        shutil.copytree(str(REPO_CORE), str(cached), ignore=shutil.ignore_patterns("__pycache__"))
+        code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(cached), RIGGER_MODULE_DIRS="")
+        lines = out.decode("utf-8").splitlines()
+        self.assertEqual(code, 0, out + err)
+        self.assertRegex(lines[-2], r"^# check: modules 1, rules files \d+, findings 0$")
+        self.assertEqual(lines[-1], "# note: only this plugin was found next to itself; pass --modules <dir>... to check the others")
+
     def test_doctor_rows(self):
         self.layout.rules_module()
         code, out, _ = self.layout.cli("--doctor")

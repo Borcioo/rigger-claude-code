@@ -39,7 +39,7 @@ of every Rigger plugin:
 
 - every `*.md` file, sorted by name in byte order (`10-x.md` before `9-x.md`, `Z.md` before `a.md`);
 - a section whose id equals a Rigger section's id replaces that section in place, and the session
-  gets one line `rigger: rules.d/<file> replaces rule <id>`; `/rigger-core:doctor` lists each as a
+  gets the line `rigger: rules.d/<file> replaces rule <id>` among the notices (past 2,000 bytes of notices the rest are folded into one `rigger: N more notices not shown` line); `/rigger-core:doctor` lists each as a
   `rule-override` row. The id is the file stem, a dot and the heading slug: `rules.d/tests.md`
   with `## Tests` replaces `tests.tests`. The slug is the heading cut at the first ` (`, `:`, ` — `
   or ` - `, lower-cased, accents removed, every run of other characters turned into `-`;

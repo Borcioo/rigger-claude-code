@@ -57,8 +57,7 @@ verification, no edits).
 `rigger-module.json` (its rules files, their audience and its skill-table rows): this plugin first,
 then the marketplace's order, then the rest by name, then your `rules.d` (rigger-rules' README). It
 packs them into parts of at most 9,000 bytes; each part starts with the `Plugin root:` line of its
-first plugin. The rules print on `startup`, `clear` and `compact` (from a snapshot of the session's
-startup); `resume` prints nothing.
+first plugin. The rules print on `startup`, `clear` and `compact` (from a snapshot of the last `startup` or `clear`); `resume` prints nothing.
 
 - **Problems print as lines at the top of part 1:** `Rigger rules not loaded: … (run
   /rigger-core:doctor)` in place of the rules when Python 3.9+ is missing or the assembler fails,
@@ -83,11 +82,14 @@ startup); `resume` prints nothing.
   `load` with 1 to 4 `plugin:skill` or `slot:<name>` entries, and `section`) and, in the project
   file, `expects` (a list of plugin names) take effect. `slots`, `trust`, `review`, `shell_guard`,
   `company` and `leak_guard` are read and listed by doctor as `config-inactive`, with no effect yet.
-- **`--render [--subagent]`** prints what a session or a subagent gets; **`--check [--modules
+- **`--render [--subagent]`** prints the whole text a session or a subagent is assembled from, without the hook limits:
+  every notice, and any section the parts leave out over the 9,000-byte cap (the parts name those in their last line);
+  **`--check [--modules
   <dir>...]`** fails on a duplicate id in one layer, an orphan override (a company section whose file
   stem matches a general file but whose id matches no general section there, or an empty one), a
   section over 9,000 bytes, an unknown placeholder, a trigger `load` that resolves to nothing, or 0
-  rules files read. `rules.d` is not checked.
+  rules files read. `rules.d` is not checked. Without `--modules` it checks the plugins next to this one, which is only this
+  plugin in an installed cache: pass `--modules <dir>...` there (the summary line names how many modules it read).
 
 ## Tools
 

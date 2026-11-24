@@ -11,8 +11,8 @@ Rigger is a Claude Code plugin marketplace: a working harness for Claude Code se
 subagents. It ships seven plugins: working rules (verification, tests, scope, git) injected at
 session start and into every subagent, a lessons inbox that turns mistakes into rules, portable
 skills and agents, context and compaction guards, a side panel, and opt-in packs for native Windows
-and WordPress development. Install the plugins you want; only `rigger-rules` requires another plugin
-(`rigger-core`).
+and WordPress development. Install the plugins you want; every plugin that holds rules (`rigger-rules`,
+`rigger-lessons`, `rigger-talk`, `rigger-windows`, `rigger-wp`) requires `rigger-core`.
 
 Everything is plain Markdown, POSIX `sh` and Python hooks: read a rules file before you install it,
 and change it by forking.
@@ -23,10 +23,10 @@ and change it by forking.
 |---|---|---|---|
 | `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps, testing), agents (mapper, implementer, worker, reviewer), context-guard and compact-guard hooks, token-audit, variant-run, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
 | `rigger-rules` | default | the working rules, injected at session start and into subagents, plus every `*.md` file of your own `rules.d` folder | `rigger-core` |
-| `rigger-lessons` | default | lessons inbox count at session start, the capture rule, the `curate-lessons` skill, a lint for lessons, and opt-in background curation batches | none |
-| `rigger-talk` | opt-in | reply-format rules (language, length, report order) for the main session, configured through `userConfig` | none |
-| `rigger-windows` | opt-in, native Windows only | rules (shell, skill triggers), shell-guard hooks (deny commands certain to fail in PowerShell or Git Bash), `safe-edit.ps1`, drift-lint, `mem-check`, skills windows-dev-env, php-herd-tooling, node-versions | none |
-| `rigger-wp` | opt-in, for WordPress developers | the `rigger-wp-traps` skill, the rule that says when to load it, the `wp-outbound-block` template, and the upstream WordPress agent skills behind `wordpress-router` | none |
+| `rigger-lessons` | default | lessons inbox count at session start, the capture rule, the `curate-lessons` skill, a lint for lessons, and opt-in background curation batches | `rigger-core` |
+| `rigger-talk` | opt-in | reply-format rules (language, length, report order) for the main session, configured through `userConfig` | `rigger-core` |
+| `rigger-windows` | opt-in, native Windows only | rules (shell, skill triggers), shell-guard hooks (deny commands certain to fail in PowerShell or Git Bash), `safe-edit.ps1`, drift-lint, `mem-check`, skills windows-dev-env, php-herd-tooling, node-versions | `rigger-core` |
+| `rigger-wp` | opt-in, for WordPress developers | the `rigger-wp-traps` skill, the rule that says when to load it, the `wp-outbound-block` template, and the upstream WordPress agent skills behind `wordpress-router` | `rigger-core` |
 | `rigger-panel` | opt-in | the `/harness` command and four panes beside the chat: Rigger (the session's context, cost and limits, harness state), Issues (the GitHub issues assigned to you, read-only, through `gh`), Plan (the task list) and Environments (the project's `.claude/environments.json`) | none to run; the Rigger pane's version and Compaction rows read `rigger-core` files and its Lessons row reads the `rigger-lessons` inbox (a `?` without them) |
 
 "Default" means this README recommends it; nothing is installed for you. Each plugin has its own
@@ -179,7 +179,7 @@ it for one repo only.
 | Windows rules, shell guards and skills | `claude plugin disable rigger-windows@rigger` |
 | WordPress rule and skills | `claude plugin disable rigger-wp@rigger` |
 | the side panel and `/harness` | `claude plugin disable rigger-panel@rigger` |
-| skills, agents, guards and the state-file rule | `claude plugin disable rigger-core@rigger` (disable `rigger-rules` first: it depends on `rigger-core`) |
+| skills, agents, guards and the state-file rule | `claude plugin disable rigger-core@rigger` (disable the rules plugins first: they depend on `rigger-core`) |
 
 The skills and agents of `rigger-core` stay available without `rigger-rules`; that is why they are
 separate plugins.
@@ -190,21 +190,21 @@ claude plugin marketplace remove rigger
 ```
 
 `--keep-data` keeps a plugin's data directory. Uninstall the plugins before removing the
-marketplace, and **uninstall `rigger-rules` before `rigger-core`**: `claude plugin uninstall
-rigger-core` succeeds with only a warning, and `rigger-rules` then fails to load.
+marketplace, and **uninstall `rigger-rules`, `rigger-lessons`, `rigger-talk`, `rigger-windows` and `rigger-wp` before
+`rigger-core`**: `claude plugin uninstall rigger-core` succeeds with only a warning, and those plugins then fail to load.
 `claude plugin uninstall rigger-rules@rigger --prune -y` also removes `rigger-core` when it came in
 as a dependency.
 
 ## Where the rules are injected
 
-- Main session: each plugin that injects rules has a `SessionStart` hook on `startup|clear|compact`
-  that prints its rules files, one handler per file, after a `Plugin root: <path>` line so the rules
-  can name plugin tools without an absolute path. `resume` is left out: the resumed transcript
-  already holds the rules.
-- Subagents: a `SubagentStart` hook prints a subset. `rigger-rules` (working rules and `rules.d`),
-  `rigger-lessons` (report lessons to the main session) and `rigger-windows` (root name and default
-  shell) have one. Nothing is printed for the agents that run without `CLAUDE.md` (Explore, Plan,
-  `rigger-core:implementer`, `rigger-core:mapper`).
+- Main session: rigger-core has six `SessionStart` part handlers on `startup|clear|compact`. Together they print the rules of
+  every Rigger plugin that holds a `rigger-module.json`, after a `Plugin root: <path>` line so the rules can name plugin tools
+  without an absolute path. The other rules plugins only check that rigger-core is current. `resume` is left out: the
+  resumed transcript already holds the rules.
+- Subagents: four `SubagentStart` part handlers in rigger-core print the subset marked for subagents (working rules and
+  `rules.d`, report lessons to the main session, root name and default shell). Nothing is printed for the agents that run
+  without `CLAUDE.md` (Explore, Plan, `rigger-core:implementer`, `rigger-core:mapper`). See "Rules assembly" in the
+  `rigger-core` README.
 
 ## userConfig
 

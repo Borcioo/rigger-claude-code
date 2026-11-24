@@ -933,7 +933,7 @@ byte with LF, plus the set of root lines.
 **Exceptions, stated in the release notes:**
 
 - Python 3 becomes required for rules. It was already required for rigger-core's hooks.
-- rigger-talk and rigger-wp now pull rigger-core through `dependencies`.
+- rigger-lessons, rigger-talk, rigger-windows and rigger-wp now pull rigger-core through `dependencies`, as rigger-rules already does.
 - The rules part handlers replace the 19 `SessionStart` rules handlers of today (13 in
   rigger-rules, 2 in rigger-windows, 1 each in rigger-core, rigger-lessons, rigger-talk and
   rigger-wp). Startup time is measured on Windows and macOS and reported. It may not grow by more

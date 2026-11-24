@@ -763,6 +763,8 @@ def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
     lines = info + findings
     if not findings:
         lines.append("# check: modules %d, rules files %d, findings 0" % (count, files))
+    if "--modules" not in argv and count == 1:
+        lines.append("# note: only this plugin was found next to itself; pass --modules <dir>... to check the others")
     return (1 if findings else 0), "".join(line + "\n" for line in lines).encode("utf-8", "replace")
 
 

@@ -36,11 +36,12 @@ Update every Rigger plugin in one go, then check the machine:
   open.
 - **Python 3.9+ is required for rules.** rigger-core's hooks already needed it. Without it the
   session gets one line, `Rigger rules not loaded: Python 3 not found (run /rigger-core:doctor)`.
-- **rigger-talk and rigger-wp depend on rigger-core** (`dependencies`), like the other rules plugins.
+- **rigger-lessons, rigger-talk, rigger-windows and rigger-wp now depend on rigger-core** (`dependencies`), as rigger-rules already did: installing or updating one brings rigger-core and its hooks.
 - **Accidental override:** a `rules.d` section whose id equals a general one (same file stem and
   heading slug, for example `rules.d/tests.md` with `## Tests` and `tests.tests`) now replaces that
   section in place instead of being printed after it; a section with only its heading removes it.
-  Every replacement prints one line, `rigger: <file> replaces rule <id>`, and doctor lists it as a
+  Each replacement adds the line `rigger: <file> replaces rule <id>` to the notices at the top of part 1 (past 2,000 bytes of
+  notices, one `rigger: N more notices not shown` line stands for the rest), and doctor lists every replacement as a
   `rule-override` row. A replacement reaches only the audience of the section it replaces: one of a
   main-only section no longer reaches subagents, one of a subagent-only section no longer reaches
   the session, and that side gets only the line. A `rules.d` file named `*-main.md` stays main-only.

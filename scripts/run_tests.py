@@ -75,7 +75,10 @@ MIN_FILE = "scripts/run_tests.min"
 TIMEOUT = 120
 # A file that spawns hundreds of git and shell processes by design has its own limit: its quiet run takes 60-90 s
 # and a loaded gate nearly doubles that. Add a file here only with the spawn count that shows it.
-TIMEOUTS = {"plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300}
+TIMEOUTS = {
+    "plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300,
+    "tests/test_assembly_golden.py": 300,
+}
 KILL_TIMEOUT = 10
 # At most this many failed files are rerun alone; more is a real break, not load.
 RERUN_LIMIT = 5
