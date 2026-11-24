@@ -39,6 +39,18 @@ def inside(folder, root):
     return folder == root or folder.startswith(root.rstrip(os.sep) + os.sep)
 
 
+def searchable(entry, repo, cwd):
+    # type: (str, Path, str) -> bool
+    """`entry` is an absolute PATH entry outside `repo` and `cwd`, compared as spelled and with links resolved
+    on each side, so a junction, a symlink or a linked checkout cannot lead into either."""
+    if not os.path.isabs(entry):
+        return False
+    return not any(inside(path, base)
+                   for path in (entry, os.path.realpath(entry))
+                   for root in (str(repo), cwd)
+                   for base in (root, os.path.realpath(root)))
+
+
 def find_program(name, repo, exts):
     # type: (str, Path, Sequence[str]) -> str
     """The absolute path of program `name` + one of `exts`, from the absolute PATH entries outside `repo`
@@ -50,9 +62,7 @@ def find_program(name, repo, exts):
         raise ScopeError("a batch file is never run: %s" % ", ".join(exts))
     cwd = os.getcwd()
     for entry in os.environ.get("PATH", "").split(os.pathsep):
-        if not os.path.isabs(entry):
-            continue
-        if inside(entry, repo) or inside(entry, cwd):
+        if not searchable(entry, repo, cwd):
             continue
         for ext in exts:
             candidate = os.path.join(os.path.abspath(entry), name + ext)

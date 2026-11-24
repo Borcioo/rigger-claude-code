@@ -647,9 +647,16 @@ class ProgramTests(SlotRunCase):
             _winapi.CreateJunction(str(target), str(link))
         else:
             os.symlink(str(target), str(link))
-        code, lines = self.run_with_path(self.base_path + [str(link)])
-        self.assertEqual((code, lines), (2, ["slot-run: refused: %s resolves inside the repository" % self.name]))
-        self.assertEqual(self.reviewer_calls(), [])
+        through_link = str(link / self.file)
+        for row, entries, program, expected in (
+                ("the linked folder as an entry", self.base_path + [str(link)], None, NOT_FOUND),
+                ("the program by absolute path through the link", self.base_path, through_link,
+                 "slot-run: refused: %s resolves inside the repository" % through_link)):
+            with self.subTest(row=row):
+                self.calls = []
+                code, lines = self.run_with_path(entries, program=program)
+                self.assertEqual((code, lines), (2, [expected]))
+                self.assertEqual(self.reviewer_calls(), [])
 
     @unittest.skipUnless(NT, "a batch file runs through cmd.exe only on Windows")
     def test_batch_file_refuses(self):

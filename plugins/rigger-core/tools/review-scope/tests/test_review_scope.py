@@ -381,6 +381,36 @@ class ProgramLookupTests(GitCase):
         sibling_tool = self.program(sibling, "tool")
         self.same(self.find([str(sibling), str(self.good)]), sibling_tool)
 
+    def link(self, link, target):
+        """A junction on Windows, a symlink on POSIX: `link` leads to the folder `target`."""
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(str(target), str(link))
+        return link
+
+    def test_lookup_resolves_links_on_each_side(self):
+        """An entry, the repository or the working directory spelled through a link is compared by its real path."""
+        self.program(self.repo / "bin", "tool")
+        self.program(self.elsewhere / "bin", "tool")
+        repo_link = self.link(self.tmp / "repo-link", self.repo)
+        cwd_link = self.link(self.tmp / "cwd-link", self.elsewhere)
+        into_repo = self.link(self.tmp / "into-repo", self.repo / "bin")
+        into_cwd = self.link(self.tmp / "into-cwd", self.elsewhere / "bin")
+        # (row, the unsafe entry put before the good one, the repository as given, the working directory)
+        rows = [
+            ("an entry linked into the repository", str(into_repo), self.repo, self.elsewhere),
+            ("the repository given through a link", str(self.repo / "bin"), repo_link, self.elsewhere),
+            ("an entry linked into the working directory", str(into_cwd), self.repo, self.elsewhere),
+            ("the working directory entered through a link", str(self.elsewhere / "bin"), self.repo, cwd_link),
+        ]
+        for label, unsafe, repo, cwd in rows:
+            with self.subTest(row=label):
+                with mock.patch.dict(os.environ, {"PATH": os.pathsep.join([unsafe, str(self.good)])}):
+                    with working_directory(cwd):
+                        self.same(review_scope.find_program("tool", repo, (EXE,)), self.tool)
+
     @unittest.skipUnless(os.name == "nt", "batch files exist on Windows only")
     def test_git_lookup_never_takes_a_batch_file(self):
         batch = self.tmp / "batch"
