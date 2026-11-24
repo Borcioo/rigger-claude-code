@@ -929,6 +929,33 @@ class SlotWiringTests(Base):
         self.assertNotEqual(texts[0], texts[1])
         self.assertIn(b'["rv", "{out}"] \xe2\x80\xa6 (15 bytes, sha256:', texts[0])
 
+    def test_a_flood_of_project_notices_cannot_hide_the_slot_lines(self):
+        # Notices print up to 2,000 bytes; a project file's broken rows must not push its command line out.
+        deep = self.tmp / ("deep-" + "d" * 80)  # the notices name the config file: the same size on every system
+        deep.mkdir()
+        self.layout = Layout(deep)
+        self.layout.rules_module()
+        rows = {"p.row%02d" % n: {"before": "a\nb", "load": ["x:y"]} for n in range(80)}
+        write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["reviewer"]}})
+        commands = {"reviewer": {"kind": "command", "target": ["rv", "{out}"]},
+                    "worker": {"kind": "command", "target": ["w", "{out}"]}}
+        write_json(self.project_file(), {"schema": 1, "triggers": rows, "slots": commands})
+        first = self.layout.part(1, stdin=self.startup("fl1"))
+        self.assertIn(b"more notices not shown", first)  # the precondition: the notices overflow their cap
+        self.assertIn(b"rigger: slot reviewer runs the project's command ", first)
+        self.assertIn(b"rigger: .claude/rigger.json may not set a command for slot worker;", first)
+        # Every other slot as an untrusted command: their lines alone fill the cap; the running command stays first.
+        others = [path for path in ("worker", "implementer", "mapper", "testing", "lessons")]
+        commands = dict(commands, **{path: {"kind": "command", "target": ["w", "{out}"]} for path in others},
+                        process={role: {"kind": "command", "target": ["w", "{out}"]}
+                                 for role in ("brainstorm", "plans", "tdd", "debug")})
+        commands["reviewer"] = {"kind": "command", "target": ["rv" + "r" * 300, "{out}"]}
+        write_json(self.project_file(), {"schema": 1, "slots": commands})
+        found = self.layout.assemble()
+        self.assertGreater(sum(len(line.encode("utf-8")) + 1 for line in found.notices), 2000)
+        first = self.layout.part(1, stdin=self.startup("fl2"))
+        self.assertTrue(first.startswith(b"rigger: slot reviewer runs the project's command "), first[:120])
+
     def test_project_command_notice_stays_inside_the_part_budget(self):
         # D53: the most validation allows, 32 arguments of 500 characters; part 1 keeps its rules and the notice.
         self.layout.rules_module()
@@ -984,6 +1011,9 @@ class SlotWiringTests(Base):
         reviewer = [row for row in data["slots"]["rows"] if row["path"] == "reviewer"][0]
         self.assertEqual((reviewer["kind"], reviewer["target"], reviewer["source"]),
                          ("agent", "rigger-core:reviewer", "default"))
+        import slots  # the reader slot_run.py uses gives back the assembly's own rows
+        self.assertEqual(slots.from_snapshot(data["slots"]), (self.layout.assemble().slot_rows,
+                                                              frozenset(["process.tdd"])))
 
     def test_compact_without_a_snapshot_applies_the_trust_filter_again(self):
         self.layout.rules_module()
@@ -1027,7 +1057,17 @@ class SlotWiringTests(Base):
         rendered = self.layout.render("--session-id", "q1").decode("utf-8")
         line = command_line(tricky, "q1")
         self.assertIn(line, rendered)
-        self.assertIn("it'\\''s here", line)
+        # The shell is the oracle: it reads the two words of the printed line back as the two paths.
+        words = rendered.split("`sh ", 1)[1].split(" <slot> ", 1)[0]
+        if os.name == "nt":
+            sh = str(Path(os.environ["ProgramFiles"], "Git", "usr", "bin", "sh.exe"))
+            sh = sh if Path(sh).is_file() else shutil.which("sh")
+        else:
+            sh = "/bin/sh"
+        done = subprocess.run([sh, "-c", "printf '%s\\n' " + words], stdout=subprocess.PIPE, timeout=60)
+        root = assemble.root_text(tricky)
+        self.assertEqual(done.stdout.decode("utf-8").splitlines(),
+                         [root + "/bin/py.sh", root + "/tools/slot-run/slot_run.py"])
 
 
 def cap_rows(count, before, loads, load_len):

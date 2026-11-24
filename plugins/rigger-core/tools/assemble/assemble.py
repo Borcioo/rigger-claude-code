@@ -432,7 +432,10 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     # The only reader of slots: the plain merge in `effective` has not been through the trust filter (D33).
     slot_rows, trusted, found = slots.resolve_slots(resolved.levels, modules, enabled, _this_os(),
                                                     str(_personal_config(inputs)))
-    notices.extend(found)
+    # A session shows NOTICES_CAP bytes of notices, and a project file can fill them: the slot lines go first,
+    # a project command that will run first of all (D53).
+    runs = [line for line in found if line.startswith("rigger: slot ") and " runs the project's command " in line]
+    notices = runs + [line for line in found if line not in runs] + notices
     targets = slots.slot_targets(slot_rows)
     core = next((m for m in modules if m.name == CORE), None)
 
