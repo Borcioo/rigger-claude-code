@@ -8,8 +8,9 @@ system, the test-evidence gates and gate-lab join the testing module, rigger-win
 marketplace; and the harness gets the lane rule, a state tool, a turn-end guard for side sessions
 and the 3a backlog.
 
-**Status:** revision 2, after an independent plan review (12 Important findings, fixed here; the
-review's questions are under "Questions for the coordinator"). Written on `1ead09a` (release 0.7.0).
+**Status:** revision 3: revision 2 fixed an independent plan review's 12 Important findings;
+revision 3 adds the coordinator's items from the phase 4 overlay planning (Tasks 32–38, D94–D99)
+and the shellwise release state (D100, Task 39). Written on `1ead09a` (release 0.7.0).
 
 **Architecture:** Three merge points. PR A changes only rigger-core, the two 3a modules and shared
 test infrastructure. PR B adds new code beside rigger-windows and changes none of its files. PR C
@@ -159,6 +160,13 @@ The release notes list each one.
 10. A side session's turn end is held while its own background gate or test command runs (D89).
 11. A command reviewer's `{scope}` carries `review.paths` results (D90); the review and testing
     modules say when rigger-core is missing (D91).
+12. `--check` and doctor report a company or personal section that replaces an id the lower layer
+    no longer has (D94); doctor reports a plugin whose dependency is not installed or not allowed
+    across marketplaces (D96).
+13. Config keys `test_evidence.phrases`, `drift_lint.remote_commands`, `drift_lint.project_bins`
+    (D95) and `lessons.allowed_paths` (D97).
+14. Ported rules text: the lo-fi trap moves into `web-ui-traps`, three testing and orchestration
+    sentences and one verification sentence are added (D99); the WordPress hunk-list sentence (D98).
 
 ## Baselines measured for this plan
 
@@ -263,6 +271,13 @@ The WinError 32 cleanup error of `test_slot_run.py` (one in three runs during 3a
 | D91 | The review module gets `hooks/hooks.json` with one `SessionStart` handler `sh core_check.sh rigger-review`; the testing module adds `core_check.sh rigger-testing` to its file. Both copies byte-identical to the five others; `tests/read_by.json:24` (`test_core_check.py`) gains both modules. | Owner's scope item 4; core_check prints nothing when rigger-core is present. |
 | D92 | WinError 32 and the `test_report_shadow.py` flake did not reproduce (48 runs). Task 11 adds a diagnostic to `test_slot_run.py`'s cleanup (on `PermissionError`: the path and the alive child processes of the test process to stderr, one retry after 0.5 s; a retry that succeeds still prints `# cleanup retried: <path>` so a run report shows it; a second failure re-raises with that text) and splits `test_slot_run.py` (70–114 s against 120 s). No product change without a reproduction. | A fix without the failure is a guess; the time limit is a measured risk. |
 | D93 | Read-by refinement: each of the nine `*` entries whose file the lint derives as reading a finite set of modules gets that set; `*` stays only for a file that iterates `plugins/*`. | Fewer tests per module change, the same coverage. |
+| D94 | Stale replaced id: `assemble.py --check` gains the finding `stale override`: a section of a module at a layer above `general` (company or personal) whose file stem matches a lower layer's rules file but whose id (`<stem>.<slug(heading)>`, `sections.py:55-69`) no longer exists there. It names the missing id, the overriding file and the lower file; doctor shows it as an error row. Today such a section is appended (`assemble.py:388-414`), so the session gets both rules; the existing `orphan override` finding (`:794-799`) covers only a stem with no lower file or an empty body. Task 32 reproduces the silent case first. | Phase 4 overlay finding: a Rigger rename of a replaced id must not print both rules in silence. |
+| D95 | Homes and language of the rigger-windows tools the overlay does not want as they are: **`stop_shadow.py` → the testing module**, its English claim, negation, disclosure and status word lists (`stop_shadow.py:23-37`) move to a data file `tools/test-evidence/phrases.json` (`{"format": 1, "claim": [...], …}`, English shipped) and config key `test_evidence.phrases` (levels 2–3) adds lists, so no language is fixed in code; **`turn_evidence.py` → the testing module**, its regexes (`:84-95`) match test-runner output formats, not a person's language, so they stay in code; **drift-lint → rigger-core**, it names no hosting provider (map: 0 hits), and its `REMOTE_COMMANDS` and `PROJECT_BINS` constants (`drift_lint.py:65,67`) become defaults that config key `drift_lint.remote_commands` / `drift_lint.project_bins` (levels 2–3) extends. None is dropped: gate-lab replays the Stop rows, and the drift check is core's. | Phase 4 overlay item 2; a company or personal layer adds its own words without a code change. |
+| D96 | Dependency doctor row: doctor reads each enabled plugin's `plugin.json` `dependencies` and reports `ERROR dependency <plugin> needs <dep>: not installed or not enabled` when the dependency is missing from `installed_plugins.json` or `enabledPlugins`; for a plugin whose marketplace is not the dependency's, it also reads that marketplace's `marketplace.json` and reports a missing `allowCrossMarketplaceDependenciesOn` entry with the fix. A static row cannot prove the plugin did not load; `CONTRIBUTING.md` and the README state the cross-marketplace rule (install exits 0 and the plugin does not load, the debug log says `dependency-unsatisfied`). Task 33 Step 1 observes where the CLI keeps a marketplace's `marketplace.json` before the row reads it. | Phase 4 overlay item 3, spiked by the overlay session on CLI 2.1.327. |
+| D97 | Lessons lint extra paths: config key `lessons.allowed_paths` (levels 2–3, at most 50 globs of at most 200 characters) adds allowed path patterns to `lessons_lint.py`'s fixed set (`:44-51`); the lint reads it through rigger-core's config module found by `installed_plugins.json`, and without rigger-core uses the fixed set and says so. | Overlay R4. |
+| D98 | rigger-wp hunk list: the WordPress module adds one rules sentence that the final report's hunk list (`rigger-talk/rules/talk.md:30-32`) counts WordPress options, capabilities and nonces as the kinds it lists. | Overlay R5. |
+| D99 | Port check (overlay R6), each ported or dropped with its reason: **ported** the "lo-fi means no styling" trap (moved from `plans-main.md:23-25` into `web-ui-traps` with "lo-fi screens" in its description and trigger row), the testing skill's override-table rule (a table that overrides a default rule is tested with inputs whose result differs) and its scratch-copy rule (a scratch copy of a worktree deletes its `.git` first), the reviewer re-measure sample (`orchestrating-subagents`), "count per day and endpoint" in `verify.md`; the coordinator 2-slot sentence comes with Task 2. **Dropped:** the production-versus-DEV computed-style comparison (a site-release step of one company's workflow), the hosting-provider backup rule (one provider's skill), the lessons maintainer routing (overlay R1, the next Rigger phase). | The source harness's curated lessons since the split; port what is general. |
+| D100 | shellwise pin: 3b pins `v0.1.0` and requires no rule that only a later release has. Task 39 bumps the pin to `v0.1.1` once that release exists (the owner's call); it is outside the 3b release. Known gap after the bump too: `gate-truncated-pipeline` matches a producer by its program name, so `python -I scripts/gate.py | head` and `python safe_edit.py … | head` are not caught; Rigger relies on its own rules text for its gate, not on shellwise. | Coordinator note: shellwise PR #5 is merged on its `main` but not released. |
 
 ## Rulings on the plan's questions
 
@@ -323,6 +338,14 @@ writes these into the spec.
 | `plugins/rigger-core/tools/assemble/tests/test_stub_session.py` (shellwise and guard cases), `docs/superpowers/spikes/phase-3b/exit-criteria.md` | 28 | stub exit criteria |
 | `CHANGELOG.md`, module READMEs, `CONTRIBUTING.md`, the spec file | 29 | docs, migration |
 | `scripts/run_tests.min`, PR C body | 31 | gate C |
+| `plugins/rigger-core/tools/assemble/assemble.py` (`--check`, `_doctor`), `test_assemble.py` | 32 | stale override |
+| `plugins/rigger-core/tools/assemble/assemble.py` (`_doctor`) or `tools/doctor/doctor.sh`, their tests, `CONTRIBUTING.md`, `README.md` | 33 | dependency row |
+| `plugins/rigger-lessons/tools/lessons_lint.py`, `plugins/rigger-lessons/tests/test_lessons_lint.py`, `plugins/rigger-core/tools/assemble/config.py` (`lessons`), `test_config.py` | 34 | lessons paths |
+| `plugins/rigger-wp/rules/*.md` (one sentence), `plugins/rigger-rules/tests/test_plugin_rules.py` | 35 | WordPress hunk list |
+| `plugins/rigger-core/skills/{web-ui-traps,orchestrating-subagents}/SKILL.md`, `plugins/rigger-core/rigger-module.json` (trigger row), `plugins/rigger-rules/rules/{plans-main.md, verify.md}`, `plugins/rigger-testing/skills/testing/SKILL.md`, `test_plugin_rules.py`, `test_core_wiring.py` | 36 | ports |
+| `plugins/rigger-TESTING/tools/test-evidence/{stop_shadow.py, phrases.json}`, its tests, `config.py` (`test_evidence`) | 37 | phrase lists |
+| `plugins/rigger-core/tools/drift-lint/drift_lint.py`, its tests, `config.py` (`drift_lint`) | 38 | drift-lint lists |
+| `plugins/rigger-SHELLWISE/{pin.json, tools/rule-checker/rule_checker.py}`, `tests/test_pin.py`, `shellwise.toml` | 39 | pin bump (after 3b) |
 
 ## Lanes
 
@@ -332,7 +355,9 @@ them in the order under the table.
 
 | Lane | Parts (in order) | Model | Heavy | Shared files |
 |---|---|---|---|---|
-| A1 coordinate | 2 | opus | light | `test_core_wiring.py` |
+| A1 coordinate and ports | 2 → 36 | opus, sonnet | light | `test_core_wiring.py`, `orchestrating-subagents/SKILL.md` |
+| A6 assembly checks | 32 → 33 | sonnet, opus | light (32), heavy (33: isolated `claude plugin` runs) | `assemble.py` |
+| A group 2 | 34, 35 | sonnet | light | `config.py` (34; rebase on B2 is not needed: B starts after A merges) |
 | A2 state | 3 → 4 → 7 | opus, sonnet, sonnet | light | core `hooks.json`, `test_repo.py`, `hook_latency.py`, `read_by.json` |
 | A3 turn-end | 1 → 5 | opus, opus | heavy (1), light (5) | core `hooks.json` (after A2's Task 4) |
 | A4 review scope | 8 → 9 → 12 | sonnet, opus, sonnet | light | `read_by.json` |
@@ -343,14 +368,16 @@ them in the order under the table.
 | B2 mem-check | 20 | opus | light | `config.py`, `test_config.py` |
 | B3 safe-edit | 21 | sonnet | light | — |
 | B gate | 22 | sonnet | heavy | — |
-| C1 hand-over | 23 → 24 → 25 → 26 → 27 | opus, sonnet, sonnet, opus, sonnet | heavy (23–26 run the full `--fix-round`, 26 also the WSL leg), light (27) | every registry; one lane, so one writer |
+| C1 hand-over | 23 → 37 → 24 → 38 → 25 → 26 → 27 | opus, sonnet, sonnet, opus, sonnet | heavy (23–26 run the full `--fix-round`, 26 also the WSL leg), light (27) | every registry; one lane, so one writer |
 | C2 proof and docs | 28 → 29 → 30 | opus, sonnet, opus | heavy, light, heavy | starts after 27 |
 | C gate | 31 | sonnet | heavy | — |
 
 Merge order where lanes share a file: A2's Task 4 before A3's Task 5 (core `hooks.json`); A2's
 Task 7 and A4's Task 12 and A5's Task 11 each rebase on the last `read_by.json` before merging; B2
-before B1's Task 19 (`config.py`). Lanes at once: A starts A1, A2, A3 (Task 1), A4, A5 and the
-group: 6 sessions, 2 of them heavy at most (Tasks 1 and 11). B starts 3. C runs as one lane because
+before B1's Task 19 (`config.py`). Lanes at once: A starts A1, A2, A3 (Task 1), A4, A5, A6 and
+the two groups: 8 sessions, 3 of them with a heavy part (Tasks 1, 11, 33); the coordinator holds the
+third until one of the others ends. Task 32 merges before any other `assemble.py` change of PR A
+(Task 10): the two edit different functions, and Task 10 rebases on it. B starts 3. C runs as one lane because
 every task in it edits the same registries.
 
 ---
@@ -473,6 +500,44 @@ One test on the row text and its empty fix; red; fix; commit `fix(rigger-core): 
 
 - [ ] **Step 1:** Print each `*` entry's derived reads; narrow per D93; `test_wildcards_only_for_files_that_iterate_plugins`. Red run: a new module literal in a narrowed entry's file (the declared-read test red). Commit `test: narrow the read-by wildcards`.
 
+### Task 32: Stale replaced section id
+
+**Light, sonnet. 2 h, 60 code, 120 test lines.** Inputs: none. Output: D94. Numbered after the
+first plan's tasks (added by the coordinator from the overlay planning). **Files:** file map row 32.
+
+- [ ] **Step 1: Reproduce.** A scratch module at layer `company` (through `RIGGER_MODULE_DIRS`) with `git.md` whose heading slug differs from every heading of rigger-rules' `git.md`; run `assemble.py --check` and `--render`; record the findings line and whether both rules render. Known answer: the same module with a matching heading replaces in place.
+- [ ] **Step 2:** Tests: `test_stale_override_names_the_id_and_both_files` (the renamed-id fixture: the finding text holds the missing id, the overriding file and the lower file; exit status of `--check` non-zero), `test_matching_override_is_not_flagged` (control), `test_personal_layer_too`, `test_doctor_shows_the_stale_override`. Red; implement; green; red runs (the stem check dropped; the layer check dropped).
+- [ ] **Step 3: Commit.** `feat(rigger-core): --check reports an override of a section id the lower layer no longer has`
+
+### Task 33: Doctor row for a dependency that did not load
+
+**Heavy (isolated `claude plugin` runs), opus. 2.5 h, 70 code, 120 test lines.** Inputs: Task 32
+(same file). Output: D96. **Files:** file map row 33.
+
+- [ ] **Step 1: Spike** under a fresh isolated `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PLUGIN_CACHE_DIR`: add two directory marketplaces, install a plugin from one that depends on a plugin of the other, without and with `allowCrossMarketplaceDependenciesOn`; record where `marketplace.json` of each added marketplace lives under the config dir (`known_marketplaces.json`, the clone folder), what `installed_plugins.json` and `enabledPlugins` hold in each case. Known answer: the overlay session's table (install exits 0 both times; the dependency is installed only with the allowlist).
+- [ ] **Step 2:** Tests from the spike's layouts: `test_missing_dependency_is_an_error_row`, `test_cross_marketplace_without_allowlist_names_the_fix`, `test_dependency_present_is_ok` (control), `test_a_plugin_without_dependencies_has_no_row`. Red; implement; green; one red run per row.
+- [ ] **Step 3:** The cross-marketplace rule in `CONTRIBUTING.md` and the README. Commit `feat(rigger-core): doctor reports a plugin whose dependency is missing or not allowed`.
+
+### Task 34: Lessons lint reads extra allowed paths
+
+**Light, sonnet. 2 h, 60 code, 100 test lines.** Inputs: none. Output: D97. **Files:** file map
+row 34.
+
+- [ ] Tests: `test_config_paths_extend_the_allowed_set` (a level-3 glob allows a lesson's path that the fixed set refuses), `test_bad_entries_are_dropped_with_a_notice`, `test_no_rigger_core_uses_the_fixed_set_and_says_so`, `test_level_4_is_ignored`. Red; implement; green; red runs (level 4 accepted; the cap off). Commit `feat(rigger-lessons): config adds allowed path patterns to the lessons lint`.
+
+### Task 35: The WordPress hunk-list sentence
+
+**Light, sonnet. 0.5 h, 5 code, 15 test lines.** Inputs: none. Output: D98. **Files:** file map
+row 35. One pin in `test_plugin_rules.py`, red, the sentence, green, the rules tests and drift-lint.
+Commit `feat(rigger-wp): the final report's hunk list names options, capabilities and nonces`.
+
+### Task 36: Ports from the source harness
+
+**Light, sonnet. 1.5 h, 40 code, 40 test lines.** Inputs: Task 2 (same skill file). Output: D99.
+**Files:** file map row 36.
+
+- [ ] Port each sentence of D99 in this repository's words (no company names, "user" for the owner); move the lo-fi sentence out of `plans-main.md:23-25` into `web-ui-traps` and add "lo-fi screens" to its description and trigger row; one pin per ported sentence in `test_plugin_rules.py` or `test_core_wiring.py`; red, write, green; `test_plugin_rules.py`, drift-lint, golden and assemble tests for the trigger row. The report lists each dropped item with D99's reason. Commit `docs(rules): port the general lessons curated in the source harness`.
+
 ### Task 13: Gate and pull request A
 
 **Heavy, sonnet. 1.5 h.** Set `run_tests.min`; full gate in the background; `--verify` (`(full)`);
@@ -493,7 +558,7 @@ Review round; Tasks 3 and 5 get the second round (D65).
 - [ ] **Step 1:** Download the four archives and their `.sha256` files into a new empty folder; compute SHA-256 of each archive and compare with its file (known answer: the release's own files). Record names, sizes, hashes.
 - [ ] **Step 2:** Unpack (Windows `.zip`; Linux `.tar.gz` under WSL); list members (expected `shellwise-v0.1.0-<target>/shellwise[.exe]` plus licence files); `--version` (expected `shellwise 0.1.0`).
 - [ ] **Step 3:** `explain <id>` for the 53 documented ids (exit 0 each) and for `bash-ps-call-operator` (expected 64): the `RULES` list.
-- [ ] **Step 4:** Rerun every probe of the rule map's Table 1 at defaults and with `shellwise.toml` (D78) on Windows (Git Bash and pwsh) and Linux; mark each row that differs from the map. Probe `python safe_edit.py --run x 2>&1 | Select-Object -First 30` with the config (expected break). Check the output has no `config-invalid`.
+- [ ] **Step 4:** Rerun every probe of the rule map's Table 1 at defaults and with `shellwise.toml` (D78) on Windows (Git Bash and pwsh) and Linux; mark each row that differs from the map. Probe `python safe_edit.py --run x 2>&1 | Select-Object -First 30` with the config and record the result (D100: a script host other than pwsh may not match `gate_commands`; a miss is listed as a gap, not a failure). Check the output has no `config-invalid`.
 - [ ] **Step 5:** `hook claude-code` with a Claude Code PreToolUse stdin for one `break`, one `warn` and one clean command; record stdout and the exit code of each (this decides how Task 17's launcher passes the decision on).
 - [ ] **Step 6:** One stub session per system (Windows, WSL) whose SessionStart hook starts a detached child (`subprocess.Popen` with `start_new_session` on POSIX, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` on Windows, no inherited handles) that writes a marker 15 s later; control: a non-detached child. Record whether the marker appears after the hook returned and after the session ended.
 - [ ] **Step 7:** Write the result file; sweep; commit `docs(spikes): record the pinned shellwise release`.
@@ -581,6 +646,13 @@ evals, drift-lint and the two `.ps1` tools only. **Files:** file map row 23.
 - [ ] **Step 4: Wiring, third commit:** D79's handlers and the async Stop row in the testing module's `hooks.json`; `HAND_MADE_HOOKS` fates, counts, `:405-411` (6 handlers at 20), `:469`, `FAIL_OPEN_PLUGINS` (rigger-windows out), `TIMEOUTS` path (`run_tests.py:101`), `run_tests.py:119` (`test_rules.py` out of `SERIAL`), the 31 `test_rules.py` rows out of `sweep-allow.txt` and the 10 turn-evidence rows re-pathed, `read_by.json:31`, `hook_latency.py:669-670` `CASES`, `test_slots.py` and `test_assembly_golden.py` (`SHELL_GUARD_FILLED`) for the new default; the "Shadow gates" text becomes `tools/test-evidence/README.md` and `CONTRIBUTING.md:109-113` points at it; `CLAUDE.md:21`'s gate-lab path; replay's `--data` accepts the rigger-windows data folder.
 - [ ] **Step 5: Tests:** the moved suites pass; `test_rigger_windows_manifest_names_only_its_files` (every path in its manifest, `hooks.json` commands and README exists); a wiring test runs both commit handlers' commands from the testing module's `hooks.json` on a commit in a temp repo with `.claude/gates.json` and finds one row; `TEST_EVIDENCE=off` writes none; the slot rows show the shellwise default on all three systems. Red runs: a handler's `if` text; the marker text; the switch; a manifest path left behind; the default switch reverted. Full `run_tests.py --fix-round`. Commit `refactor(rigger-testing): take over the test-evidence gates and gate-lab; shellwise fills the shell guard`.
 
+### Task 37: The Stop shadow's word lists leave the code
+
+**Light, sonnet. 2 h, 80 code, 120 test lines.** Inputs: Task 23. Output: D95's `phrases.json` and
+`test_evidence.phrases`. **Files:** file map row 37.
+
+- [ ] Tests: the moved `test_stop_shadow.py` passes with the lists read from `phrases.json` (the same verdicts on its fixtures); `test_config_phrases_extend_the_lists` (a level-3 list in another language makes a claim fire); `test_missing_or_bad_phrase_file_writes_an_error_row` (no crash, verdict `error`, reason `phrases`); a pin that `stop_shadow.py` holds no word list. Red; implement; green; red runs (config ignored; a list left in code). Commit `refactor(rigger-testing): the Stop shadow's word lists come from data and config`.
+
 ### Task 24: drift-lint moves to rigger-core
 
 **Heavy, sonnet. 2 h.** Inputs: Task 23. Output: D82. **Files:** file map row 24.
@@ -588,6 +660,13 @@ evals, drift-lint and the two `.ps1` tools only. **Files:** file map row 23.
 `read_by.json:30`, the 10 `sweep-allow.txt` rows; full `--fix-round`; commit. Then D82's
 `trigger-load` check with a test and a planted control (a trigger loading a missing skill); commit
 `feat(rigger-core): drift-lint checks trigger loads`.
+
+### Task 38: drift-lint's command lists from config
+
+**Light, sonnet. 1.5 h, 50 code, 80 test lines.** Inputs: Task 24. Output: D95's
+`drift_lint.remote_commands` and `drift_lint.project_bins`. **Files:** file map row 38.
+
+- [ ] Tests: `test_config_extends_remote_commands` and `test_config_extends_project_bins` (a level-3 entry changes a finding), `test_defaults_name_no_provider` (the default lists pass `sweep.py`'s host rule and hold only generic tool names), `test_level_4_is_ignored`. Red; implement; green; red runs. Commit `feat(rigger-core): drift-lint's command lists take config entries`.
 
 ### Task 25: The platform module
 
@@ -641,10 +720,20 @@ second round. Merging and the release are the owner's steps.
 
 ---
 
+## After 3b: the pin bump
+
+### Task 39: Bump the shellwise pin to v0.1.1
+
+**Heavy (downloads), opus. 1.5 h, 10 code, 20 test lines; not in the 3b estimate.** Inputs: a
+shellwise `v0.1.1` release (the owner's call; shellwise PR #5 is merged on its `main`, not released).
+Output: D100's bump. **Files:** file map row 39.
+
+- [ ] Task 14 Steps 1–4 on `v0.1.1` (hashes against the release's `.sha256` files, `--version`, `explain` for the new ids, the rule-map probes: `bash-ps-call-operator` break in Bash and Git Bash, `gate-truncated-pipeline` firing in Bash for `| tee log | head`); `pin.json`, `RULES` and `test_pin.py`; Task 28's real-download stub case; the release notes name the two rules. Commit `feat(rigger-shellwise): pin shellwise 0.1.1`.
+
 ## Left for later
 
-- A shellwise pin bump to the release that carries shellwise PR #5 (`bash-ps-call-operator`, the
-  wait-loop and follow bounds): one `pin.json` and `RULES` edit (D77).
+- Task 39, once shellwise `v0.1.1` is released. The `gate-truncated-pipeline` gap for script hosts
+  other than pwsh (`python -I scripts/gate.py | head`) stays after it (D100).
 - Linux arm64 and Windows arm64 assets: the shellwise owner's call.
 - The redundant-prose cuts, if question 3 defers them.
 - The hook-process merge, argv-hash pinning of `trust.project_commands`, a Go or Rust port: out of
@@ -686,7 +775,17 @@ second round. Merging and the release are the owner's steps.
 | 29 docs | 2 | — | — |
 | 30 release review | 2 | — | — |
 | 31 gate C | 1.5 | — | — |
-| **Total** | **76.5** | **about 2,525** | **about 4,055** |
+| 32 stale override | 2 | 60 | 120 |
+| 33 dependency row | 2.5 | 70 | 120 |
+| 34 lessons paths | 2 | 60 | 100 |
+| 35 WordPress hunk list | 0.5 | 5 | 15 |
+| 36 ports | 1.5 | 40 | 40 |
+| 37 phrase lists | 2 | 80 | 120 |
+| 38 drift-lint lists | 1.5 | 50 | 80 |
+| **Total** | **88.5** | **about 2,890** | **about 4,650** |
+
+Task 39 (the pin bump, 1.5 h, 10 and 20 lines) comes after the 3b release and is not in the total.
+By pull request: A 33.5 h, B 25.5 h, C 29.5 h.
 
 About 9,000 lines move with `git mv` and are not counted; about 4,500 lines are deleted (the deny
 half of the guard, its tests, the `.ps1` files).
@@ -699,8 +798,8 @@ owner's added scope (coordinate, state, turn-end, backlog) adds about 24 h; the 
 the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours and phase 3a's at
 1.9.
 
-**Simpler version, about 46 h, 1,515 code lines, 2,435 test lines:**
-- **What it keeps:** PR A whole; mem-check and safe-edit in Python (the `.ps1` tools stay in
+**Simpler version, about 56 h, 1,800 code lines, 2,910 test lines:**
+- **What it keeps:** PR A whole (with Tasks 32–36); Task 38; mem-check and safe-edit in Python (the `.ps1` tools stay in
   rigger-windows beside them); drift-lint to core (Task 24) and the platform module (Task 25), each
   with its rigger-windows manifest edit; the wording (Task 27, after 25); Task 28 for the turn-end
   guard only. rigger-windows keeps only the guard, the test-evidence gates, gate-lab and the `.ps1`
@@ -708,8 +807,9 @@ the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours 
 - **What it drops, with what each saves:**
   - the shellwise module and its spike (Tasks 14–19, 17 h, 700 and 1,180 lines): no guard on macOS
     and Linux; the Python guard stays the Windows filler;
-  - the guard hand-over (Task 23, 6 h, 160 and 180 lines): the test-evidence gates and gate-lab stay
-    in rigger-windows with the guard they live in;
+  - the guard hand-over and the phrase lists (Tasks 23 and 37, 8 h, 240 and 300 lines): the
+    test-evidence gates and gate-lab stay in rigger-windows with the guard they live in, their word
+    lists in code;
   - the removal (Task 26, 4.5 h, 150 and 200 lines) and half of the docs and stub work (3 h, 60
     test lines): rigger-windows stays one more release.
 - It keeps more than the decisions doc's simpler version (platform module and mem-check only): the
@@ -734,3 +834,7 @@ the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours 
 9. **Task 23 is large** (six moves, a default switch, a deletion and the wiring) because a smaller
    cut leaves rigger-windows running a moved script. It commits in three steps, and the coordinator
    may give it two sessions in a row (Steps 1–2, then 3–5) on the same branch.
+10. **shellwise does not catch a truncated Rigger gate** (`python -I scripts/gate.py | head`), not
+    even after Task 39 (D100). The gate rule in Rigger's own rules text stays the guard for it.
+11. **The dependency row is static** (D96): it sees a missing or disallowed dependency, not a plugin
+    the CLI refused for another reason.

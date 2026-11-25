@@ -286,6 +286,21 @@ The Stop handler's timeout rises from 10 to 15 s. A missing field or unreadable 
 - Read-by map: the nine `*` entries are narrowed to the modules their files read where the lint can
   derive a finite set.
 
+### 11. Added from the phase 4 overlay planning
+
+- `--check` reports a company or personal section that replaces an id the lower layer no longer has
+  (today it is appended and both rules print).
+- The Stop shadow's word lists move to a data file plus a config key; `turn_evidence.py`'s
+  test-runner regexes stay in code; drift-lint's command lists take config entries. All three stay
+  (testing module, testing module, rigger-core).
+- Doctor reports a plugin whose dependency is not installed, not enabled, or not allowed across
+  marketplaces (`allowCrossMarketplaceDependenciesOn`); the docs state the rule.
+- The lessons lint takes extra allowed paths from config (levels 2–3); the WordPress module's
+  hunk-list sentence; general lessons curated in the source harness are ported, the rest recorded
+  as dropped with a reason.
+- shellwise stays pinned at `v0.1.0`; the bump to `v0.1.1` is a task after the 3b release, and
+  nothing in 3b needs its rules.
+
 ## Left to the builder
 
 The Windows memory call (after a spike), file and class names inside the moved test files, the
@@ -293,8 +308,8 @@ exact wording of notices that no test pins, the order of the platform skill's cu
 
 ## Estimate and simpler version
 
-The plan prices it: about 76.5 agent hours, 2,525 lines of code and 4,055 of tests, about 9,000
-lines moved unchanged and 4,500 deleted. Simpler version, about 46 hours: rigger-windows stays as
+The plan prices it: about 88.5 agent hours, 2,890 lines of code and 4,650 of tests, about 9,000
+lines moved unchanged and 4,500 deleted. Simpler version, about 56 hours: rigger-windows stays as
 the Windows shell-guard filler for one more release (the decisions doc's simpler version), and the
 shellwise module, the test-evidence and gate-lab moves and the removal wait; it keeps the platform
 module, mem-check, safe-edit, drift-lint in core, the coordinate, state and turn-end work and the
