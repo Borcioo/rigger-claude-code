@@ -18,13 +18,19 @@
 | (c) Linux launcher (WSL) | **`/bin/sh -c "<command>"`.** On Ubuntu that is dash, `$0` `/bin/sh`, and the parent is `claude`. `SHELL` (zsh here) is not used. | `hook_latency.py` on Linux: `["/bin/sh", "-c", command]`. |
 
 In both launchers the command text reaches the shell unexpanded: the shell itself expands
-`${CLAUDE_PLUGIN_ROOT}` from the environment. On Windows that variable holds a path with forward
-slashes (`<drive>:/…`). Claude Code's debug log prints the command with the root already substituted.
+`${CLAUDE_PLUGIN_ROOT}` from the environment. On Windows the hook read that variable as a path with
+forward slashes (`plugin_root=<drive>:/…`). Claude Code's debug log prints the command with the root
+already substituted.
+
+On Windows, `claude.exe` starts `<Git>\bin\bash.exe` directly, with nothing in between. In two
+reruns the hook's grandparent process id equalled the `Popen` id of the `claude.exe` the driver
+started.
 
 ## CLI
 
-The version of each binary was read in a scratch config dir right before its first run. Each
-session's debug log confirms it (`cc_version`).
+Each Windows binary's version was read in a scratch config dir right before its first run. The WSL
+version was read in a scratch config dir after its session. Each session's debug log confirms the
+version (`cc_version`).
 
 | Binary | `--version` | Debug log | Used for |
 |---|---|---|---|
@@ -98,7 +104,8 @@ Claude Code's debug log names the shell it picked: `Using bash path: "<Git>\bin\
   ```
   The listing before the install held nothing (`<no file>`, `enabledPlugins: {}`). This run is
   also the negative control for (b): `s17-one` has no dependency, and no `s17-base` appears.
-- **(c) the probe run by hand.** Each control's known answer was read before the session runs:
+- **(c) the probe run by hand.** The Git Bash control's answer was read before the Windows
+  sessions. The WSL control ran after the WSL session:
 
   | Run by hand | `$0` of the sourced probe | Shell |
   |---|---|---|
@@ -176,6 +183,21 @@ The `sh "${CLAUDE_PLUGIN_ROOT}/probe.sh" child` handler runs `<Git>\usr\bin\sh.e
 That gives three processes per hook: the `<Git>\bin\bash.exe` wrapper, `usr\bin\bash.exe`, and the
 `sh.exe` that rigger's hooks name.
 
+A rerun per binary added one more level: the process id and exe of the wrapper's parent. The
+`claude pid` line is the driver's `Popen` id:
+
+```text
+claude pid (Popen): 56512
+plugin_root=<drive>:/<temp>/probe/plugin
+win_parent_exe=<Git>\bin\bash.exe
+win_grandparent_pid=56512
+win_grandparent_exe=<home>\.local\bin\claude.exe
+win_grandparent_name=claude.exe
+```
+
+The desktop copy shows the same: `claude pid (Popen): 56060`, `win_grandparent_pid=56060`,
+`win_grandparent_exe=<home>\AppData\Roaming\Claude\claude-code\2.1.330\<build>\claude.exe`.
+
 `SHELL` reads `/bin/bash.exe` inside the hook even when the child environment has no `SHELL`, so
 the Git Bash launcher sets it. Debug log, PATH CLI:
 
@@ -221,14 +243,14 @@ The `child` handler's parent is `/bin/sh -c sh "${CLAUDE_PLUGIN_ROOT}/probe.sh" 
     dependency is left as it is, so the version-skew note about updating rigger-core stays.
 - **(c) for Task 3 (D66):** `measure` starts a handler the way Claude Code does:
   - **Windows:** `[<Git>\bin\bash.exe, "-c", command]`, the file the debug line
-    `Using bash path:` names. How Claude Code finds that file was not observed here (one Git
-    install, at its default path). Task 3 resolves `bash.exe` in `<Git>\bin` and prints the path
-    it used.
+    `Using bash path:` names, started directly by `claude.exe`. How Claude Code finds that file
+    was not observed here: this machine has one Git install, at its default path. How Task 3
+    locates it is Task 3's choice.
   - **Linux:** `["/bin/sh", "-c", command]`.
   - **macOS:** not observed (no local macOS). The Linux form `/bin/sh -c` is assumed, and Task 3's
     result file says so.
   - **Both systems:** the command text is passed as written, with `CLAUDE_PLUGIN_ROOT` in the
     environment. On Windows its value has forward slashes.
-  - **The Windows floor** is the time of `<Git>\bin\bash.exe -c 'exit 0'`, not `sh -c 'exit 0'`.
-    The wrapper adds a second process before rigger's own `sh`, so the plan's 53–62 ms floor for
-    `sh -c` understates what a person pays.
+  - **The Windows floor:** the launcher Task 3 times as its floor is `<Git>\bin\bash.exe -c`, which
+    starts `usr\bin\bash.exe`. This spike timed nothing, so how that floor compares with the
+    plan's `sh -c` baseline is Task 3's measurement.
