@@ -1,6 +1,7 @@
 """Resolve the four config levels: Rigger defaults, company modules, personal, project (spec section 7).
 
-`triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4) and `trust` (level 3) apply.
+`triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4), `trust` (level 3) and `review`
+(levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -32,7 +33,9 @@ KEYS = {
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
-ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust"))
+ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review"))
+REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
+REVIEW_TEXT_MAX = 200  # characters of a review.paths glob or skip reason
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = manifest.BEFORE_MAX
 LOAD_MAX = manifest.LOAD_MAX
@@ -74,6 +77,11 @@ def load_level(path: Path, level: int) -> Tuple[dict, List[str]]:
         return {}, []
     except OSError as error:
         return {}, ["rigger: config %s ignored: %s" % (_shown(path, 300), _shown(error.strerror or error))]
+    return parse_level(raw, path)
+
+
+def parse_level(raw: bytes, path) -> Tuple[dict, List[str]]:
+    """The bytes of one config file named `path` as load_level reads them: {} and one notice when refused."""
     try:
         data = json.loads(raw.decode("utf-8-sig"))
     except RecursionError:
@@ -121,7 +129,75 @@ _line_problem = manifest.line_problem
 _row_problem = manifest.row_problem
 
 
-def _validate(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
+def _text_problem(name: str, text: str, limit: Optional[int] = None) -> Optional[str]:
+    """Why config text printed into a review_scope line is refused: a tab or a line break would forge a row."""
+    if any(unicodedata.category(ch) in _UNSAFE for ch in text):
+        return "%s holds a line break or control character" % name
+    if limit is not None and len(text) > limit:
+        return "%s over %d characters" % (name, limit)
+    return None
+
+
+def _path_entry_problem(glob: str, entry) -> Optional[str]:
+    """Why one review.paths entry is refused (D61), or None; null is the merge's removal."""
+    if not glob:
+        return "glob is empty"
+    problem = _text_problem("glob", glob, REVIEW_TEXT_MAX)
+    if problem:
+        return problem
+    if entry is None:
+        return None
+    if isinstance(entry, str):
+        entry = {"rules": entry}
+    elif not isinstance(entry, dict):
+        return "must be a rules file or an object"
+    elif not entry:
+        return "needs rules or skip"
+    unknown = sorted(key for key in entry if key not in ("rules", "skip"))
+    if unknown:
+        return "unknown key %s" % _shown(unknown[0])
+    for key, limit in (("rules", None), ("skip", REVIEW_TEXT_MAX)):
+        if key not in entry:
+            continue
+        value = entry[key]
+        if not isinstance(value, str) or not value:
+            return "%s must be a non-empty string" % key
+        problem = _text_problem(key, value, limit)
+        if problem:
+            return problem
+    return None
+
+
+def _review(value: dict, where: str) -> Tuple[dict, List[str]]:
+    clean = {}
+    notices = []
+    for key, item in value.items():
+        if key != "paths":
+            notices.append("rigger: config %s review key %s unknown; ignored" % (where, _shown(key)))
+            continue
+        if item is None:
+            clean[key] = None
+            continue
+        if not isinstance(item, dict):
+            notices.append("rigger: config %s review.paths must be an object; ignored" % where)
+            continue
+        kept = {}
+        for glob, entry in item.items():
+            problem = _path_entry_problem(glob, entry)
+            if problem:
+                notices.append("rigger: config %s review.paths %s ignored: %s" % (where, _shown(glob), problem))
+            else:
+                kept[glob] = entry
+        if len(kept) > REVIEW_PATHS_MAX:
+            notices.append("rigger: config %s holds %d review.paths entries; the last %d ignored (at most %d per file)"
+                           % (where, len(kept), len(kept) - REVIEW_PATHS_MAX, REVIEW_PATHS_MAX))
+            kept = dict(list(kept.items())[:REVIEW_PATHS_MAX])
+        clean[key] = kept
+    return clean, notices
+
+
+def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
+    """The keys of one level's data that its level allows, each of the right shape, and a notice per drop."""
     clean = {}
     notices = []
     for key, value in data.items():
@@ -156,6 +232,9 @@ def _validate(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
                                % (where, len(rows), len(rows) - ROWS_MAX, ROWS_MAX))
                 rows = dict(list(rows.items())[:ROWS_MAX])
             value = rows
+        if key == "review":
+            value, found = _review(value, where)
+            notices.extend(found)
         clean[key] = value
     return clean, notices
 
@@ -170,7 +249,7 @@ def resolve(l1: dict, l2: List[Tuple[str, dict]], l3: dict, l4: dict, paths: Dic
         if problem:
             notices.append("rigger: config %s ignored: %s" % (where, problem))
             return {}
-        clean, found = _validate(data, level, where)
+        clean, found = validate_level(data, level, where)
         notices.extend(found)
         if level == 1:
             return clean
