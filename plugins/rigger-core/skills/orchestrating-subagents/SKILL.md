@@ -25,7 +25,8 @@ findings fixed once at the phase's end.
 ## Parallel work
 
 - "A separate agent" means a subagent. Start a separate session only when the user asks for one,
-  or the work ends in its own branch, PR or repo.
+  the work ends in its own branch, PR or repo, or `/rigger-core:coordinate` runs a plan (the sessions
+  its step 2 lists).
 - Run independent areas in parallel, each with its own worktree (a path outside the repo), port and
   scratch subfolder (`<scratch>/<task>`), all named in the brief. Stay sequential where files overlap. The
   same holds for separate sessions: one that writes works in its own worktree, not the shared
@@ -52,7 +53,8 @@ findings fixed once at the phase's end.
   rigger-windows installed (it prints the minimum); elsewhere check free memory with the OS's tool.
   Heavy jobs (WSL, Docker, wp-env, e2e) run at most 2 at once.
   Without a lock, count the heavy jobs you dispatched that are still running, and wait while the
-  limit is reached. The plan names the suites that assert on timing: their final tally runs alone,
+  limit is reached; the sessions of one coordinator share these 2 slots, and the coordinator counts
+  them, lock or not. The plan names the suites that assert on timing: their final tally runs alone,
   or the brief states the N-of-10 pass threshold. A brief for sessions that run in parallel names its unit-test gate with a worker cap (e.g. `npx vitest run --maxWorkers=2`). A full run that is red only under load is rerun once alone with the cap: a pass there is reported as load-sensitive with both outputs, never as a plain pass.
 - The site the user clicks through runs a pinned checkout of reviewed commits, never a tree agents
   edit.
