@@ -22,6 +22,16 @@
         ]
       },
       {
+        "matcher": "startup|clear|compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/state/state.py\" hook || true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "startup|clear|compact",
         "hooks": [
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/tools/assemble/part.sh\" 1", "timeout": 10 },

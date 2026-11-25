@@ -746,8 +746,7 @@ def restore(ctx):
         if os.path.lexists(target):
             continue
         try:
-            os.replace(entry.path, target)
-            os.utime(target, (ctx.now, ctx.now))
+            os.replace(entry.path, target)   # keeps the archive time: compact_guard reads staleness from mtime
         except OSError:
             continue
         restored += 1

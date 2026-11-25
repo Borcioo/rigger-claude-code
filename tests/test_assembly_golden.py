@@ -69,6 +69,28 @@ PLANS_OLD = (b"- A brief or full requirements never waive brainstorming or plann
              b"  `superpowers:brainstorming`, then `superpowers:writing-plans`), the thinking pass (goal, reader,\n")
 PLANS_NEW = (b"- A brief or full requirements never waive brainstorming or planning (load the brainstorm and\n"
              b"  plans skills the Skill triggers table names), the thinking pass (goal, reader,\n")
+STATE = "## State file for long sessions"
+STATE_OLD = (gb.ROOT / "tests" / "fixtures" / "golden-34e7713" / "plugins" / "rigger-core" / "rules"
+             / "state-file.md").read_bytes().replace(b"\r\n", b"\n").rstrip(b"\n") + b"\n"
+STATE_NEW = (  # phase 3b D87, written by hand: work items go through the state tool
+    b"## State file for long sessions\n"
+    b"- **Long sessions keep a state file; they never hand off.** Main session only (subagents never\n"
+    b"  write one). From a plan's first task boundary or the context reminder, keep\n"
+    b"  `<config dir>/state/<CLAUDE_CODE_SESSION_ID>.md` (`CLAUDE_CONFIG_DIR`, else `~/.claude`):\n"
+    b"  `---` / `safe_to_compact: true` / `updated: <ISO time>` / `plan:`, `stop:` when set / `---`,\n"
+    b"  then goal, plan file, commits, running agents, `## Next step`, `## Items`, `## Keep verbatim`\n"
+    b"  (exact errors, file:line, commands, ids, decisions and why), lessons. Rewrite it at each task\n"
+    b"  boundary (commit, green tests, subagent result), refreshing Next step and Keep verbatim,\n"
+    b"  with `true`; set `false` before a step that must not be cut (merge, migration).\n"
+    b"  Compaction waits for `true`; after it, continue from Next step without\n"
+    b"  asking or writing a\n"
+    b"  handoff.\n"
+    b"- **The state file stays under 9 000 characters,** all that comes back after compaction.\n"
+    b"  `## Next step` is the first section: rewrite it, never append to it, at most ~15 lines. History\n"
+    b"  goes to `<session id>.log.md`, linked\n"
+    b"  from the state file.\n"
+    b"- **Change `## Items` only with `<Plugin root>/tools/state/state.py add|set|note|done`**; act\n"
+    b"  on stale items named at session start.\n")
 SLOT_ROWS = [  # D36, written by hand: every slot at its default, superpowers enabled
     b"| reviewer | agent | rigger-review:reviewer | by-rule | default |\n",
     b"| worker | agent | rigger-core:worker | by-rule | default |\n",
@@ -205,6 +227,17 @@ def _plans_wording(scenario, roots, pieces) -> bool:
     return True
 
 
+def _state_items(scenario, roots, pieces) -> bool:
+    at = _piece(pieces, "rigger-core", STATE)
+    if at is None:
+        return False
+    key, text = pieces["rigger-core"][at]
+    if text.count(STATE_OLD) != 1:
+        raise AssertionError("the frozen state-file piece changed: %r" % text[:300])
+    pieces["rigger-core"][at] = (key, text.replace(STATE_OLD, STATE_NEW))
+    return True
+
+
 # D40's fixed list, in the order it is applied; every entry must apply in at least one scenario.
 ALLOWED = [
     ("the rigger-rules table moves to rigger-core and merges the three tables", _merged_table),
@@ -215,6 +248,7 @@ ALLOWED = [
     ("rigger-core gains ## Slots for the main session", _slots_section),
     ("subagents get rigger-core's root line", _core_root_for_subagents),
     ("## Plans: main session names the table, not the slots", _plans_wording),
+    ("the state-file section sends work items through the state tool", _state_items),
 ]
 
 
