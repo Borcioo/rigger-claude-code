@@ -1476,7 +1476,7 @@ class CheckTests(unittest.TestCase):
 
 
 class StaleOverrideTests(unittest.TestCase):
-    """D94: a company or personal section in a file whose stem a lower layer has, under an id that layer lacks."""
+    """D94: a company section in a file whose stem the general layer has, under an id that layer lacks."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -1514,6 +1514,8 @@ class StaleOverrideTests(unittest.TestCase):
         more = lay.module("mod-b", {"rules/tests.md": ("## More tests\n\nm\n", "both")})
         acme = lay.module("acme", {"rules/tests.md": ("## Plans\n\nours\n", "both"),
                                    "rules/policy.md": ("## Policy\n\nnew\n", "both")}, layer="company")
+        # A second company file with a stem only the company layer has: no general file lies below it.
+        lay.module("acme-b", {"rules/policy.md": ("## Policy extra\n\ne\n", "both")}, layer="company")
         lay.personal("tests.md", "## Tests\n\nmine\n")
         lay.personal("notes.md", "## Notes\n\nmine\n")
         code, out, err = self.check(lay.core, good, more, acme)
@@ -1521,19 +1523,21 @@ class StaleOverrideTests(unittest.TestCase):
         self.assertEqual(self.doctor_rows(), [])
         self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [])
 
-    def test_personal_layer_too(self):
+    def test_personal_layer_adds_sections(self):
+        # D1: rules.d is additive (curate-lessons writes rules.d/lessons.md), so a new id there is no stale override.
         lay = self.layout
         self.lower()
+        lay.module("rigger-lessons", {"rules/lessons.md": ("## Lessons\n\nl\n", "both")})
         lay.module("acme", {"rules/policy.md": ("## Policy\n\np\n", "both")}, layer="company")
-        lay.personal("tests.md", "## Tests\n\nmine\n## Testing notes\n\nmore\n")
-        lay.personal("policy.md", "## Policy rules\n\nmine\n")
-        self.assertEqual(self.doctor_rows(), [
-            ["CHECK", "stale-override policy.policy-rules", "WARN",
-             "stale override policy.policy-rules in rules.d/policy.md: acme/rules/policy.md has no such id, so both "
-             "rules print", "assemble.py --doctor"],
-            ["CHECK", "stale-override tests.testing-notes", "WARN",
-             "stale override tests.testing-notes in rules.d/tests.md: rigger-rules/rules/tests.md has no such id, so both "
-             "rules print", "assemble.py --doctor"]])
+        lay.personal("lessons.md", "## Git\n\n- a lesson\n")
+        lay.personal("tests.md", "a line with no heading\n")  # tests._preamble
+        lay.personal("policy.md", "## Policy rules\n\nmine\n")  # over a company file
+        self.assertEqual(self.doctor_rows(), [])
+        found = lay.assemble()
+        self.assertEqual([n for n in found.notices if "stale" in n], [])
+        self.assertIn(b"- a lesson", lay.part(1))  # read, so the silence is not a skipped rules.d
+        lay.module("acme-b", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        self.assertEqual([row[1] for row in self.doctor_rows()], ["stale-override tests.testz"])  # company still fires
 
     def test_doctor_shows_the_stale_override(self):
         lay = self.layout
@@ -1551,10 +1555,10 @@ class StaleOverrideTests(unittest.TestCase):
         # Nobody runs doctor daily: the session that gets both rules says so, in one line.
         lay = self.layout
         self.lower()
-        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
-        lay.personal("tests.md", "## Tests a\n\na\n## Tests b\n\nb\n## Tests c\n\nc\n## Tests d\n\nd\n")
-        line = ("rigger: stale override tests.testz in acme/rules/tests.md, tests.tests-a in rules.d/tests.md, "
-                "tests.tests-b in rules.d/tests.md +2 more: the lower rules file has no such id, so both rules "
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n## Tests a\n\na\n## Tests b\n\nb\n## Tests c\n\nc\n",
+                                               "both")}, layer="company")
+        line = ("rigger: stale override tests.testz in acme/rules/tests.md, tests.tests-a in acme/rules/tests.md, "
+                "tests.tests-b in acme/rules/tests.md +1 more: the lower rules file has no such id, so both rules "
                 "print (run /rigger-core:doctor)")
         self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [line])
         self.assertIn(line.encode("utf-8") + b"\n", lay.part(1))
@@ -1650,6 +1654,14 @@ class DependencyRowTests(unittest.TestCase):
         self.plugin("mod-b@company-fx", ["core-a@core-fx"])
         self.assertEqual(self.rows()[0][3], "needs core-a@core-fx: not installed or not enabled, so mod-b@company-fx "
                                             "does not load")
+
+    def test_a_string_allowlist_allows_nothing(self):
+        # marketplace.json is another maintainer's file: a string is a wrong shape, never a substring match (D2).
+        self.marketplace("core-fx")
+        self.marketplace("company-fx", allow="core-fx")
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.assertTrue(self.rows()[0][3].endswith("install skips it until company-fx's marketplace.json lists "
+                                                   "\"core-fx\" in allowCrossMarketplaceDependenciesOn"))
 
     def test_dependency_present_is_ok(self):
         self.marketplace("core-fx")

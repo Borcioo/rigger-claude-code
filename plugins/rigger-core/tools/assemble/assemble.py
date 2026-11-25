@@ -182,8 +182,8 @@ def _note_lower(lower: _Lower, stem: str, where: str, section_id: str) -> None:
 
 
 def stale_override(layer: str, stem: str, section_id: str, where: str, lower: _Lower) -> Optional[str]:
-    """D94: a section above the general layer in a file whose stem a lower layer has, under an id it lacks, is
-    appended instead of replacing anything, so the session prints both rules."""
+    """D94: a company section in a file whose stem the general layer has, under an id it lacks, is appended
+    instead of replacing anything, so the session prints both rules. The personal layer adds sections by design."""
     if LAYER_RANK[layer] == 0:
         return None
     known = lower.get(stem)
@@ -466,7 +466,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
 
     entries = []  # type: List[_Entry]
     index = {}  # type: Dict[str, int]
-    below = {"general": {}, "company": {}}  # type: Dict[str, _Lower]
+    general = {}  # type: _Lower  the general layer, below every company file
     stale = []  # type: List[Tuple[str, str, str]]
     for layer in ("general", "company"):
         for module in modules:
@@ -481,10 +481,11 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
                     continue
                 where = "%s/%s" % (module.name, rule.file)
                 for section in split(_stem(rule.file), data):
-                    line = stale_override(layer, section.stem, section.id, where, below["general"])
+                    line = stale_override(layer, section.stem, section.id, where, general)
                     if line:
                         stale.append((section.id, where, line))
-                    _note_lower(below[layer], section.stem, where, section.id)
+                    if layer == "general":
+                        _note_lower(general, section.stem, where, section.id)
                     _place(entries, index, _Entry(section.id, layer, module, rule.file, section.text, rule.audience,
                                                   section.heading, rule.requires), notices)
             if layer == "general" and module is core:  # D36: ## Slots closes rigger-core's rules
@@ -496,11 +497,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     personal = next((m for m in discovery.modules if m.origin == PERSONAL), None)
     if personal is not None and any(m.name == RULES_MODULE for m in modules):  # D4
         kept, extra = _personal_entries(personal, subagent)
-        lower = {}  # type: _Lower  general and company both lie below the personal layer
-        for layer in ("general", "company"):
-            for stem, (where, ids) in below[layer].items():
-                lower.setdefault(stem, (where, set()))[1].update(ids)
-        for name, piece in kept:
+        for name, piece in kept:  # adds sections by design (rules.d/lessons.md): never a stale override (D1)
             file = "%s/%s" % (PERSONAL_DIR, name)
             if not piece:  # its "cannot read" line goes where the file would have printed (M3)
                 line = next(e for e in extra if e.line and e.file == file)
@@ -509,9 +506,6 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
                 continue
             main_only = name.endswith("-main.md")
             for section in split(_stem(name), piece):
-                line = stale_override(PERSONAL, section.stem, section.id, file, lower)
-                if line:
-                    stale.append((section.id, file, line))
                 _place(entries, index, _Entry(section.id, PERSONAL, None, file, section.text,
                                               "main" if main_only else "both", section.heading), notices)
     ordered = entries + extra  # the left-out line ends the personal text
