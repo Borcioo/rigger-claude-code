@@ -585,8 +585,9 @@ class RenderTests(Base):
         # The batch's child environment, without the hook's plugin root, which would make rigger-lessons the core.
         self.assertEqual((record["plugin_root"], record["config"]), (None, str(self.config)))
         # Run from the run's own temp folder, never from the folder the batch started in (a repository here).
-        self.assertEqual(os.path.normcase(os.path.normpath(record["cwd"])),
-                         os.path.normcase(os.path.normpath(marked.group(1))))
+        # The folder is gone by now, so compare real paths: getcwd() resolves a linked temp folder (macOS /var).
+        self.assertEqual(os.path.normcase(os.path.realpath(record["cwd"])),
+                         os.path.normcase(os.path.realpath(marked.group(1))))
 
     def test_render_of_the_real_assembler_from_a_cache_copy(self):
         """The real rigger-core `assemble.py --render`, from a copy laid out like the plugin cache."""
