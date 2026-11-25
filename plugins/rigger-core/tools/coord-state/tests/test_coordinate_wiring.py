@@ -129,6 +129,19 @@ class CoordinateWiring(unittest.TestCase):
         # Rules reach the model as literal text, so `${CLAUDE_PLUGIN_ROOT}` there stays unexpanded.
         self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", STATE_FILE)
 
+    def test_coordinate_marks_a_full_risk_part_reviewed_after_round_two(self):
+        step_four = " ".join(COORDINATE[COORDINATE.index("\n4. "):COORDINATE.index("\n5. ")].split())
+        self.assertIn("For a Risk-full part, `move <part> reviewed` comes after the second round: a fresh agent of "
+                      "the `reviewer` slot reviews again after the first fix round (`orchestrating-subagents`, Fix "
+                      "rounds).", step_four)
+
+    def test_an_empty_reviewer_slot_stops_the_plan_as_goal_unreachable(self):
+        step_four = " ".join(COORDINATE[COORDINATE.index("\n4. "):COORDINATE.index("\n5. ")].split())
+        self.assertIn("With the `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install "
+                      "line from the session notice; never skip the review or give it to an agent outside the slot. "
+                      "That part stays `built`; set `stop: goal-unreachable` and ask the user to run that "
+                      "install line (step 6).", step_four)
+
     def test_empty_output_is_not_an_ok(self):
         for out in ("", "\n", "coord-state: refused: x\n", "Python 3.9+ not found\n"):
             self.assertFalse(re.search(r"^coord-state: ok ", out, re.M))

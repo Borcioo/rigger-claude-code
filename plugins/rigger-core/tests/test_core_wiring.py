@@ -217,6 +217,59 @@ class FindingLabelTests(unittest.TestCase):
         self.assertIn("A Critical finding on a Risk-full change", rounds)
 
 
+def flat(text):
+    return " ".join(text.split())
+
+
+def fix_rounds():
+    skill = SKILL.read_text(encoding="utf-8")
+    return flat(skill.split("## Fix rounds and progress", 1)[1])
+
+
+def sentence_with(text, start):
+    """The sentence of the whitespace-normalised `text` that begins with `start`, up to its full stop."""
+    at = text.find(start)
+    if at < 0:
+        return ""
+    end = text.find(". ", at)
+    return text[at:] if end < 0 else text[at:end + 1]
+
+
+class SecondReviewRoundTests(unittest.TestCase):
+    """Phase 3a D65: a Risk-full change gets a second fresh review round; dismissal needs a quoted line;
+    an empty `reviewer` slot blocks the review."""
+
+    def test_full_risk_changes_get_a_second_round(self):
+        overview = flat(SKILL.read_text(encoding="utf-8").split("\nWords used below.", 1)[0])
+        self.assertIn("one review per plan, plus a per-task review for security, data, money and shared "
+                      "infrastructure; a Risk-full change also gets a second fresh reviewer after the first "
+                      "review's fix round;", overview)
+        self.assertIn("The second round's agent of the `reviewer` slot gets the first review's findings with "
+                      "their outcomes and the fix diff, and is asked only for what the first did not find; its "
+                      "Critical and Important findings go through a fix round and a re-review, never a third "
+                      "fresh round.", fix_rounds())
+
+    def test_a_finding_is_disputed_only_with_a_quoted_line(self):
+        self.assertIn("A finding is marked `disputed` only with a quoted `file:line` that proves it wrong, and one "
+                      "about concurrency, bounds, behaviour or compatibility, authorisation, money or data goes to "
+                      "a fresh reviewer first.", fix_rounds())
+
+    def test_an_empty_reviewer_slot_blocks_the_review(self):
+        start = "With the `reviewer` slot empty, the review is blocked"
+        texts = {"SKILL.md": fix_rounds(),
+                 "coordinate.md": flat((CORE / "commands" / "coordinate.md").read_text(encoding="utf-8"))}
+        for name, text in texts.items():
+            with self.subTest(file=name):
+                sentence = sentence_with(text, start)
+                self.assertEqual(sentence, "With the `reviewer` slot empty, the review is blocked: report it as "
+                                           "`BLOCKED` with the install line from the session notice; never skip "
+                                           "the review or give it to an agent outside the slot.")
+
+    def test_an_empty_reviewer_slot_inside_a_plan_is_a_stop(self):
+        self.assertIn("Inside an approved plan it is a stop: block that part, merge nothing of it and report it "
+                      "with the install line.", sentence_with(fix_rounds(), "Inside an approved plan it is a stop"))
+
+
 class SlotWordingTests(unittest.TestCase):
     """Phase 2 Task 16: the agent texts name slots or the Skill triggers table (D41, D46, D49); the reviewer
     agent's pins moved with it to the review module."""

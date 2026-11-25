@@ -73,7 +73,12 @@ one full gate runs on the machine at a time.
    other writer is active on those files. After the evidence check, call
    `move <part> built --head <sha> --evidence '<its gate pass line>'`; after a review with no
    finding for the part, `move <part> reviewed --evidence '<review result>'`; a fix round sends it
-   back with `move <part> started --evidence '<finding>'`.
+   back with `move <part> started --evidence '<finding>'`. For a Risk-full part,
+   `move <part> reviewed` comes after the second round: a fresh agent of the `reviewer` slot
+   reviews again after the first fix round (`orchestrating-subagents`, Fix rounds). With the
+   `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install line from
+   the session notice; never skip the review or give it to an agent outside the slot. That part
+   stays `built`; set `stop: goal-unreachable` and ask the user to run that install line (step 6).
 5. Merge each reviewed part into the integration branch (the approved plan is
    the user's OK; the default branch only on their explicit instruction, at
    `stop: main`, also when it is the integration branch), and call
