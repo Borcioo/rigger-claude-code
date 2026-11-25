@@ -524,6 +524,48 @@ class TurnGuardTests(unittest.TestCase):
         self.assertEqual((clean, len(notices)), ({}, 1))
 
 
+class LoadTests(unittest.TestCase):
+    """D80: load.min_free_gb (a number, 0-1024) and load.max_heavy_agents (a whole number, 1-8), levels 1-4;
+    a bad value is dropped with one notice, so mem_check's per-system default stays."""
+
+    def test_good_values_apply_at_every_level(self):
+        good = {"min_free_gb": 2.5, "max_heavy_agents": 1}
+        for edge in ({"min_free_gb": 0, "max_heavy_agents": 8}, {"min_free_gb": 1024, "max_heavy_agents": 1}):
+            clean, notices = config.validate_level({"load": edge}, 3, "w")
+            self.assertEqual((clean, notices), ({"load": edge}, []))
+        got = resolve(l1=dict(level_one(), load={"min_free_gb": 9}), l2=[("acme", {"load": {"max_heavy_agents": 3}})])
+        self.assertEqual((got.effective["load"], got.notices), ({"min_free_gb": 9, "max_heavy_agents": 3}, []))
+        got = resolve(l3={"schema": 1, "load": {"min_free_gb": 6}}, l4={"schema": 1, "load": good})
+        self.assertEqual((got.effective["load"], got.notices), (good, []))
+        self.assertEqual(got.sources[("load", "min_free_gb")], "L4:" + PATHS[4])
+        self.assertEqual(got.inactive, {})
+        self.assertEqual([source for source, data in got.levels if "load" in data], ["L3:" + PATHS[3], "L4:" + PATHS[4]])
+
+    def test_a_bad_value_is_dropped_with_one_notice(self):
+        rows = [({"min_free_gb": "6"}, "load.min_free_gb must be a number from 0 to 1024"),
+                ({"min_free_gb": True}, "load.min_free_gb must be a number from 0 to 1024"),
+                ({"min_free_gb": -0.5}, "load.min_free_gb must be a number from 0 to 1024"),
+                ({"min_free_gb": 1024.5}, "load.min_free_gb must be a number from 0 to 1024"),
+                ({"min_free_gb": float("nan")}, "load.min_free_gb must be a number from 0 to 1024"),
+                ({"max_heavy_agents": 2.0}, "load.max_heavy_agents must be a whole number from 1 to 8"),
+                ({"max_heavy_agents": False}, "load.max_heavy_agents must be a whole number from 1 to 8"),
+                ({"max_heavy_agents": 0}, "load.max_heavy_agents must be a whole number from 1 to 8"),
+                ({"max_heavy_agents": 9}, "load.max_heavy_agents must be a whole number from 1 to 8"),
+                ({"heavy": 1}, "load key heavy unknown")]
+        for value, notice in rows:
+            with self.subTest(value=value):
+                got = resolve(l3={"schema": 1, "load": value})
+                self.assertEqual(got.effective.get("load"), {})
+                self.assertEqual(len(got.notices), 1, got.notices)
+                self.assertIn(notice, got.notices[0])
+                self.assertIn(PATHS[3], got.notices[0])
+        got = resolve(l4={"schema": 1, "load": [4]})
+        self.assertNotIn("load", got.effective)
+        self.assertIn("key load must be an object", got.notices[0])
+        clean, notices = config.validate_level({"load": {"min_free_gb": None}}, 4, "w")
+        self.assertEqual((clean, notices), ({"load": {"min_free_gb": None}}, []))
+
+
 class DefaultsTests(unittest.TestCase):
     def test_defaults_file_matches_spec(self):
         path = config.defaults_path(CORE_ROOT)
