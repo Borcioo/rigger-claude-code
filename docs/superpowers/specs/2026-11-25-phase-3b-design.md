@@ -260,8 +260,8 @@ The heavy-job sentence stays inside the one `mem-check` bullet of the skill
 session (the marker the lane's first task measures; with none, any session), is not a coordinator
 (`coordinator: true` in its state file) and is not a `claude -p` run (`CLAUDE_CODE_ENTRYPOINT`
 `sdk-cli`, which waits for its tasks itself), and `background_tasks` lists a `shell` task whose
-command is a gate or test command (a fixed list: `gate.py`, `run_tests.py`, `pytest`, `unittest`,
-`npm test`, `vitest`, `jest`, `phpunit`, `playwright`, `go test`, `cargo test`, `safe_edit`), poll
+command is a gate or test command (a fixed list: `gate.py`, `run_tests.py`, `pytest`, `python -m unittest`,
+`npm test`, `npm run test`, `vitest`, `jest`, `phpunit`, `playwright`, `go test`, `cargo test`, `safe_edit`), poll
 its output file for `[exited with code` or `[killed]` up to 4 s; still running → block with
 `side session: your background task <id> (<description>) is still running; wait for it inside this
 turn (a bounded wait on its end), then report`. It blocks at most 3 times per task id, counted in
