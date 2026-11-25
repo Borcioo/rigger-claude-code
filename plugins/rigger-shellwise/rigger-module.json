@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "name": "rigger-shellwise",
+  "layer": "general",
+  "fills": "shell-guard",
+  "failure_mode": "closed",
+  "provides": {
+    "shell-guard": {
+      "kind": "hook",
+      "target": "rigger-shellwise"
+    }
+  },
+  "rules": [],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": [
+      "shell-guard"
+    ]
+  }
+}

@@ -26,8 +26,10 @@ import run_tests  # noqa: E402
 import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
-PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows")
-PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
+PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows", "rigger-shellwise")
+# rigger-shellwise has no hooks.json until its launcher and hooks arrive.
+PLUGINS_WITH_HOOKS = tuple(name for name in PLUGINS_WITH_PY_SH if name != "rigger-shellwise") + (
+    "rigger-rules", "rigger-talk", "rigger-wp")
 # Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
 PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk",
                            "rigger-review", "rigger-testing")
@@ -68,6 +70,7 @@ class ManifestTests(unittest.TestCase):
                 "rigger-talk",
                 "rigger-wp",
                 "rigger-windows",
+                "rigger-shellwise",
                 "rigger-panel",
             ],
         )
@@ -105,14 +108,14 @@ class ManifestTests(unittest.TestCase):
             + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
             + sorted(ROOT.glob("plugins/*/rigger-module.json"))
         )
-        self.assertEqual(len(manifests), 19)
+        self.assertEqual(len(manifests), 21)
         for path in manifests:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertFalse(find_key(load_json(path), "version"))
 
     def test_every_plugin_has_a_valid_module_manifest(self):
         roots = sorted(path.parent.parent for path in ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
-        self.assertEqual(len(roots), 9)
+        self.assertEqual(len(roots), 10)
         for root in roots:
             with self.subTest(plugin=root.name):
                 module = manifest.load_manifest(root, "rigger", "installed")
@@ -129,6 +132,8 @@ class ManifestTests(unittest.TestCase):
             "rigger-testing": ("testing", None, {"testing": testing}, []),
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
             "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
+            "rigger-shellwise": ("shell-guard", "closed", {"shell-guard": {
+                "kind": "hook", "target": "rigger-shellwise"}}, ["shell-guard"]),
             "rigger-rules": (None, None, {}, []),
             "rigger-talk": (None, None, {}, []),
             "rigger-wp": (None, None, {}, []),

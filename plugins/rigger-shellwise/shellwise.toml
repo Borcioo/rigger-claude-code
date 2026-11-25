@@ -1,0 +1,47 @@
+# shellwise integration config: wherever shellwise has a rule for a shape your previous guard
+# denied, that rule denies here too (break or danger), at the same strictness as before.
+# A shape shellwise has no rule for stays unchecked; no key can add one.
+# Pass it to the hook with --config <this file>; the user file overrides it and the repo file
+# can only raise levels on top of it.
+
+# The host's hook timeout in milliseconds. shellwise ends its analysis 1500 ms before it and
+# rejects a value below 3000.
+hook_timeout_ms = 5000
+
+# Commands whose output must not be cut short by a pipe into Select-Object -First or head.
+# Globs on the command's file name; a script host that runs one of them counts too.
+# A tee'd producer is always watched, with or without this list.
+gate_commands = ["safe-edit*", "safe_edit*"]
+
+# Optional top-level keys, commented out; none of them changes the strictness below. Keep them
+# above the first table header.
+# walk_budget_ms = 3000                  # bound for the folder walks of the delete rules
+# scratch_dir = "scratch"                # where the too-long fix says to write the command
+
+# Skipping a repository's hooks (git commit --no-verify, -c core.hooksPath=...) is a policy
+# rule that is off unless enabled here. Once on, its level is danger.
+[policies]
+git_no_verify = true
+
+# A level set here replaces the rule's default for every case it reports, so a rule that has a
+# danger case is set to danger, never to break, which would lower that case.
+[levels]
+# warn by default, raised to break
+bash-msys-path-mangle = "break"
+bash-vendor-bin-shebang = "break"
+bash-versioned-php = "break"
+gate-truncated-pipeline = "break"
+git-unreadable = "break"
+ps-bare-bash = "break"
+ps-dotnet-relative-path = "break"
+ps-unix-command = "break"
+# break for some cases and warn for others; every case is raised to break
+bash-backslash-collapse = "break"
+# warn for named files, danger for the repo root or a forced removal through a link;
+# danger keeps the stricter cases as they are and raises the rest
+git-restore-discards = "danger"
+git-worktree-junction = "danger"
+
+# Optional table, commented out; it does not change the strictness above.
+# [limits]
+# git_bash_command = 7000                # escaped length from which too-long denies Git Bash
