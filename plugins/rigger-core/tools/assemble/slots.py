@@ -369,9 +369,16 @@ def resolve_slots(levels: List[Tuple[str, dict]], modules: List[Module], enabled
             model = entry.get("model") if entry["kind"] in ("agent", "command") else None
             rows.append(Row(path, entry["kind"], copy.deepcopy(entry["target"]), model, source, (), None, True))
 
-    filled = {row.path: row.filled for row in rows}
-    kept = [row for row in rows
-            if _requires_met((entries[row.path] or {}).get("requires"), filled, os_name, enabled)]
+    # A row left out by its own requires fills no slot: drop rows until every kept row's requires holds over
+    # the kept rows alone, the view the trigger rows read through slot_targets.
+    kept = rows
+    while True:
+        filled = {row.path: row.filled for row in kept}
+        still = [row for row in kept
+                 if _requires_met((entries[row.path] or {}).get("requires"), filled, os_name, enabled)]
+        if len(still) == len(kept):
+            break
+        kept = still
     for row in kept:
         notices.extend(walk_notices[row.path])
         if row.kind == "hook":
