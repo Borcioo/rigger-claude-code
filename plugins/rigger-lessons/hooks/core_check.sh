@@ -47,8 +47,9 @@ paths=$(awk -v name="$name" '
     if (index($0, "\"rigger-core@")) print "listed -"
     # A file Claude Code is still writing ends early. A whole JSON object closes its last string and, outside
     # its strings, has as many closing braces as opening ones. split() on the quote keeps this linear: a gsub
-    # over the whole file is quadratic in gawk. A quote after an odd run of backslashes is escaped.
-    pieces = split($0, piece, "\"")
+    # over the whole file is quadratic in gawk. A quote after an odd run of backslashes is escaped. The separator
+    # is a regex: macOS awk splits at every newline too when it is a one-character string.
+    pieces = split($0, piece, /"/)
     inside = 0
     opened = 0
     shut = 0
