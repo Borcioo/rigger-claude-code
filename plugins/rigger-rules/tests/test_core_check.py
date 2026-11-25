@@ -16,13 +16,20 @@ sys.dont_write_bytecode = True
 
 PLUGIN = Path(__file__).resolve().parent.parent
 PLUGINS = PLUGIN.parent
-# Every plugin whose rules rigger-core prints: each warns for itself when it moved past the installed core.
-RULES_PLUGINS = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
+# Every plugin that needs rigger-core: each warns for itself when it moved past the installed core, or when it is
+# installed with no core at all.
+RULES_PLUGINS = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk", "rigger-review",
+                 "rigger-testing")
 
 
 def line(name):
     return ("Rigger rules not loaded for %s: rigger-core is older than %s (run claude plugin update rigger-core)\n"
             % (name, name)).encode("utf-8")
+
+
+def missing(name):
+    return ("Rigger rules not loaded for %s: rigger-core is not installed (run claude plugin install rigger-core)\n"
+            % name).encode("utf-8")
 
 
 LINE = line("rigger-rules")
@@ -162,13 +169,17 @@ class CoreCheckTests(unittest.TestCase):
             # A directory marketplace runs hooks from its source while installPath is a stale snapshot.
             ("rules runs from another folder than its installPath",
              {"rigger-rules@rigger": self.rules, "rigger-core@rigger": old}, {"root": source}, b""),
-            ("no rigger-core entry", {"rigger-rules@rigger": self.rules}, {}, b""),
+            ("no rigger-core entry", {"rigger-rules@rigger": self.rules}, {}, missing("rigger-rules")),
+            # --plugin-dir or a directory marketplace: the plugin runs from a folder no installPath names.
+            ("no rigger-core entry, run from another folder", {"rigger-rules@rigger": self.rules}, {"root": source},
+             b""),
+            ("no rigger-core entry and no own entry", {}, {}, b""),
             ("a core folder named by its last element", {"rigger-rules@rigger": self.rules, "rigger-core@x": folder_core},
              {}, LINE),
             ("rigger-core three elements up is not the core", {"rigger-rules@rigger": self.rules, "rigger-core@x": deep},
              {}, b""),
             ("a plugin whose name only starts with rigger-core", {"rigger-rules@rigger": self.rules, "x@x": extra},
-             {}, b""),
+             {}, missing("rigger-rules")),
             ("minified one-line file", {"rigger-rules@rigger": self.rules, "rigger-core@rigger": old},
              {"minified": True}, LINE),
             # JSON allows any whitespace around the colon; the file is scanned as a whole, not line by line.
@@ -317,10 +328,15 @@ class CoreCheckTests(unittest.TestCase):
                 ("current core", new, cached, b""),
                 # A directory marketplace runs hooks from its source; installPath is a snapshot in the cache.
                 ("directory marketplace", old, source, b""),
+                ("no core installed", None, cached, missing(name)),
+                ("no core, run from its source (--plugin-dir)", None, source, b""),
             ]
             for row, core, root, expected in rows:
                 with self.subTest(plugin=name, row=row):
-                    self.listing({name + "@rigger": cached, "rigger-core@rigger": core})
+                    entries = {name + "@rigger": cached}
+                    if core is not None:
+                        entries["rigger-core@rigger"] = core
+                    self.listing(entries)
                     self.assertEqual(self.run_check(root, plugin=PLUGINS / name), expected)
 
     def test_two_moved_plugins_print_two_lines(self):

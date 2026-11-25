@@ -21,7 +21,7 @@
     "plugins/rigger-lessons/tests/test_lessons_rules.py": ["rigger-core"],
     "plugins/rigger-lessons/tests/test_proposal_check.py": ["rigger-rules"],
     "plugins/rigger-review/tests/test_review_module.py": ["rigger-core"],
-    "plugins/rigger-rules/tests/test_core_check.py": ["rigger-core", "rigger-lessons", "rigger-talk", "rigger-windows", "rigger-wp"],
+    "plugins/rigger-rules/tests/test_core_check.py": ["rigger-core", "rigger-lessons", "rigger-review", "rigger-talk", "rigger-testing", "rigger-windows", "rigger-wp"],
     "plugins/rigger-rules/tests/test_plugin_rules.py": ["*"],
     "plugins/rigger-rules/tests/test_reinject.py": ["*"],
     "plugins/rigger-rules/tests/test_rules_hooks.py": ["*"],

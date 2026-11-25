@@ -3,6 +3,15 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
+## [Unreleased]
+
+### Changed
+
+- Every plugin that needs rigger-core, the review and testing modules included, prints one line at session
+  start when it is installed from the marketplace and no rigger-core is installed:
+  `Rigger rules not loaded for <plugin>: rigger-core is not installed (run claude plugin install rigger-core)`.
+  A `--plugin-dir` or directory-marketplace run stays silent.
+
 ## [0.7.0] - 2026-11-25
 
 ### Migration
