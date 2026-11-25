@@ -59,18 +59,25 @@ def running_gates(event):
 
 
 def output_file(session_id, task_id, environ):
-    """The task's output file: beside the CLI's notes folder for the session, else under a temp folder's
-    `claude/<hash>/<session id>/tasks/`; None when there is none."""
+    """The task's output file: beside the CLI's notes folder for the session, else under
+    `<temp root>/<claude folder>/<project key>/<session id>/tasks/`; None when there is none. The temp root is
+    `CLAUDE_CODE_TMPDIR`, else the platform's temp folder; the folder is `claude-<uid>` where the platform
+    has a uid (`claude-` where it has none), and `claude` on Windows."""
     notes = environ.get("CLAUDE_CODE_CHILD_NOTES_DIR")
     if notes and os.path.basename(os.path.dirname(os.path.normpath(notes))) == session_id:
         path = os.path.join(os.path.dirname(os.path.normpath(notes)), "tasks", task_id + ".output")
         if os.path.isfile(path):
             return path
-    roots = [environ.get(name) for name in ("TMPDIR", "TEMP", "TMP")] + [tempfile.gettempdir()]
+    getuid = getattr(os, "getuid", None)
+    folders = ("claude", "claude-%s" % (getuid() if getuid else ""))
+    roots = [environ.get(name) for name in ("CLAUDE_CODE_TMPDIR", "TMPDIR", "TEMP", "TMP")] \
+        + [tempfile.gettempdir()]
     for root in dict.fromkeys(root for root in roots if root):
-        for path in glob.glob(os.path.join(glob.escape(root), "claude", "*", session_id, "tasks", task_id + ".output")):
-            if os.path.isfile(path):
-                return path
+        for folder in folders:
+            pattern = os.path.join(glob.escape(root), folder, "*", session_id, "tasks", task_id + ".output")
+            for path in glob.glob(pattern):
+                if os.path.isfile(path):
+                    return path
     return None
 
 
