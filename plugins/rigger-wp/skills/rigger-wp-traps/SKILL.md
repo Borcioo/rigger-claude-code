@@ -34,6 +34,8 @@ Each entry: the fact, then what to do.
 - **`option_page_capability_{$page}` also opens `wp-admin/options.php` without `action`** (WP 7.0+),
   which lists every site option, API keys included. Return the wider capability only for a POST
   with `action=update`; a role test GETs `options.php` with that `option_page`.
+- In the final report's hunk list, a WordPress option counts as a setting, and a capability or nonce
+  check as permissions or auth.
 
 ## Tests (WP_UnitTestCase / wp-env PHPUnit)
 

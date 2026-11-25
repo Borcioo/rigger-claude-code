@@ -370,6 +370,11 @@ class CrossPluginWordingTests(unittest.TestCase):
             "CLAUDE.md or `.claude/environments.json` says so) is edited there, one writer at a time. "
             "Remove the worktree after the merge.", self.text("git.md"))
 
+    def test_the_hunk_list_names_the_kinds_the_wordpress_skill_maps(self):
+        """rigger-wp-traps maps WordPress options, capabilities and nonces onto these words (D98)."""
+        self.assertIn("settings, permissions or auth",
+                      " ".join(rules_text("rigger-talk", "talk.md").decode("utf-8").split()))
+
 
 class StateFileTests(unittest.TestCase):
     def test_the_bullet_is_under_its_own_heading_and_is_for_the_main_session(self):
