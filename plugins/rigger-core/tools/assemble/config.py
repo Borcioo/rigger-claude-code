@@ -1,7 +1,8 @@
 """Resolve the four config levels: Rigger defaults, company modules, personal, project (spec section 7).
 
 `triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4), `trust` (level 3) and `review`
-(levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base) apply.
+(levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base) and `lessons` (levels 2-3, read
+by rigger-lessons' lint) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -30,12 +31,14 @@ KEYS = {
     "trust": (dict, frozenset((3,))),
     "review": (dict, ALL_LEVELS),
     "shell_guard": (dict, frozenset((3,))),
+    "lessons": (dict, frozenset((2, 3))),
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
-ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review"))
+ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons"))
 REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
 REVIEW_TEXT_MAX = 200  # characters of a review.paths glob or skip reason
+LESSONS_PATHS_MAX = 50  # lessons.allowed_paths globs per config level (D97), each at most REVIEW_TEXT_MAX
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = manifest.BEFORE_MAX
 LOAD_MAX = manifest.LOAD_MAX
@@ -196,6 +199,38 @@ def _review(value: dict, where: str) -> Tuple[dict, List[str]]:
     return clean, notices
 
 
+def _lessons(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """lessons.allowed_paths (D97): a list of non-empty globs, each one line of at most REVIEW_TEXT_MAX characters."""
+    clean = {}
+    notices = []
+    for key, item in value.items():
+        if key != "allowed_paths":
+            notices.append("rigger: config %s lessons key %s unknown; ignored" % (where, _shown(key)))
+            continue
+        if item is None:
+            clean[key] = None
+            continue
+        if not isinstance(item, list):
+            notices.append("rigger: config %s lessons.allowed_paths must be a list of globs; ignored" % where)
+            continue
+        kept = []
+        for glob in item:
+            problem = "must be a non-empty string" if not isinstance(glob, str) or not glob else \
+                _text_problem("glob", glob, REVIEW_TEXT_MAX)
+            if problem:
+                problem = problem[len("glob "):] if problem.startswith("glob ") else problem
+                notices.append("rigger: config %s lessons.allowed_paths entry %s ignored: %s"
+                               % (where, _shown(repr(glob)), problem))
+            else:
+                kept.append(glob)
+        if len(kept) > LESSONS_PATHS_MAX:
+            notices.append("rigger: config %s holds %d lessons.allowed_paths entries; the last %d ignored "
+                           "(at most %d per file)" % (where, len(kept), len(kept) - LESSONS_PATHS_MAX, LESSONS_PATHS_MAX))
+            kept = kept[:LESSONS_PATHS_MAX]
+        clean[key] = kept
+    return clean, notices
+
+
 def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
     """The keys of one level's data that its level allows, each of the right shape, and a notice per drop."""
     clean = {}
@@ -234,6 +269,9 @@ def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]
             value = rows
         if key == "review":
             value, found = _review(value, where)
+            notices.extend(found)
+        if key == "lessons":
+            value, found = _lessons(value, where)
             notices.extend(found)
         clean[key] = value
     return clean, notices
