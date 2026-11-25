@@ -86,7 +86,7 @@ class SafeEditTests(unittest.TestCase):
         path = self.fixture("nomatch.txt", "alpha\n")
         code, lines = self.safe_edit("--path", path, "--find", "beta", "--replace", "gamma")
         self.assertEqual(code, 2)
-        self.assertEqual(lines, ["safe-edit: REFUSED — expected 1 match(es) of -Find in %s, found 0; "
+        self.assertEqual(lines, ["safe-edit: REFUSED — expected 1 match(es) of --find in %s, found 0; "
                                  "nothing changed." % path])
         self.assertEqual(self.read(path), b"alpha\n")
 
@@ -94,7 +94,7 @@ class SafeEditTests(unittest.TestCase):
         path = self.fixture("twice.txt", "x x\n")
         code, lines = self.safe_edit("--path", path, "--find", "x", "--replace", "y")
         self.assertEqual(code, 2)
-        self.assertEqual(lines, ["safe-edit: REFUSED — expected 1 match(es) of -Find in %s, found 2; "
+        self.assertEqual(lines, ["safe-edit: REFUSED — expected 1 match(es) of --find in %s, found 2; "
                                  "nothing changed." % path])
         self.assertEqual(self.text(path), "x x\n")
 
@@ -104,7 +104,7 @@ class SafeEditTests(unittest.TestCase):
         self.assertEqual((code, self.text(path)), (0, "y y\n"))
         code, lines = self.safe_edit("--path", path, "--find", "y", "--replace", "z", "--count", "3")
         self.assertEqual((code, self.text(path)), (2, "y y\n"))
-        self.assertIn("expected 3 match(es) of -Find in %s, found 2" % path, lines[0])
+        self.assertIn("expected 3 match(es) of --find in %s, found 2" % path, lines[0])
 
     def test_red_run_failing_command_exits_0_restores_the_file_and_the_command_sees_the_mutation(self):
         path = self.fixture("red.txt", "guard = on\n")
@@ -125,12 +125,17 @@ class SafeEditTests(unittest.TestCase):
                                     "the check did not catch it.")
         self.assertEqual(self.text(path), "guard = on\n")
 
+    def test_expect_ran_matches_regardless_of_case(self):
+        path = self.fixture("expectcase.txt", "guard = on\n")
+        code, lines = self.safe_edit(*self.red_args(path, expect="# TESTS [1-9]"))
+        self.assertEqual(code, 0, lines)
+
     def test_run_without_expect_ran_is_refused_before_the_file_is_touched(self):
         path = self.fixture("noexpect.txt", "guard = on\n")
         code, lines = self.safe_edit("--path", path, "--find", "guard = on", "--replace", "guard = off", "--run",
                                      python_command(CHECK, path))
         self.assertEqual(code, 2)
-        self.assertEqual(lines, ["safe-edit: REFUSED — -Run needs -ExpectRan '<regex>' matching a line only a "
+        self.assertEqual(lines, ["safe-edit: REFUSED — --run needs --expect-ran '<regex>' matching a line only a "
                                  "test run prints (e.g. '# tests [1-9]'); without it a command that ran no test "
                                  "counts as red."])
         self.assertEqual(self.text(path), "guard = on\n")
@@ -144,7 +149,7 @@ class SafeEditTests(unittest.TestCase):
     def test_an_identical_find_and_replace_are_refused(self):
         path = self.fixture("same.txt", "flag = True\n")
         code, lines = self.safe_edit("--path", path, "--find", "True", "--replace", "True")
-        self.assertEqual((code, lines), (2, ["safe-edit: REFUSED — -Find and -Replace are the same; that is "
+        self.assertEqual((code, lines), (2, ["safe-edit: REFUSED — --find and --replace are the same; that is "
                                              "no mutation."]))
 
     def test_an_empty_run_is_refused_with_or_without_expect_ran_and_the_file_is_untouched(self):
@@ -153,21 +158,21 @@ class SafeEditTests(unittest.TestCase):
             with self.subTest(extra=extra):
                 code, lines = self.safe_edit("--path", path, "--find", "guard = on", "--replace", "guard = off",
                                              "--run", "", *extra)
-                self.assertEqual((code, lines), (2, ["safe-edit: REFUSED — -Run is empty."]))
+                self.assertEqual((code, lines), (2, ["safe-edit: REFUSED — --run is empty."]))
                 self.assertEqual(self.text(path), "guard = on\n")
 
     def test_expect_ran_without_run_is_refused_and_the_file_is_untouched(self):
         path = self.fixture("expectonly.txt", "guard = on\n")
         code, lines = self.safe_edit("--path", path, "--find", "guard = on", "--replace", "guard = off",
                                      "--expect-ran", "x")
-        self.assertEqual((code, lines), (2, ["safe-edit: REFUSED — -ExpectRan needs -Run."]))
+        self.assertEqual((code, lines), (2, ["safe-edit: REFUSED — --expect-ran needs --run."]))
         self.assertEqual(self.text(path), "guard = on\n")
 
     def test_no_evidence_expect_ran_never_matched_exits_3_and_the_file_is_restored(self):
         path = self.fixture("noevidence.txt", "guard = on\n")
         code, lines = self.safe_edit(*self.red_args(path, expect="# nothing printed like this"))
         self.assertEqual(code, 3, lines)
-        self.assertEqual(lines[-1], "safe-edit: NO EVIDENCE — the output never matched -ExpectRan "
+        self.assertEqual(lines[-1], "safe-edit: NO EVIDENCE — the output never matched --expect-ran "
                                     "'# nothing printed like this'; maybe no test ran (exit code 1).")
         self.assertEqual(self.text(path), "guard = on\n")
 

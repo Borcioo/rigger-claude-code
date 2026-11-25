@@ -26,9 +26,6 @@ itself failed, 2 = refused (usage, no or too many matches, a stale backup that c
 3 = the output does not match --expect-ran (no test may have run), 4 = not red (the command passed: the
 mutation was not caught). Without --run the edit is applied and kept (exit 0) or refused (exit 2); there is
 no backup, so --restore cannot undo it: revert with the inverse --find/--replace.
-
-The messages keep the wording of the PowerShell tool this replaces, so `-Find` and `-Run` in them name
-`--find` and `--run`.
 """
 import argparse
 import base64
@@ -167,16 +164,16 @@ def _main(argv):
         return 0
 
     if args.find == args.replace:
-        raise Refused("-Find and -Replace are the same; that is no mutation.")
+        raise Refused("--find and --replace are the same; that is no mutation.")
     if args.find == "":
-        raise Refused("-Find is empty.")
+        raise Refused("--find is empty.")
     # Without a command the edit would be kept, exit 0: a red run that never ran.
     if args.run is not None and not args.run:
-        raise Refused("-Run is empty.")
+        raise Refused("--run is empty.")
     if args.expect_ran is not None and not args.run:
-        raise Refused("-ExpectRan needs -Run.")
+        raise Refused("--expect-ran needs --run.")
     if args.run and not args.expect_ran:
-        raise Refused("-Run needs -ExpectRan '<regex>' matching a line only a test run prints (e.g. '# tests "
+        raise Refused("--run needs --expect-ran '<regex>' matching a line only a test run prints (e.g. '# tests "
                       "[1-9]'); without it a command that ran no test counts as red.")
 
     original = read_bytes(file)
@@ -190,7 +187,7 @@ def _main(argv):
     find, replace = _match_line_endings(text, args.find, args.replace)
     found = text.count(find)
     if found != args.count:
-        raise Refused("expected %d match(es) of -Find in %s, found %d; nothing changed." % (args.count, file, found))
+        raise Refused("expected %d match(es) of --find in %s, found %d; nothing changed." % (args.count, file, found))
     mutated = (BOM if has_bom else b"") + text.replace(find, replace).encode("utf-8")
 
     if not args.run:
@@ -223,7 +220,7 @@ def _main(argv):
         say("safe-edit: restored %s (hash checked)." % file)
 
     if not any(re.search(args.expect_ran, line, re.IGNORECASE) for line in captured):
-        say("safe-edit: NO EVIDENCE — the output never matched -ExpectRan '%s'; maybe no test ran (exit code %s)."
+        say("safe-edit: NO EVIDENCE — the output never matched --expect-ran '%s'; maybe no test ran (exit code %s)."
             % (args.expect_ran, exit_code))
         return 3
     if exit_code == 0:
