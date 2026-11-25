@@ -25,8 +25,8 @@ npm's `which`) can still find a program in the repository root; `-E` written in 
 Python ignore PYTHONSAFEPATH and import from the repository root again (`-I` ignores it too, but keeps the
 working directory off sys.path by itself); Python before 3.11 and other interpreters that resolve modules
 from the working directory can still load the repository's code; and on Windows the DLL search of the
-program's process can still read the working directory. stdin is closed, and stdout and stderr on one pipe that a thread reads and counts:
-past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
+program's process can still read the working directory. stdin is closed, and stdout and stderr on one pipe
+that a thread reads and counts: past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
 has exited but a process it started still holds the console after EXIT_GRACE seconds, and after every run
 (known limit: on POSIX a process that left the process group with setsid can outlive the run). The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
@@ -74,7 +74,7 @@ STRIPPED_PREFIXES = ("CLAUDE_", "HARNESS_", "GIT_")
 STRIPPED_NAMES = ("RIGGER_MODULE_DIRS",)
 NO_CWD_SETTING = "NoDefaultCurrentDirectoryInExePath"  # Windows: a bare name is not looked up in the cwd
 SAFE_PATH_SETTING = "PYTHONSAFEPATH"  # Python 3.11+: `-m`, `-c` and a script leave the cwd and script folder off sys.path
-SEARCH_PATHS = ("PATH", "PYTHONPATH")  # cut to the entries review_scope.searchable keeps; Python reads "" and "." as the cwd
+SEARCH_PATHS = ("PATH", "PYTHONPATH")  # cut to the entries review_scope.searchable keeps
 SHOWN = 300
 USAGE = "usage: slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]"
 
