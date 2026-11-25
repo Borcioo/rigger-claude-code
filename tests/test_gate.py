@@ -831,9 +831,12 @@ class ChangedModulesGateTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.out, True)
 
     def windows(self):
+        host = os.name
         stack = contextlib.ExitStack()
         stack.enter_context(mock.patch.object(gate.os, "name", "nt"))
         stack.enter_context(mock.patch.object(gate.shutil, "which", lambda name: "/x/wsl.exe" if name == "wsl" else None))
+        if host != "nt":   # wsl_path reads a drive letter, which a POSIX temp path has none of
+            stack.enter_context(mock.patch.object(gate, "wsl_path", lambda path: "/mnt/" + "x/" + os.path.basename(str(path))))
         return stack
 
     def legs(self, stages):
@@ -856,13 +859,14 @@ class ChangedModulesGateTests(unittest.TestCase):
                          [["changed-modules", "control", "sweep", "sweep-control"]])
 
     def test_wsl_leg_gets_the_list_and_runs_no_git(self):
+        listed = self.out / LIST
         with self.windows():
             leg = self.legs(gate.build_stages(mode_args(["plugins/a/x.py", "plugins/a/y z.md"]), ROOT, self.out))["wsl"]
-        listed = self.out / LIST
+            mounted = gate.wsl_path(os.path.abspath(str(listed)))
+        self.assertTrue(mounted.startswith("/mnt/"), mounted)
         self.assertEqual(listed.read_bytes(), b"plugins/a/x.py\nplugins/a/y z.md\n")
         at = leg.command.index("scripts/run_tests.py")
-        self.assertEqual(leg.command[at + 1:], ["--changed-modules", "--changed-from",
-                                                gate.wsl_path(os.path.abspath(str(listed))), "--no-claude"])
+        self.assertEqual(leg.command[at + 1:], ["--changed-modules", "--changed-from", mounted, "--no-claude"])
         self.assertEqual((leg.count_re, leg.skip_files), (gate.RUN_TESTS_COUNT, True))
         # The leg's run, on a folder that is no repository, with every git start refused: it reads only the list.
         root = Path(tempfile.mkdtemp(prefix="gate-wsl-"))

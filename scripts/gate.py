@@ -462,10 +462,8 @@ def build_stages(args, root, out, release=None, claude=True):
         listed = write_changed(out, args.changed[1])
         suite = Leg("changed-modules", run + ["--changed-modules", "--changed-from", str(listed)] + no_claude,
                     count_re=RUN_TESTS_COUNT, skip_files=True, reason_re=MODE_REASON_RE)
-        linux = ["--changed-modules", "--changed-from", wsl_path(os.path.abspath(str(listed))), "--no-claude"]
     else:
         suite = Leg("tests", run + no_claude, count_re=RUN_TESTS_COUNT, skip_files=True)
-        linux = ["--no-claude"]
     first = [
         suite,
         Leg("control", run + ["--control"], marker=caught, count_re=r"^FAIL tests/control/failing_control\.py: (\d+) tests"),
@@ -482,6 +480,9 @@ def build_stages(args, root, out, release=None, claude=True):
         else:
             command = ["wsl", "-d", args.distro, "--cd", wsl_path(root), "-e", "python3", "-I", "scripts/run_tests.py"]
             reason = MODE_REASON_RE if args.changed_modules else None
+            linux = ["--no-claude"]
+            if args.changed_modules:
+                linux = ["--changed-modules", "--changed-from", wsl_path(os.path.abspath(str(listed))), "--no-claude"]
             stages.append([Leg("wsl", command + linux, count_re=RUN_TESTS_COUNT, skip_files=True, reason_re=reason)])
     return stages
 
