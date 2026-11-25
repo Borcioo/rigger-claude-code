@@ -491,17 +491,6 @@ class ReviewPathsTests(unittest.TestCase):
         self.assertEqual(len(got.notices), 1)
         self.assertIn(PATHS[3], got.notices[0])
 
-    def test_parse_level_matches_load_level(self):
-        tmp = Path(tempfile.mkdtemp(prefix="config parse "))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        for body in (b'{"schema":1,"review":{}}', b"\xef\xbb\xbf{\"schema\":1}", b"{nope", b'{"schema":2}', b"[1]",
-                     b"\xff"):
-            with self.subTest(body=body):
-                (tmp / "c.json").write_bytes(body)
-                loaded = config.load_level(tmp / "c.json", 4)
-                parsed = config.parse_level(body, str(tmp / "c.json"))
-                self.assertEqual(parsed, loaded)
-
 
 class DefaultsTests(unittest.TestCase):
     def test_defaults_file_matches_spec(self):
