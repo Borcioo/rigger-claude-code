@@ -28,7 +28,7 @@ names.
 
 ## 2. Per-path rules
 
-- After the path lines, each `# rules <glob> <file> (<level>)` line names a rules file for the
+- After the path lines, each `# rules <glob> <file> (level <n>)` line names a rules file for the
   paths its glob matches. Read each file a `# rules` line names with the Read tool and apply it
   to those paths only.
 - Never run git on a path from config or from a `# rules` line: the tool already read the
