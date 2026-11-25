@@ -53,9 +53,10 @@ runs (the coordinator then gets an empty note), and the 3a backlog.
 
 | Fact | Source |
 |---|---|
-| shellwise has one release, `v0.1.0` (2026-11-20), with 4 archives and 4 `.sha256` files: `x86_64-pc-windows-msvc.zip`, `x86_64-unknown-linux-gnu.tar.gz`, `aarch64-apple-darwin.tar.gz`, `x86_64-apple-darwin.tar.gz` | `gh release view -R Borcioo/shellwise` |
-| `v0.1.0` documents 53 rule ids; `bash-ps-call-operator` is not among them (it comes with the unmerged shellwise PR #5) | `gh api …/git/trees/v0.1.0?recursive=1` |
-| The old-to-new rule map and the integration config were probed on a later shellwise branch head, not on `v0.1.0` | the rule map's header |
+| On 2026-11-25 the published release was `v0.1.0` (2026-11-20), with 4 archives and 4 `.sha256` files: `x86_64-pc-windows-msvc.zip`, `x86_64-unknown-linux-gnu.tar.gz`, `aarch64-apple-darwin.tar.gz`, `x86_64-apple-darwin.tar.gz` | `gh release view -R Borcioo/shellwise` |
+| `v0.1.0` documents 53 rule ids; `bash-ps-call-operator` is not among them | `gh api …/git/trees/v0.1.0?recursive=1` |
+| `v0.1.1` (tagged from shellwise `main` after its PR #5) adds `bash-ps-call-operator`, the Bash form of `gate-truncated-pipeline` and `examples/integration-config.toml`; same asset names, per-asset `.sha256` files plus one `SHA256SUMS` | the coordinator; the plan's release spike records it |
+| The old-to-new rule map and the integration config were probed on a shellwise branch head before `v0.1.1` | the rule map's header |
 | The Stop hook's stdin carries `background_tasks`: one entry per live task, `{"id", "type": "shell", "status": "running", "description", "command"}` or `{…, "type": "subagent", "agent_type"}`; a task leaves the list when it ends, fails or is killed; the field is `[]` with none, and present under `claude -p` (CLI 2.1.327) | stub spike, ten isolated runs |
 | A finished task's output file ends `[exited with code N]`, a killed one `[killed]`; a killed task gets no notification record in the transcript | same spike |
 | Blocking a Stop returns the reason to the model as `Stop hook feedback:`; three blocks in a row took under 1 s, so a block alone never waits; a bounded poll inside the hook held the turn | same spike |
@@ -81,7 +82,8 @@ by the network, if the plan's release spike shows such a child outlives the hook
 and Linux; otherwise it runs inside the handler with a 7 s bound and the next session retries. The
 session gets `shellwise: downloading v<ver>; commands run unguarded until it is
 ready` and, from the next session, the slot is filled. The expected SHA-256 per asset is pinned in
-the module (`pin.json`); the release's `.sha256` files only serve the person who updates the pin.
+the module (`pin.json`) and committed in Rigger; the downloader never trusts a hash fetched with the
+binary. The release's `.sha256` files and its `SHA256SUMS` only serve the person who fills the pin.
 The archive is unpacked from a temp folder, only its one expected member, never a path with `..`, a
 link or an absolute name; the result is renamed into place after the hash and `--version` check.
 
@@ -134,7 +136,7 @@ commands: a session that ends a turn with its own gate running loses little by w
   leave rigger-windows with it).
 - `rigger-defaults.json` sets the `shell-guard` default to the shellwise module with no `requires`
   (all systems); a system with no asset leaves it unfilled with its line (D2).
-- `pin.json`: `{"format": 1, "version": "0.1.0", "assets": {"<target>": {"name", "sha256"}}}`
+- `pin.json`: `{"format": 1, "version": "0.1.1", "assets": {"<target>": {"name", "sha256"}}}`
   for the four targets. Target from `sys.platform` and `platform.machine()`: `win32` + `AMD64` →
   `x86_64-pc-windows-msvc`; `linux` + `x86_64` → `x86_64-unknown-linux-gnu`; `darwin` + `arm64` →
   `aarch64-apple-darwin`; `darwin` + `x86_64` → `x86_64-apple-darwin`; anything else has no asset.
@@ -164,8 +166,8 @@ commands: a session that ends a turn with its own gate running loses little by w
   --shell <s> --json --config <shellwise.toml>` with the probe on stdin and returns `None` when a
   finding names the rule at `break` or above. `lessons_lint.py` also globs
   `plugins/*/tools/*/rule_checker.py`; curate-lessons takes the checker from the filler's manifest.
-- A `live:<rule>` lesson for `bash-ps-call-operator`, or for a Bash-tool `tee … | head`, is
-  reported `no checker` until a pin bump brings the rule.
+- A `live:<rule>` lesson for a truncated gate started through a script host other than pwsh
+  (`python … | head`) is reported `no checker`: no pinned rule catches it.
 
 ### 2. rigger-PLATFORM
 
@@ -298,8 +300,8 @@ The Stop handler's timeout rises from 10 to 15 s. A missing field or unreadable 
 - The lessons lint takes extra allowed paths from config (levels 2–3); the WordPress module's
   hunk-list sentence; general lessons curated in the source harness are ported, the rest recorded
   as dropped with a reason.
-- shellwise stays pinned at `v0.1.0`; the bump to `v0.1.1` is a task after the 3b release, and
-  nothing in 3b needs its rules.
+- shellwise is pinned at `v0.1.1`, with per-asset hashes taken from the published release and
+  committed in Rigger.
 
 ## Left to the builder
 

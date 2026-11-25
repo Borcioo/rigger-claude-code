@@ -10,7 +10,7 @@ and the 3a backlog.
 
 **Status:** revision 3: revision 2 fixed an independent plan review's 12 Important findings;
 revision 3 adds the coordinator's items from the phase 4 overlay planning (Tasks 32–38, D94–D99)
-and the shellwise release state (D100, Task 39). Written on `1ead09a` (release 0.7.0).
+and the shellwise `v0.1.1` pin (D77, D78, D100). Written on `1ead09a` (release 0.7.0).
 
 **Architecture:** Three merge points. PR A changes only rigger-core, the two 3a modules and shared
 test infrastructure. PR B adds new code beside rigger-windows and changes none of its files. PR C
@@ -141,7 +141,8 @@ The release notes list each one.
    unguarded and the session gets one line (D76).
 2. Commands are checked by shellwise rules, not the Python guard. The shipped config sets 11 levels
    (8 warn-by-default rules raised to break, 3 mixed rules raised) and turns on `git-no-verify`;
-   `bash-ps-call-operator` and the Bash-tool `tee … | head` check are gone until a pin bump (D77). The
+   all 24 old rule ids have a shellwise counterpart in `v0.1.1` (D77), and `gate-truncated-pipeline`
+   checks the Bash tool too, but not a gate started through a script host other than pwsh (D100). The
    allow marker is `# shellwise: allow`; the old marker is not accepted by the guard.
 3. macOS and Linux get a shell guard for the first time.
 4. The commit shadow row is written by its own handlers, also for a command the guard denies; its
@@ -178,6 +179,8 @@ $ gh release view -R Borcioo/shellwise --json tagName,assets
 v0.1.0: shellwise-v0.1.0-{aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu}.tar.gz, shellwise-v0.1.0-x86_64-pc-windows-msvc.zip, each with .sha256
 $ gh api repos/Borcioo/shellwise/git/trees/v0.1.0?recursive=1 | grep -c docs/rules/
 53   (no bash-ps-call-operator.md; the rule map's 23 mapped ids were probed on a later branch head)
+v0.1.1 (being tagged from shellwise main 7cb494c, per the coordinator): both new rules, examples/integration-config.toml,
+the same four asset names with the new version, per-asset .sha256 files and one combined SHA256SUMS; Task 14 records it
 $ git ls-files plugins/rigger-windows | wc -l; sum of wc -l
 56 files, 16,793 lines
 $ git grep -c rigger-windows   (outside the plugin, live files)
@@ -254,8 +257,8 @@ The WinError 32 cleanup error of `test_slot_run.py` (one in three runs during 3a
 | D74 | Three pull requests: A (Tasks 1–13) harness and backlog; B (14–22) new code beside rigger-windows, changing none of its files; C (23–31) the guard hand-over, the moves, the removal, the migration. One release after C. | A touches no plugin a person installs new. B is revertible alone. C changes what is installed (decisions doc D1). |
 | D75 | In PR B the shellwise module is a second `shell-guard` filler (doctor's double-filler warning, accepted between B and C, never released). Task 23 switches `rigger-defaults.json` `shell-guard` to `{kind: hook, target: rigger-shellwise}` with no `requires` and deletes the Python guard's deny half and its 8 PreToolUse handlers in the same commit. | One guard at every merge point after C's first task. |
 | D76 | The installer of design §1: download from the SessionStart handler (detached when Task 14 Step 6 shows a detached child survives the hook on Windows and Linux; else synchronous with a 7 s bound and a retry next session), pinned SHA-256 in `pin.json`, one expected member unpacked, exec bit set on POSIX, `--version` check, atomic placement, `current` file, `status.json`, a lock with a 10-minute takeover, `shell_guard.shellwise_path` active at level 3 with the same version check. No Python fallback guard. | Decisions doc D2; design approach A; the review's finding that the detached child was not observed. |
-| D77 | Pin `v0.1.0`. A pin bump is one edit of `pin.json` (version, four names, four hashes) and of `RULES` in the rule checker; `CONTRIBUTING.md` gets "Updating shellwise" (download the four `.sha256` files, compare, run Task 28's real-download stub case). shellwise PR #5's rules arrive with that bump. | shellwise PR #5 is not merged; the plan pins what is released. |
-| D78 | `shellwise.toml` is the delivered integration config with `gate_commands = ["safe-edit*", "safe_edit*"]`. Task 14 proves on `v0.1.0` that every key is accepted (no `config-invalid`), that each raised rule fires, and which rule-map rows differ from the later head. A key `v0.1.0` refuses is dropped and listed in the release notes. | The rule map was probed on a later head. |
+| D77 | Pin `v0.1.1` (it carries `bash-ps-call-operator`, the Bash form of `gate-truncated-pipeline` and `examples/integration-config.toml`). The pin is per-asset SHA-256 values committed in `pin.json`, filled by Task 14 from the published release; the downloader compares the downloaded archive with the committed value only and never trusts a hash fetched with the binary (the per-asset `.sha256` files and the combined `SHA256SUMS` asset serve only the person filling the pin, who checks that both agree). A later bump is one edit of `pin.json` (version, four names, four hashes) and of `RULES`; `CONTRIBUTING.md` gets "Updating shellwise" (Task 14's Steps 1–4, then Task 28's real-download stub case). | The coordinator confirms the release is out before lane B1 starts. |
+| D78 | `shellwise.toml` starts from the release's `examples/integration-config.toml`, compared with the integration config delivered with the rule map (each difference listed in Task 14's result), with `gate_commands = ["safe-edit*", "safe_edit*"]`. Task 14 proves on `v0.1.1` that every key is accepted (no `config-invalid`), that each raised rule fires, and which rule-map rows differ. A key the release refuses is dropped and listed in the release notes. | The rule map was probed on a branch head before the release. |
 | D79 | The commit shadow rule moves with its closure (design approach B): `git mv` of `shell_guard.py` to `plugins/rigger-TESTING/tools/test-evidence/commit_shadow.py`, deny half deleted, `main` reduced to `log_commit`. Handlers `PreToolUse` `Bash` `if Bash(*commit*)` and `PowerShell` `if PowerShell(*commit*)`, timeout 20 (the pin at `tests/test_repo.py:405-411` extends to 6 handlers), `|| true` and the missing-script guard. `ALLOW_MARKER` becomes `shellwise: allow`; `token_audit.py:675` counts both markers (old transcripts carry the old one). Switch `TEST_EVIDENCE=off`. | Keeps the measurement gate-lab replays; moved lines are not new code; a busy Windows machine timed out at 10 s. |
 | D80 | `mem_check.py` per design §3. `load.min_free_gb` and `load.max_heavy_agents` are read from config levels 1–4 (`config.py` gains `load`, `ACTIVE_ABOVE_L1`); the defaults per system live in `mem_check.py` (Windows: `min(30 GiB, 25% of the ceiling)`; Linux and macOS: 4 GiB; heavy agents 2), used when no level sets the key; level 4 (the project) may only make a limit stricter (a higher minimum, fewer agents), a looser value is dropped with one notice. Task 20 Step 1 spikes the Windows reading without `pwsh` against today's `.ps1` output on this machine. | Decisions doc D3; level 1 is static config with no per-system selection; a project must not loosen a machine's limit. |
 | D81 | `safe_edit.py` keeps every option as a long flag (`--path --find --replace --count --run --expect-ran --working-directory --restore`), exit codes 0–4 and the messages, em dash included; `--run` runs through the platform shell (`pwsh -NoProfile -Command` on Windows when present, else `sh -c`), recorded in the backup file. The 15 cases become `unittest` tests. | Decisions doc D4; the shellwise `gate_commands` glob needs the file name. |
@@ -277,7 +280,7 @@ The WinError 32 cleanup error of `test_slot_run.py` (one in three runs during 3a
 | D97 | Lessons lint extra paths: config key `lessons.allowed_paths` (levels 2–3, at most 50 globs of at most 200 characters) adds allowed path patterns to `lessons_lint.py`'s fixed set (`:44-51`); the lint reads it through rigger-core's config module found by `installed_plugins.json`, and without rigger-core uses the fixed set and says so. | Overlay R4. |
 | D98 | rigger-wp hunk list: the WordPress module adds one rules sentence that the final report's hunk list (`rigger-talk/rules/talk.md:30-32`) counts WordPress options, capabilities and nonces as the kinds it lists. | Overlay R5. |
 | D99 | Port check (overlay R6), each ported or dropped with its reason: **ported** the "lo-fi means no styling" trap (moved from `plans-main.md:23-25` into `web-ui-traps` with "lo-fi screens" in its description and trigger row), the testing skill's override-table rule (a table that overrides a default rule is tested with inputs whose result differs) and its scratch-copy rule (a scratch copy of a worktree deletes its `.git` first), the reviewer re-measure sample (`orchestrating-subagents`), "count per day and endpoint" in `verify.md`; the coordinator 2-slot sentence comes with Task 2. **Dropped:** the production-versus-DEV computed-style comparison (a site-release step of one company's workflow), the hosting-provider backup rule (one provider's skill), the lessons maintainer routing (overlay R1, the next Rigger phase). | The source harness's curated lessons since the split; port what is general. |
-| D100 | shellwise pin: 3b pins `v0.1.0` and requires no rule that only a later release has. Task 39 bumps the pin to `v0.1.1` once that release exists (the owner's call); it is outside the 3b release. Known gap after the bump too: `gate-truncated-pipeline` matches a producer by its program name, so `python -I scripts/gate.py | head` and `python safe_edit.py … | head` are not caught; Rigger relies on its own rules text for its gate, not on shellwise. | Coordinator note: shellwise PR #5 is merged on its `main` but not released. |
+| D100 | Known gap of the pinned rules: `gate-truncated-pipeline` fires in Bash for `| tee log | head` always and, without `tee`, only when the producer's program name matches `gate_commands`; a script host other than pwsh is not matched, so `python -I scripts/gate.py | head` and `python safe_edit.py … | head` are not caught. Rigger relies on its own rules text for its gate, not on shellwise. | The shellwise owner's note on `v0.1.1`. |
 
 ## Rulings on the plan's questions
 
@@ -321,7 +324,7 @@ writes these into the spec.
 | `test_slot_run.py` (cleanup and split), `tests/read_by.json` (keys), `scripts/run_tests.py` `TIMEOUTS` only with a measured reason | 11 | diagnostic, split |
 | `tests/read_by.json`, `tests/test_read_by.py` | 12 | narrowing |
 | `scripts/run_tests.min`, PR A body | 13 | gate A |
-| `docs/superpowers/spikes/phase-3b/shellwise-v0.1.0.md` | 14 | pin facts |
+| `docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md` | 14 | pin facts |
 | `plugins/rigger-SHELLWISE/{.claude-plugin/plugin.json, rigger-module.json, README.md, pin.json, shellwise.toml, bin/py.sh, tests/contract/shell-guard/* (copies), tests/test_pin.py}`, `.claude-plugin/marketplace.json`, `tests/test_repo.py` (listing, `PLUGINS_WITH_PY_SH`, counts) | 15 | skeleton |
 | `plugins/rigger-SHELLWISE/tools/install/shellwise_install.py`, its tests | 16 | installer |
 | `plugins/rigger-SHELLWISE/bin/shellwise.sh`, `hooks/hooks.json`, launcher tests, `tests/test_module_contracts.py`, `tests/test_repo.py` (counts, `:427`), `tests/test_shellcheck.py`, `hook_latency.py` `CASES` | 17 | launcher, wiring |
@@ -345,8 +348,6 @@ writes these into the spec.
 | `plugins/rigger-core/skills/{web-ui-traps,orchestrating-subagents}/SKILL.md`, `plugins/rigger-core/rigger-module.json` (trigger row), `plugins/rigger-rules/rules/{plans-main.md, verify.md}`, `plugins/rigger-testing/skills/testing/SKILL.md`, `test_plugin_rules.py`, `test_core_wiring.py` | 36 | ports |
 | `plugins/rigger-TESTING/tools/test-evidence/{stop_shadow.py, phrases.json}`, its tests, `config.py` (`test_evidence`) | 37 | phrase lists |
 | `plugins/rigger-core/tools/drift-lint/drift_lint.py`, its tests, `config.py` (`drift_lint`) | 38 | drift-lint lists |
-| `plugins/rigger-SHELLWISE/{pin.json, tools/rule-checker/rule_checker.py}`, `tests/test_pin.py`, `shellwise.toml` | 39 | pin bump (after 3b) |
-
 ## Lanes
 
 A lane is a chain where each part needs the one before. A "group" is independent light parts that
@@ -553,12 +554,13 @@ Review round; Tasks 3 and 5 get the second round (D65).
 **Heavy (downloads, WSL, stub), opus. 3.5 h.** Inputs: none. Output: the values `pin.json` and
 `RULES` take, the hook's observed reply form, the detached-child answer for D76.
 
-**Files:** Create `docs/superpowers/spikes/phase-3b/shellwise-v0.1.0.md`.
+**Files:** Create `docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md`.
 
-- [ ] **Step 1:** Download the four archives and their `.sha256` files into a new empty folder; compute SHA-256 of each archive and compare with its file (known answer: the release's own files). Record names, sizes, hashes.
-- [ ] **Step 2:** Unpack (Windows `.zip`; Linux `.tar.gz` under WSL); list members (expected `shellwise-v0.1.0-<target>/shellwise[.exe]` plus licence files); `--version` (expected `shellwise 0.1.0`).
-- [ ] **Step 3:** `explain <id>` for the 53 documented ids (exit 0 each) and for `bash-ps-call-operator` (expected 64): the `RULES` list.
-- [ ] **Step 4:** Rerun every probe of the rule map's Table 1 at defaults and with `shellwise.toml` (D78) on Windows (Git Bash and pwsh) and Linux; mark each row that differs from the map. Probe `python safe_edit.py --run x 2>&1 | Select-Object -First 30` with the config and record the result (D100: a script host other than pwsh may not match `gate_commands`; a miss is listed as a gap, not a failure). Check the output has no `config-invalid`.
+- [ ] **Step 0:** The coordinator has confirmed `v0.1.1` is published; `gh release view -R Borcioo/shellwise v0.1.1 --json assets` lists the four archives, four `.sha256` files and `SHA256SUMS`.
+- [ ] **Step 1:** Download the four archives, their `.sha256` files and `SHA256SUMS` into a new empty folder; compute SHA-256 of each archive and compare with its `.sha256` file and its `SHA256SUMS` line (known answer: the release's own files; all three must agree). Record names, sizes, hashes.
+- [ ] **Step 2:** Unpack (Windows `.zip`; Linux `.tar.gz` under WSL); list members (expected `shellwise-v0.1.1-<target>/shellwise[.exe]` plus licence files); `--version` (expected `shellwise 0.1.1`).
+- [ ] **Step 3:** `explain <id>` for every rule doc of the `v0.1.1` tag (`gh api …/git/trees/v0.1.1?recursive=1`), each exit 0, `bash-ps-call-operator` among them: the `RULES` list.
+- [ ] **Step 4:** Rerun every probe of the rule map's Table 1 at defaults and with `shellwise.toml` (D78) on Windows (Git Bash and pwsh) and Linux, with the `bash-ps-call-operator` row (break in Bash and Git Bash) and the `gate-truncated-pipeline` row for Bash (`| tee log | head`) as updated; mark each row that differs from the map; diff `examples/integration-config.toml` against the delivered integration config. Probe `python safe_edit.py --run x 2>&1 | Select-Object -First 30` with the config and record the result (D100: a script host other than pwsh may not match `gate_commands`; a miss is listed as a gap, not a failure). Check the output has no `config-invalid`.
 - [ ] **Step 5:** `hook claude-code` with a Claude Code PreToolUse stdin for one `break`, one `warn` and one clean command; record stdout and the exit code of each (this decides how Task 17's launcher passes the decision on).
 - [ ] **Step 6:** One stub session per system (Windows, WSL) whose SessionStart hook starts a detached child (`subprocess.Popen` with `start_new_session` on POSIX, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB` on Windows, no inherited handles) that writes a marker 15 s later; control: a non-detached child. Record whether the marker appears after the hook returned and after the session ended.
 - [ ] **Step 7:** Write the result file; sweep; commit `docs(spikes): record the pinned shellwise release`.
@@ -720,20 +722,10 @@ second round. Merging and the release are the owner's steps.
 
 ---
 
-## After 3b: the pin bump
-
-### Task 39: Bump the shellwise pin to v0.1.1
-
-**Heavy (downloads), opus. 1.5 h, 10 code, 20 test lines; not in the 3b estimate.** Inputs: a
-shellwise `v0.1.1` release (the owner's call; shellwise PR #5 is merged on its `main`, not released).
-Output: D100's bump. **Files:** file map row 39.
-
-- [ ] Task 14 Steps 1–4 on `v0.1.1` (hashes against the release's `.sha256` files, `--version`, `explain` for the new ids, the rule-map probes: `bash-ps-call-operator` break in Bash and Git Bash, `gate-truncated-pipeline` firing in Bash for `| tee log | head`); `pin.json`, `RULES` and `test_pin.py`; Task 28's real-download stub case; the release notes name the two rules. Commit `feat(rigger-shellwise): pin shellwise 0.1.1`.
-
 ## Left for later
 
-- Task 39, once shellwise `v0.1.1` is released. The `gate-truncated-pipeline` gap for script hosts
-  other than pwsh (`python -I scripts/gate.py | head`) stays after it (D100).
+- The `gate-truncated-pipeline` gap for script hosts other than pwsh
+  (`python -I scripts/gate.py | head`, D100): the shellwise owner's call.
 - Linux arm64 and Windows arm64 assets: the shellwise owner's call.
 - The redundant-prose cuts, if question 3 defers them.
 - The hook-process merge, argv-hash pinning of `trust.project_commands`, a Go or Rust port: out of
@@ -784,7 +776,6 @@ Output: D100's bump. **Files:** file map row 39.
 | 38 drift-lint lists | 1.5 | 50 | 80 |
 | **Total** | **88.5** | **about 2,890** | **about 4,650** |
 
-Task 39 (the pin bump, 1.5 h, 10 and 20 lines) comes after the 3b release and is not in the total.
 By pull request: A 33.5 h, B 25.5 h, C 29.5 h.
 
 About 9,000 lines move with `git mv` and are not counted; about 4,500 lines are deleted (the deny
@@ -821,8 +812,9 @@ the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours 
    session's turn end while its own gate or test command runs (question 2).
 2. **`background_tasks` is an undocumented field.** A CLI that drops it makes the guard allow (fail
    open); Task 5's tests pin the field so the next CLI update shows it.
-3. **The pinned rule set is older than the rule map.** Task 14 lists every row that differs; a weaker
-   row is in the release notes until the pin bump.
+3. **The rule map was probed before `v0.1.1` was tagged.** Task 14 lists every row that differs; a
+   weaker row is in the release notes. If the release is not out when lane B1 is due, B1 waits; B2,
+   B3 and PR A do not depend on it.
 4. **The first session after the update runs unguarded until the download ends.** It says so.
 5. **GitHub release downloads can be blocked** on a company network. The slot stays unfilled with the
    reason; the override names a binary installed another way.
@@ -835,6 +827,6 @@ the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours 
    cut leaves rigger-windows running a moved script. It commits in three steps, and the coordinator
    may give it two sessions in a row (Steps 1–2, then 3–5) on the same branch.
 10. **shellwise does not catch a truncated Rigger gate** (`python -I scripts/gate.py | head`), not
-    even after Task 39 (D100). The gate rule in Rigger's own rules text stays the guard for it.
+    with the `v0.1.1` pin (D100). The gate rule in Rigger's own rules text stays the guard for it.
 11. **The dependency row is static** (D96): it sees a missing or disallowed dependency, not a plugin
     the CLI refused for another reason.
