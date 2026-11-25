@@ -171,13 +171,19 @@ class ProjectRulesTests(PathRuleCase):
                 self.assertEqual(review_scope.scope(self.repo, base, head), expected)
 
     def newly_named(self, kind, data):
-        """Base holds docs/r.md (a regular file of `data`, or a link whose target is `data`) and names no rules
+        """Base holds docs/r.md (a regular file of `data`, an executable one, a link whose target is `data`, a
+        gitlink to commit `data`, or an entry whose blob `data` is not in the object store) and names no rules
         file; head only adds an entry that names docs/r.md. The rows of scope() and the CLI's lines."""
         self.write("src/a.py", b"a\n")
         self.write(".claude/rigger.json", self.project({}))
-        if kind == "file":
+        if kind in ("file", "exec"):
             self.write("docs/r.md", data)
             self.git("add", "-A")
+            if kind == "exec":
+                self.git("update-index", "--chmod=+x", "--", "docs/r.md")
+        elif kind == "missing":
+            self.git("add", "-A")
+            self.git("update-index", "--add", "--cacheinfo", "100644,%s,docs/r.md" % data)
         elif kind == "gitlink":
             self.git("add", "-A")
             self.git("update-index", "--add", "--cacheinfo", "160000,%s,docs/r.md" % data)
@@ -187,20 +193,30 @@ class ProjectRulesTests(PathRuleCase):
             target.write_bytes(data)
             oid = self.git("hash-object", "-w", str(target))
             self.git("update-index", "--add", "--cacheinfo", "120000,%s,docs/r.md" % oid)
-        self.git("commit", "-q", "-m", "base")
-        base = self.git("rev-parse", "HEAD")
+        base = self.commit_index("base", kind == "missing")
         # Only the config is staged: without core.symlinks the link has no file in the working tree.
         self.write(".claude/rigger.json", self.project({"src/**": "docs/r.md"}))
         self.git("add", "--", ".claude/rigger.json")
-        self.git("commit", "-q", "-m", "head")
-        head = self.git("rev-parse", "HEAD")
-        mode = {"link": "120000 ", "gitlink": "160000 "}.get(kind, "100644 ")
+        head = self.commit_index("head", kind == "missing")
+        mode = {"link": "120000 ", "gitlink": "160000 ", "exec": "100755 "}.get(kind, "100644 ")
         for commit in (base, head):
             with self.subTest(fixture=commit):
                 self.assertTrue(self.git("ls-tree", commit, "--", "docs/r.md").startswith(mode))
         lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), "--rules-out",
                              str(self.tmp / "rules out"))
         return review_scope.scope(self.repo, base, head), lines
+
+    def commit_index(self, message, missing_ok):
+        """Commit the index; `missing_ok` writes the tree with a blob absent from the object store, which
+        `git commit` refuses."""
+        if not missing_ok:
+            self.git("commit", "-q", "-m", message)
+            return self.git("rev-parse", "HEAD")
+        tree = self.git("write-tree", "--missing-ok")
+        parent = self.git("rev-parse", "-q", "--verify", "HEAD^{commit}") if message == "head" else ""
+        commit = self.git("commit-tree", tree, *(["-p", parent] if parent else []), "-m", message)
+        self.git("reset", "-q", "--soft", commit)
+        return commit
 
     def assert_not_handed_over(self, rows, lines, verdict):
         self.assertEqual(rows, [(".claude/rigger.json", "review"), ("docs/r.md", verdict)])
@@ -225,13 +241,19 @@ class ProjectRulesTests(PathRuleCase):
         self.assert_not_handed_over(rows, lines,
                                     "review: rules file newly named (over %d bytes)" % review_scope.TEXT_CAP)
 
+    def test_newly_named_missing_blob_is_not_handed_over(self):
+        """An entry whose blob is not in the object store has no size to check: it is not handed over."""
+        rows, lines = self.newly_named("missing", "ab" * 20)
+        self.assertEqual(self.git("ls-tree", "-l", "HEAD", "--", "docs/r.md").split()[3], "BAD")
+        self.assert_not_handed_over(rows, lines, "review: rules file newly named (object missing)")
+
     def test_newly_named_regular_file_is_handed_over(self):
-        """Control: a regular file, up to and including the cap, keeps the plain row."""
-        for size in (31, review_scope.TEXT_CAP):
-            with self.subTest(size=size):
-                self.git("checkout", "-q", "--orphan", "regular-%d" % size)
+        """Control: a regular file of either regular mode, up to and including the cap, keeps the plain row."""
+        for kind, size in (("file", 31), ("file", review_scope.TEXT_CAP), ("exec", 31)):
+            with self.subTest(kind=kind, size=size):
+                self.git("checkout", "-q", "--orphan", "regular-%s-%d" % (kind, size))
                 self.git("rm", "-rqf", "--ignore-unmatch", ".")
-                rows, lines = self.newly_named("file", b"x" * size)
+                rows, lines = self.newly_named(kind, b"x" * size)
                 self.assertEqual(rows, [(".claude/rigger.json", "review"), ("docs/r.md", NEWLY_NAMED)])
                 self.assertIn("%s\tdocs/r.md" % NEWLY_NAMED, lines)
 
