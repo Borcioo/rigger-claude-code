@@ -3,6 +3,7 @@ side_session_guard.py as the Stop hook runs it.
 
 python -I test_turn_guard.py
 """
+import contextlib
 import json
 import os
 import shutil
@@ -40,6 +41,24 @@ class Clock:
         if self.action is not None and self.now >= self.at:
             self.action()
             self.action = None
+
+
+@contextlib.contextmanager
+def uid_as(uid):
+    """os.getuid returns `uid`, or is absent when `uid` is None (as on Windows); restored on exit."""
+    had, old = hasattr(os, "getuid"), getattr(os, "getuid", None)
+    if uid is None:
+        if had:
+            del os.getuid
+    else:
+        os.getuid = lambda: uid
+    try:
+        yield
+    finally:
+        if had:
+            os.getuid = old
+        elif hasattr(os, "getuid"):
+            del os.getuid
 
 
 def task(task_id="b58ki4brf", command=GATE, description="gate run", kind="shell", status="running"):
@@ -185,6 +204,28 @@ class FilterTests(Base):
         self.write(os.path.join(other, "tasks", "b58ki4brf.output"), "")
         environ["CLAUDE_CODE_CHILD_NOTES_DIR"] = os.path.join(other, "started")
         self.assertAllowed(self.check([task()], environ=environ))
+
+    def test_output_file_is_found_in_each_cli_temp_layout(self):
+        # The CLI's task root is `<CLAUDE_CODE_TMPDIR, else os.tmpdir()>/claude-<uid>` where the platform has a
+        # uid (Linux, macOS), `claude-` where it has none, and `claude` on Windows.
+        none = os.path.join(self.root, "none")
+        shutil.rmtree(self.temp)
+        own_tmp = os.path.join(self.root, "own-tmp")
+        rows = (("POSIX claude-<uid>", self.temp, "claude-1000", 1000, {}),
+                ("no uid: claude-", self.temp, "claude-", None, {}),
+                ("CLAUDE_CODE_TMPDIR root", own_tmp, "claude", None,
+                 {"TEMP": none, "TMP": none, "TMPDIR": none, "CLAUDE_CODE_TMPDIR": own_tmp}))
+        for name, root, folder, uid, environ in rows:
+            with self.subTest(layout=name):
+                tasks = os.path.join(root, folder, "-tmp-some-cwd", SID, "tasks")
+                path = self.write(os.path.join(tasks, "b58ki4brf.output"), "")
+                with uid_as(uid):
+                    self.assertEqual(turn_guard.output_file(SID, "b58ki4brf", dict(self.environ, **environ)), path)
+                    self.assertHeld(self.check([task()], environ=environ))
+                shutil.rmtree(os.path.join(root, folder))
+        with uid_as(1000):
+            self.write(os.path.join(self.temp, "claude-1001", "k", SID, "tasks", "b58ki4brf.output"), "")
+            self.assertAllowed(self.check([task()]))
 
 
 class PollTests(Base):
