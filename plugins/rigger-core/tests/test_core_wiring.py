@@ -268,7 +268,7 @@ class SecondReviewRoundTests(unittest.TestCase):
 
     def test_an_empty_reviewer_slot_inside_a_plan_is_a_stop(self):
         self.assertIn("Inside an approved plan it is a stop: block that part, merge nothing of it and report it "
-                      "with the install line.", sentence_with(fix_rounds(), "Inside an approved plan it is a stop"))
+                      "with that notice.", sentence_with(fix_rounds(), "Inside an approved plan it is a stop"))
 
 
 class SlotWordingTests(unittest.TestCase):

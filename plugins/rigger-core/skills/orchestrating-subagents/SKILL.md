@@ -162,8 +162,8 @@ failure on the stronger model goes to the user with the diagnosis.
 - With the `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install
   line from the session notice, or the slot's own notice when there is none; never skip the review
   or give it to an agent outside the slot.
-  Inside an approved plan it is a stop: block that part, merge nothing of it and report it with the
-  install line.
+  Inside an approved plan it is a stop: block that part, merge nothing of it and report it with
+  that notice.
 - The orchestrator records each finding's outcome in the state file under `## Findings`, one line
   each: `<finding> · <severity> · <outcome>`, the outcome being fixed, disputed, intentional or
   pre-existing-deferred.

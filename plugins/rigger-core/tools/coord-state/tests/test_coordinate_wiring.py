@@ -139,8 +139,8 @@ class CoordinateWiring(unittest.TestCase):
         step_four = " ".join(COORDINATE[COORDINATE.index("\n4. "):COORDINATE.index("\n5. ")].split())
         self.assertIn("With the `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install "
                       "line from the session notice, or the slot's own notice when there is none; never skip the review or give it to an agent outside the slot. "
-                      "That part stays `built`; set `stop: goal-unreachable` and ask the user to run that "
-                      "install line (step 6).", step_four)
+                      "That part stays `built`; set `stop: goal-unreachable` and ask the user to fill the "
+                      "slot as that notice says (step 6).", step_four)
 
     def test_empty_output_is_not_an_ok(self):
         for out in ("", "\n", "coord-state: refused: x\n", "Python 3.9+ not found\n"):
