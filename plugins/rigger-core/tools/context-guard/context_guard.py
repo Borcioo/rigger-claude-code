@@ -3,7 +3,8 @@ keep its state file current, so that compaction (see compact_guard.py) can run a
 
 Reads the event JSON from stdin, takes the last main-chain assistant usage from the end of the
 transcript and prints `additionalContext` when its prompt size is at or over the threshold. Prints
-nothing otherwise, and nothing on any error: it is a reminder, not a guard.
+nothing otherwise, and nothing on any error: it is a reminder, not a guard. First, when this session's state
+file is missing and archived, it is restored (state.py restore_on_miss).
 
 Also the shared transcript reader and state-file path for compact_guard.py.
 
@@ -13,8 +14,10 @@ import json
 import os
 import re
 import sys
+import time
 
 DEFAULT_THRESHOLD = 200_000
+STATE_TOOL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
 CHUNK = 1 << 20          # bytes read per step, from the end of the transcript
 MAX_SCAN = 16 << 20      # stop looking after this many bytes
 SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -116,6 +119,22 @@ def last_entry(path):
     return None
 
 
+def restore_archived(session_id):
+    """Brings back this session's state file when another session's clean archived it while this window stayed
+    open (no SessionStart fires on return): before any Write, compaction or tool call of the prompt. One stat
+    while the file is present; the restore itself is state.py's, so the stamp and the rules are the same."""
+    try:
+        path = state_path(default_state_dir(), session_id)
+        if path is None or os.path.lexists(path):
+            return
+        if STATE_TOOL not in sys.path:
+            sys.path.insert(0, STATE_TOOL)
+        import state
+        state.restore_on_miss(default_state_dir(), session_id, time.time())
+    except Exception:
+        pass
+
+
 def main(argv):
     threshold = DEFAULT_THRESHOLD
     if "--threshold" in argv:
@@ -126,6 +145,8 @@ def main(argv):
         if threshold <= 0:
             threshold = DEFAULT_THRESHOLD
     event = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
+    if isinstance(event, dict):
+        restore_archived(event.get("session_id"))
     path = event.get("transcript_path") if isinstance(event, dict) else None
     if not isinstance(path, str) or not path:
         return 0

@@ -18,10 +18,16 @@ with optional indented detail lines below it. Statuses: open, doing, blocked, do
                                                       a branch gone locally and as a remote-tracking ref, and
                                                       `safe_to_compact: false` with `updated` over 30 minutes old
   clean [--now ISO]                                   archive idle sessions' files (14 days), delete archived files
-                                                      after 60 days, rotate logs over 50 KiB; under `.clean.lock`
+                                                      after 60 days, rotate logs over 50 KiB; under `.clean.lock`,
+                                                      within a 5 s budget counted from the process start
   hook [--now ISO]                                    SessionStart: reads `source` and `session_id` from stdin;
                                                       startup cleans, resume restores this session's archived files
                                                       and checks, clear and compact check; at most 6 lines, exit 0
+
+A session left open while another session's clean archived its files gets them back at its next own entry point:
+`hook` on every source, `check`, `add`, `set`, `done`, and context_guard.py on the next prompt (restore_on_miss).
+A restore first writes the stamp `<session>.restored` (mtime = restore time), which counts as activity for the
+idle rule; the state file keeps its archive time, because compact_guard judges staleness by that mtime.
 
 Every write keeps the bytes outside the lines it changes and replaces the file atomically. Exit 0 prints a
 `state: ok …` line (`hook` prints only findings); exit 2 prints one line `state: refused: <reason>`. Output is
@@ -36,6 +42,7 @@ import sys
 import tempfile
 import time
 
+STARTED = time.monotonic()
 OK, REFUSED = "state: ok ", "state: refused: "
 DOT, NONE = chr(0xB7), chr(0x2014)
 SEP = " %s " % DOT
@@ -57,10 +64,12 @@ DAY = 86400
 IDLE_DAYS, ARCHIVE_DAYS = 14, 60
 STALE_FALSE = 30 * 60
 LOCK_TAKEOVER = 10 * 60
+CLEAN_BUDGET = 5.0   # seconds, under the hook's 10 s timeout
 LOG_MAX, LOG_KEEP = 50 * 1024, 25 * 1024
 GH_CALL, GH_RUN = 3.0, 5.0
 SHARED = {"compact-guard.log", "pr-cache.json", ".clean.lock", "archive"}
-SUFFIXES = ("md", "log.md", "parts.json", "summary.md", "side-guard.json", "turn-guard.json")
+STAMP = "restored"
+SUFFIXES = ("md", "log.md", "parts.json", "summary.md", "side-guard.json", "turn-guard.json", STAMP)
 FINDINGS_SHOWN = 5
 ISO = re.compile(r"(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d)(?::(\d\d)(?:\.\d+)?)?(Z|[+-]\d\d:?\d\d)?")
 
@@ -307,8 +316,13 @@ def gh_state(command, repo, number, timeout):
 # --- session paths ----------------------------------------------------------------------------------------------
 
 class Context:
-    def __init__(self, state_dir, session, projects_dir, now, out):
+    def __init__(self, state_dir, session, projects_dir, now, out, deadline=float("inf"), clock=time.monotonic):
         self.state_dir, self.session, self.projects_dir, self.now, self.out = state_dir, session, projects_dir, now, out
+        self.deadline, self.clock = deadline, clock
+
+    def out_of_time(self):
+        """True once the clean budget is spent; asked only between units of work, never inside one."""
+        return self.clock() >= self.deadline
 
     def say(self, line):
         self.out.write(line.encode("utf-8") + b"\n")
@@ -575,22 +589,32 @@ def regular_files(folder):
     return [entry for entry in entries if entry.is_file(follow_symlinks=False)]
 
 
-def newest_transcript(projects_dir, session):
-    """The newest mtime of `<projects>/*/<session>.jsonl`, 0 when there is none; raises OSError when it cannot
-    tell (the caller then keeps the session)."""
-    newest = 0
+def transcript_times(projects_dir, sessions):
+    """{session: newest mtime of `<projects>/*/<session>.jsonl`} for `sessions`, from one scan of the project
+    folders (one stat per matching transcript); a session without one is absent. Raises OSError when a folder
+    cannot be read: the caller then cannot tell any session is idle."""
+    times = {}
     try:
         folders = list(os.scandir(projects_dir))
     except FileNotFoundError:
-        return 0
+        return times
     for folder in folders:
         if not folder.is_dir():
             continue
         try:
-            newest = max(newest, os.stat(os.path.join(folder.path, session + ".jsonl")).st_mtime)
+            entries = list(os.scandir(folder.path))
         except FileNotFoundError:
             continue
-    return newest
+        for entry in entries:
+            session = entry.name[:-len(".jsonl")] if entry.name.endswith(".jsonl") else None
+            if session not in sessions:
+                continue
+            try:
+                mtime = os.stat(entry.path).st_mtime
+            except FileNotFoundError:
+                continue
+            times[session] = max(times.get(session, 0), mtime)
+    return times
 
 
 def take_lock(ctx):
@@ -633,23 +657,32 @@ def drop_lock(ctx, text):
 
 
 def archive_idle(ctx, archive):
+    """(files moved, stopped by the budget). A session's files move one `os.replace` each, so a kill or an
+    OSError can split a group; the next clean moves the rest while the session stays idle, and a restore brings
+    the archived part back."""
     groups = {}
     for entry in regular_files(ctx.state_dir):
         session = session_of(entry.name)
-        if session:
+        if session and session != ctx.session:
             groups.setdefault(session, []).append(entry)
+    groups = {session: entries for session, entries in groups.items()
+              if any(entry.name[len(session) + 1:] in SUFFIXES for entry in entries)}
+    if not groups:
+        return 0, False
+    try:
+        transcripts = transcript_times(ctx.projects_dir, groups)
+    except OSError:
+        return 0, False
     moved = 0
     for session, entries in sorted(groups.items()):
-        if session == ctx.session:
-            continue
-        if not any(entry.name[len(session) + 1:] in SUFFIXES for entry in entries):
-            continue
+        if ctx.out_of_time():
+            return moved, True
         try:
-            newest = max(entry.stat(follow_symlinks=False).st_mtime for entry in entries)
-            newest = max(newest, newest_transcript(ctx.projects_dir, session))
+            # a fresh lstat, not the listing's cached times: a restore may have renewed the stamp since
+            newest = max(os.lstat(entry.path).st_mtime for entry in entries)
         except OSError:
             continue
-        if ctx.now - newest <= IDLE_DAYS * DAY:
+        if ctx.now - max(newest, transcripts.get(session, 0)) <= IDLE_DAYS * DAY:
             continue
         os.makedirs(archive, exist_ok=True)
         if any(os.path.lexists(os.path.join(archive, entry.name)) for entry in entries):
@@ -662,22 +695,30 @@ def archive_idle(ctx, archive):
             except OSError:
                 break
             moved += 1
-    return moved
+    return moved, False
 
 
 def delete_old(ctx, archive):
+    """(files deleted, stopped by the budget)."""
     deleted = 0
     for entry in regular_files(archive):
         try:
-            if ctx.now - entry.stat(follow_symlinks=False).st_mtime > ARCHIVE_DAYS * DAY:
-                os.remove(entry.path)
-                deleted += 1
+            if ctx.now - entry.stat(follow_symlinks=False).st_mtime <= ARCHIVE_DAYS * DAY:
+                continue
         except OSError:
             continue
-    return deleted
+        if ctx.out_of_time():
+            return deleted, True
+        try:
+            os.remove(entry.path)
+        except OSError:
+            continue
+        deleted += 1
+    return deleted, False
 
 
 def rotate_logs(ctx, archive):
+    """(logs rotated, stopped by the budget)."""
     rotated = 0
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(ctx.now))
     for entry in regular_files(ctx.state_dir):
@@ -687,6 +728,11 @@ def rotate_logs(ctx, archive):
         try:
             if entry.stat(follow_symlinks=False).st_size <= LOG_MAX:
                 continue
+        except OSError:
+            continue
+        if ctx.out_of_time():
+            return rotated, True
+        try:
             data = read_bytes(entry.path)
         except OSError:
             continue
@@ -706,11 +752,14 @@ def rotate_logs(ctx, archive):
         except OSError:
             continue
         rotated += 1
-    return rotated
+    return rotated, False
 
 
 def clean(ctx):
-    """(moved, deleted, rotated) or None when another run holds the lock."""
+    """(moved, deleted, rotated, stopped) or None when another run holds the lock. One time budget
+    (`ctx.deadline`) covers all three steps; once it is spent, clean stops before the next unit (a session's
+    group, a delete, a rotation) and drops the lock. A hook killed at its timeout cannot drop the lock: the
+    next run then skips until the lock is older than LOCK_TAKEOVER."""
     if not ctx.session:
         raise Refused("no session id")
     lock = take_lock(ctx)
@@ -718,10 +767,13 @@ def clean(ctx):
         return None
     try:
         archive = os.path.join(ctx.state_dir, "archive")
-        moved = archive_idle(ctx, archive)
-        deleted = delete_old(ctx, archive)
-        rotated = rotate_logs(ctx, archive)
-        return moved, deleted, rotated
+        moved, stopped = archive_idle(ctx, archive)
+        deleted = rotated = 0
+        if not stopped:
+            deleted, stopped = delete_old(ctx, archive)
+        if not stopped:
+            rotated, stopped = rotate_logs(ctx, archive)
+        return moved, deleted, rotated, stopped
     finally:
         drop_lock(ctx, lock)
 
@@ -731,18 +783,41 @@ def cmd_clean(ctx, args, opts):
     if result is None:
         ctx.say(OK + "clean skipped: locked")
     else:
-        ctx.say(OK + "clean moved %d deleted %d rotated %d" % result)
+        ctx.say(OK + "clean moved %d deleted %d rotated %d" % result[:3]
+                + ("; stopped at the time budget" if result[3] else ""))
 
 
 # --- hook -------------------------------------------------------------------------------------------------------
 
-def restore(ctx):
-    archive = os.path.join(ctx.state_dir, "archive")
-    restored = 0
+def restore_files(state_dir, session, now):
+    """Moves `session`'s archived files back to `state_dir`, never over a present file; returns the count. The
+    stamp `<session>.restored` is written first (created or its mtime set to `now`), so a clean running in
+    parallel either sees the fresh stamp or does not see the restored files yet; an archived stamp is dropped,
+    or it would block the session's next archiving."""
+    archive = os.path.join(state_dir, "archive")
+    moves, old_stamps = [], []
     for entry in regular_files(archive):
-        if session_of(entry.name) != ctx.session or entry.name[len(ctx.session) + 1:] not in SUFFIXES:
+        if session_of(entry.name) != session:
             continue
-        target = os.path.join(ctx.state_dir, entry.name)
+        rest = entry.name[len(session) + 1:]
+        if rest == STAMP:
+            old_stamps.append(entry.path)
+        elif rest in SUFFIXES and not os.path.lexists(os.path.join(state_dir, entry.name)):
+            moves.append(entry)
+    if not moves:
+        return 0
+    stamp = os.path.join(state_dir, session + "." + STAMP)
+    with open(stamp, "ab"):
+        pass
+    os.utime(stamp, (now, now))
+    for path in old_stamps:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    restored = 0
+    for entry in moves:
+        target = os.path.join(state_dir, entry.name)
         if os.path.lexists(target):
             continue
         try:
@@ -751,6 +826,22 @@ def restore(ctx):
             continue
         restored += 1
     return restored
+
+
+def restore_on_miss(state_dir, session, now):
+    """restore_files when `<session>.md` is missing and `archive/<session>.md` exists, else 0. Costs one stat
+    while the state file is present; shared with context_guard.py, which calls it on every prompt."""
+    if not isinstance(session, str) or not SESSION_ID.fullmatch(session):
+        return 0
+    if os.path.lexists(os.path.join(state_dir, session + ".md")):
+        return 0
+    if not os.path.isfile(os.path.join(state_dir, "archive", session + ".md")):
+        return 0
+    return restore_files(state_dir, session, now)
+
+
+def restore(ctx):
+    return restore_files(ctx.state_dir, ctx.session, ctx.now)
 
 
 def hook(ctx, stdin):
@@ -769,15 +860,15 @@ def hook(ctx, stdin):
     if not ctx.session or source not in ("startup", "clear", "compact", "resume"):
         return
     lines = []
+    restored = restore(ctx) if source == "resume" else restore_on_miss(ctx.state_dir, ctx.session, ctx.now)
+    if restored:
+        lines.append("state: restored %d archived files of this session to %s" % (restored, ctx.state_dir))
     if source == "startup":
         result = clean(ctx)
         if result and any(result):
-            lines.append("state: clean moved %d idle files to archive/, deleted %d, rotated %d logs" % result)
+            lines.append("state: clean moved %d idle files to archive/, deleted %d, rotated %d logs" % result[:3]
+                         + ("; stopped at the time budget, the next start goes on" if result[3] else ""))
     else:
-        if source == "resume":
-            restored = restore(ctx)
-            if restored:
-                lines.append("state: restored %d archived files of this session to %s" % (restored, ctx.state_dir))
         if os.path.isfile(ctx.state_path()):
             found, unchecked = findings(ctx)
             room = FINDINGS_SHOWN - len(lines)
@@ -796,6 +887,7 @@ COMMANDS = {"add": (2, ("branch", "repo")), "set": (2, ("pr", "branch")), "note"
             "show": (0, ()), "check": (0, ("now",)), "clean": (0, ("now",)), "hook": (0, ("now",))}
 HANDLERS = {"add": cmd_add, "set": cmd_set, "note": cmd_note, "done": cmd_done, "show": cmd_show,
             "check": cmd_check, "clean": cmd_clean}
+RESTORE_FIRST = ("check", "add", "set", "done")
 
 
 def parse(argv):
@@ -832,7 +924,9 @@ def config_dir(environ):
     return environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
 
 
-def main(argv, environ=None, stdin=None, out=None):
+def main(argv, environ=None, stdin=None, out=None, started=None):
+    """`started`: the monotonic time the clean budget counts from (the process start when run as a script)."""
+    started = time.monotonic() if started is None else started
     environ = os.environ if environ is None else environ
     out = out if out is not None else sys.stdout.buffer
     is_hook = False
@@ -852,7 +946,7 @@ def main(argv, environ=None, stdin=None, out=None):
                 raise Refused("bad --now %s" % opts["now"])
         state_dir = os.path.abspath(glob_opts.get("state-dir") or os.path.join(config_dir(environ), "state"))
         projects = os.path.abspath(glob_opts.get("projects-dir") or os.path.join(config_dir(environ), "projects"))
-        ctx = Context(state_dir, session, projects, now, out)
+        ctx = Context(state_dir, session, projects, now, out, deadline=started + CLEAN_BUDGET)
         if command == "hook":
             data = stdin if stdin is not None else sys.stdin.buffer.read()
             try:
@@ -860,6 +954,10 @@ def main(argv, environ=None, stdin=None, out=None):
             except Exception:
                 pass
             return 0
+        if command in RESTORE_FIRST:
+            restored = restore_on_miss(state_dir, ctx.session, now)
+            if restored:
+                ctx.say(OK + "restored %d archived files of this session" % restored)
         HANDLERS[command](ctx, args, opts)
         return 0
     except Refused as exc:
@@ -875,4 +973,4 @@ def main(argv, environ=None, stdin=None, out=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:], started=STARTED))

@@ -390,6 +390,10 @@ class Clean(Case):
         self.assertEqual(self.run_main("clean", "--now", NOW), (0, "state: ok clean skipped: locked\n"))
         self.assertIn(DEAD + ".md", self.listing(self.state))
         self.assertEqual(self.read(".clean.lock"), b"999 2031-06-01T11:55:00Z\n")
+        for held in ("999 2031-06-01T11:51:00Z\n", "999 2031-06-01T11:50:00Z\n"):   # 9 and exactly 10 minutes
+            self.put(".clean.lock", held)
+            self.assertEqual(self.run_main("clean", "--now", NOW), (0, "state: ok clean skipped: locked\n"), held)
+            self.assertEqual(self.read(".clean.lock"), held.encode("utf-8"))
         self.put(".clean.lock", "999 2031-06-01T11:49:00Z\n")
         code, text = self.run_main("clean", "--now", NOW)
         self.assertEqual((code, text), (0, "state: ok clean moved 3 deleted 0 rotated 0\n"))
@@ -420,7 +424,7 @@ class Hook(Case):
         code, text = self.run_main("hook", "--now", NOW, stdin=event, session=None)
         self.assertEqual(code, 0)
         self.assertEqual(text[:len("state: restored 2 ")], "state: restored 2 ", text)
-        self.assertEqual(self.listing(self.state), [CURRENT + ".log.md", CURRENT + ".md"])
+        self.assertEqual(self.listing(self.state), [CURRENT + ".log.md", CURRENT + ".md", CURRENT + ".restored"])
         self.assertEqual(self.listing(self.archive), sorted([CURRENT + ".log.20310101T000000Z.md", OTHER + ".md"]))
         # The archive time stays: compact_guard judges a coordinator file by its mtime, so a restored file must
         # not look freshly written.
@@ -459,6 +463,228 @@ class Hook(Case):
             with self.subTest(stdin=stdin):
                 self.assertEqual(self.run_main("hook", "--now", NOW, stdin=stdin), (0, ""))
                 self.assertIn(DEAD + ".md", self.listing(self.state))
+
+
+class Parsing(Case):
+    def test_iso_times_with_a_zone_offset(self):
+        for text in ("2031-06-01T12:00:00Z", "2031-06-01T13:00:00+01:00", "2031-06-01T07:00:00-05:00",
+                     "2031-06-01T07:30:00-0430", "2031-06-01 12:00"):
+            self.assertEqual(st.parse_iso(text), NOW_TS, text)
+
+    def test_a_fenced_items_heading_is_not_the_section(self):
+        fenced = "---\nsafe_to_compact: true\n---\n## Next step\n```\n## Items\n- not an item\n```\n\n## Items\n%s\n" % (
+            item("a"))
+        self.put(CURRENT + ".md", fenced)
+        self.assertEqual(self.run_main("add", "b", "B", "--repo", "o/a"), (0, "state: ok add b\n"))
+        self.assertEqual(self.read(CURRENT + ".md").decode("utf-8"),
+                         fenced + item("b", repo="o/a", title="B") + "\n")
+
+
+class Restore(Case):
+    """S1 and S6: a restored session stays out of the next clean, and every own-session entry point restores a
+    state file that a clean archived while the session was away."""
+
+    def archived(self, ident=CURRENT, age=20, items=(item("a1", "doing", "#12"),)):
+        self.put(ident + ".md", "---\nsafe_to_compact: true\n---\n## Items\n%s" % "".join(
+            line + "\n" for line in items), age, folder=self.archive)
+        self.put(ident + ".log.md", "log\n", age, folder=self.archive)
+        self.put(ident + ".jsonl", "{}", age + 5, folder=os.path.join(self.projects, "p1"))
+
+    def hook(self, source, session, now=NOW):
+        event = json.dumps({"source": source, "session_id": session}).encode("utf-8")
+        with mock.patch.object(st, "gh_command", return_value=None):
+            return self.run_main("hook", "--now", now, stdin=event, session=None)
+
+    def stamp(self, ident=CURRENT):
+        return os.stat(os.path.join(self.state, ident + ".restored")).st_mtime
+
+    def later(self, days):
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW_TS + days * DAY))
+
+    def test_a_resumed_session_is_not_archived_by_the_next_start(self):
+        self.assertEqual(self.hook("resume", CURRENT), (0, ""))
+        self.assertEqual(self.listing(self.state), [], "nothing archived: no stamp")
+        self.archived()
+        code, text = self.hook("resume", CURRENT)
+        self.assertEqual((code, text.splitlines()[0][:len("state: restored 2 ")]), (0, "state: restored 2 "), text)
+        self.assertEqual(self.stamp(), NOW_TS)
+        self.assertEqual(os.stat(os.path.join(self.state, CURRENT + ".md")).st_mtime, NOW_TS - 20 * DAY)
+        self.assertEqual(self.hook("startup", OTHER)[0], 0)
+        self.assertEqual(self.listing(self.state), [CURRENT + ".log.md", CURRENT + ".md", CURRENT + ".restored"])
+        self.assertEqual(self.run_main("clean", "--now", NOW, session=OTHER)[0], 0)
+        self.assertIn(CURRENT + ".md", self.listing(self.state))
+        # The stamp only counts as activity: idle again for 14 days, the whole group goes, and a stamp left alone
+        # goes too.
+        self.put(DEAD + ".restored", "", 20)
+        self.assertEqual(self.run_main("clean", "--now", self.later(15), session=OTHER),
+                         (0, "state: ok clean moved 4 deleted 0 rotated 0\n"))
+        self.assertEqual(self.listing(self.state), [])
+
+    def test_an_old_stamp_restored_from_the_archive_is_renewed(self):
+        self.archived()
+        self.put(CURRENT + ".restored", "", 20, folder=self.archive)
+        self.assertEqual(self.hook("resume", CURRENT)[0], 0)
+        self.assertEqual(self.stamp(), NOW_TS)
+        self.assertEqual(self.listing(self.archive), [])
+        self.assertEqual(self.run_main("clean", "--now", NOW, session=OTHER)[0], 0)
+        self.assertIn(CURRENT + ".md", self.listing(self.state))
+        self.assertEqual(self.run_main("clean", "--now", self.later(15), session=OTHER),
+                         (0, "state: ok clean moved 3 deleted 0 rotated 0\n"))
+        # A stamp already in the state dir is renewed too, not only created.
+        self.archived()
+        self.put(CURRENT + ".restored", "", 20)
+        self.assertEqual(self.hook("resume", CURRENT)[0], 0)
+        self.assertEqual(self.stamp(), NOW_TS)
+
+    def test_the_stamp_is_written_before_the_first_file_moves(self):
+        self.archived()
+        seen, replace = [], os.replace
+
+        def spy(source, target):
+            seen.append(os.path.exists(os.path.join(self.state, CURRENT + ".restored")))
+            return replace(source, target)
+
+        with mock.patch.object(st.os, "replace", spy):
+            self.assertEqual(self.hook("resume", CURRENT)[0], 0)
+        self.assertEqual(seen, [True, True])
+
+    def test_each_own_session_entry_point_restores_a_missing_state_file(self):
+        # add, set and done take no --now: they stamp by the real clock, so the clean after them does too
+        at_now = ("--now", NOW)
+        rows = [("hook startup", lambda: self.hook("startup", CURRENT), at_now),
+                ("hook clear", lambda: self.hook("clear", CURRENT), at_now),
+                ("hook compact", lambda: self.hook("compact", CURRENT), at_now),
+                ("hook resume", lambda: self.hook("resume", CURRENT), at_now),
+                ("check", lambda: self.checked(), at_now),
+                ("add", lambda: self.run_main("add", "a2", "T", "--repo", "o/a"), ()),
+                ("set", lambda: self.run_main("set", "a1", "blocked"), ()),
+                ("done", lambda: self.run_main("done", "a1", "--pr", "12"), ())]
+        for name, step, clock in rows:
+            with self.subTest(entry=name):
+                shutil.rmtree(self.state)
+                os.makedirs(self.state)
+                self.archived()
+                code, text = step()
+                self.assertEqual(code, 0, text)
+                self.assertIn("restored 2 archived files", text)
+                self.assertEqual(self.listing(self.state), [CURRENT + ".log.md", CURRENT + ".md",
+                                                            CURRENT + ".restored"], text)
+                self.assertEqual(self.run_main("clean", *clock, session=OTHER)[0], 0)
+                self.assertIn(CURRENT + ".md", self.listing(self.state))
+
+    def checked(self):
+        with mock.patch.object(st, "gh_command", return_value=None):
+            return self.run_main("check", "--now", NOW)
+
+    def test_restore_on_miss_needs_the_archived_state_file_and_never_replaces_one(self):
+        self.put(CURRENT + ".log.md", "log\n", 20, folder=self.archive)
+        self.assertEqual(self.run_main("add", "a2", "T", "--repo", "o/a")[0], 2)
+        self.assertEqual(self.listing(self.archive), [CURRENT + ".log.md"])
+        self.put(CURRENT + ".md", "## Items\n", 1)
+        self.put(CURRENT + ".md", "## Items\narchived\n", 20, folder=self.archive)
+        self.assertEqual(self.run_main("add", "a2", "T", "--repo", "o/a"), (0, "state: ok add a2\n"))
+        self.assertEqual(self.listing(self.archive), [CURRENT + ".log.md", CURRENT + ".md"])
+        self.assertEqual(self.listing(self.state), [CURRENT + ".md"])
+
+    def test_a_split_group_heals_on_the_next_run(self):
+        self.put(DEAD + ".md", "x", 20, folder=self.archive)
+        for suffix in (".log.md", ".parts.json"):
+            self.put(DEAD + suffix, "x", 20)
+        self.put(DEAD + ".jsonl", "{}", 20, folder=os.path.join(self.projects, "p1"))
+        self.assertEqual(self.run_main("clean", "--now", NOW), (0, "state: ok clean moved 2 deleted 0 rotated 0\n"))
+        self.assertEqual(self.listing(self.archive), sorted(DEAD + s for s in (".md", ".log.md", ".parts.json")))
+        shutil.move(os.path.join(self.archive, DEAD + ".parts.json"), os.path.join(self.state, DEAD + ".parts.json"))
+        self.assertEqual(self.hook("resume", DEAD)[0], 0)
+        self.assertEqual(self.listing(self.state), sorted(DEAD + s for s in (".md", ".log.md", ".parts.json",
+                                                                              ".restored")))
+        self.assertEqual(self.listing(self.archive), [])
+
+
+class Bounds(Case):
+    """S7: one scan of the project folders, a fail-closed scan, and one time budget for the whole clean."""
+
+    def test_the_project_folders_are_scanned_once(self):
+        for sessions, folders in ((10, 10), (40, 30)):
+            with self.subTest(sessions=sessions, folders=folders):
+                shutil.rmtree(self.config)
+                os.makedirs(self.state)
+                os.makedirs(self.projects)
+                idents = ["%08d-0000-4000-8000-000000000000" % number for number in range(sessions)]
+                for number, ident in enumerate(idents):
+                    self.put(ident + ".md", "x", 20)
+                    self.put(ident + ".jsonl", "{}", 20 if number % 2 else 1,
+                             folder=os.path.join(self.projects, "p%d" % (number % folders)))
+                for folder in range(folders):
+                    for other in range(3):
+                        self.put("9%07d-%04d-4000-8000-000000000000.jsonl" % (folder, other), "{}", 1,
+                                 folder=os.path.join(self.projects, "p%d" % folder))
+                counts = {"stat": 0, "scandir": 0}
+                real_stat, real_scandir = os.stat, os.scandir
+
+                def stat(*args, **kwargs):
+                    counts["stat"] += 1
+                    return real_stat(*args, **kwargs)
+
+                def scandir(*args, **kwargs):
+                    counts["scandir"] += 1
+                    return real_scandir(*args, **kwargs)
+
+                with mock.patch.object(st.os, "stat", stat), mock.patch.object(st.os, "scandir", scandir):
+                    code, text = self.run_main("clean", "--now", NOW)
+                self.assertEqual((code, text), (0, "state: ok clean moved %d deleted 0 rotated 0\n" % (sessions // 2)))
+                self.assertLessEqual(counts["scandir"], folders + 4, counts)
+                self.assertLessEqual(counts["stat"], 2 * sessions + 4, counts)
+
+    def test_an_unreadable_project_folder_keeps_every_session(self):
+        self.dead_session()
+        self.put(OTHER + ".md", "x", 20)
+        os.makedirs(os.path.join(self.projects, "p2"))
+        real = os.scandir
+        blocked = os.path.join(self.projects, "p2")
+
+        def scandir(path="."):
+            if os.path.abspath(path) == os.path.abspath(blocked):
+                raise PermissionError(13, "denied", path)
+            return real(path)
+
+        with mock.patch.object(st.os, "scandir", scandir):
+            self.assertEqual(self.run_main("clean", "--now", NOW), (0, "state: ok clean moved 0 deleted 0 rotated 0\n"))
+        self.assertIn(DEAD + ".md", self.listing(self.state))
+
+    def budget_fixture(self):
+        self.dead_session(DEAD)
+        self.dead_session(SIBLING)
+        self.put(LIVE + ".log.md", b"line of the log\n" * 4000, 1)   # 64,000 bytes: one rotation
+        for name in ("a", "b"):
+            self.put(OTHER + ".%s.md" % name, "x", 70, folder=self.archive)
+
+    def test_one_time_budget_stops_clean_between_units_only(self):
+        # Units in order: the groups of DEAD, LIVE and SIBLING, two deletes, one rotation.
+        rows = [(0, 0, 0, 0, True), (1, 3, 0, 0, True), (2, 3, 0, 0, True), (3, 6, 0, 0, True), (4, 6, 1, 0, True),
+                (5, 6, 2, 0, True), (6, 6, 2, 1, False)]
+        for allowed, moved, deleted, rotated, stopped in rows:
+            with self.subTest(allowed=allowed):
+                shutil.rmtree(self.config)
+                os.makedirs(self.state)
+                os.makedirs(self.projects)
+                self.budget_fixture()
+                ticks = iter(range(100))
+                ctx = st.Context(self.state, CURRENT, self.projects, NOW_TS, io.BytesIO(), deadline=allowed,
+                                 clock=lambda: next(ticks))
+                self.assertEqual(st.clean(ctx), (moved, deleted, rotated, stopped))
+                self.assertFalse(os.path.exists(os.path.join(self.state, ".clean.lock")))
+                for ident in (DEAD, SIBLING):
+                    left = [name for name in self.listing(self.state) if name.startswith(ident)]
+                    self.assertIn(len(left), (0, 3), left)
+
+    def test_the_budget_counts_from_the_process_start(self):
+        self.budget_fixture()
+        out = io.BytesIO()
+        code = st.main(["--state-dir", self.state, "--projects-dir", self.projects, "clean", "--now", NOW],
+                       environ={"CLAUDE_CODE_SESSION_ID": CURRENT}, out=out, started=time.monotonic() - 10)
+        self.assertEqual((code, out.getvalue().decode("utf-8")),
+                         (0, "state: ok clean moved 0 deleted 0 rotated 0; stopped at the time budget\n"))
+        self.assertIn(DEAD + ".md", self.listing(self.state))
 
 
 class Cli(unittest.TestCase):
