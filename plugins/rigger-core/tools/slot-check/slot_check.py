@@ -323,9 +323,8 @@ def rule_reviewer_coverage_scope(ctx):
 
 def _snapshot(session):
     # type: (Optional[str]) -> Optional[dict]
-    """The session snapshot review_scope.py reads for the same `--session`; None without a session."""
-    if not session:
-        return None
+    """The session snapshot review_scope.py reads for the same `--session`; None without a session (an empty
+    or unsafe id names no snapshot file)."""
     value = os.environ.get("CLAUDE_CONFIG_DIR", "")
     return snapshot.read_snapshot(Path(value) if value else Path.home() / ".claude", session)
 
