@@ -422,7 +422,9 @@ class Hook(Case):
         self.assertEqual(text[:len("state: restored 2 ")], "state: restored 2 ", text)
         self.assertEqual(self.listing(self.state), [CURRENT + ".log.md", CURRENT + ".md"])
         self.assertEqual(self.listing(self.archive), sorted([CURRENT + ".log.20310101T000000Z.md", OTHER + ".md"]))
-        self.assertEqual(os.stat(os.path.join(self.state, CURRENT + ".md")).st_mtime, NOW_TS)
+        # The archive time stays: compact_guard judges a coordinator file by its mtime, so a restored file must
+        # not look freshly written.
+        self.assertEqual(os.stat(os.path.join(self.state, CURRENT + ".md")).st_mtime, NOW_TS - 30 * DAY)
         self.put(CURRENT + ".parts.json", "archived", 30, folder=self.archive)
         self.put(CURRENT + ".parts.json", "current", 0)
         code, text = self.run_main("hook", "--now", NOW, stdin=event, session=None)

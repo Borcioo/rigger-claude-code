@@ -199,12 +199,13 @@ class WiringTests(HookRun):
                          '"${CLAUDE_PLUGIN_ROOT}/tools/harness_start/harness_start.py" || true')
         compact_guard = ('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S '
                          '"${CLAUDE_PLUGIN_ROOT}/tools/context-guard/compact_guard.py" start || true')
+        state = 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S "${CLAUDE_PLUGIN_ROOT}/tools/state/state.py" hook || true'
         parts = [part_command(i) for i in range(1, SESSION_PARTS + 1)]
         for source, commands in (
-            ("startup", [harness_start] + parts),
-            ("compact", [compact_guard] + parts),
-            ("clear", parts),
-            ("resume", []),
+            ("startup", [harness_start, state] + parts),
+            ("compact", [compact_guard, state] + parts),
+            ("clear", [state] + parts),
+            ("resume", [state]),
         ):
             with self.subTest(source=source):
                 self.assertEqual([h["command"] for h in session_handlers("rigger-core", source)], commands)
@@ -380,7 +381,7 @@ class StateFileTests(unittest.TestCase):
             "  handoff.",
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
         self.assertNotIn("coordinator", "\n".join(lines))
-        self.assertEqual(lines[-2:], ["  from the state file.", ""])
+        self.assertEqual(lines[-2:], ["  on stale items named at session start.", ""])
         self.assertEqual(rules_text("rigger-core", "state-file.md", "subagent"), b"")
 
 
