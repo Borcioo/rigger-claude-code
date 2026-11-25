@@ -1,8 +1,8 @@
 """Resolve the four config levels: Rigger defaults, company modules, personal, project (spec section 7).
 
 `triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4), `trust` (level 3) and `review`
-(levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base) and `lessons` (levels 2-3, read
-by rigger-lessons' lint) apply.
+(levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base), `lessons` (levels 2-3, read
+by rigger-lessons' lint) and `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -32,10 +32,11 @@ KEYS = {
     "review": (dict, ALL_LEVELS),
     "shell_guard": (dict, frozenset((3,))),
     "lessons": (dict, frozenset((2, 3))),
+    "turn_guard": (dict, frozenset((2, 3, 4))),
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
-ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons"))
+ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons", "turn_guard"))
 REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
 REVIEW_TEXT_MAX = 200  # characters of a review.paths glob or skip reason
 LESSONS_PATHS_MAX = 50  # lessons.allowed_paths globs per config level (D97), each at most REVIEW_TEXT_MAX
@@ -231,6 +232,20 @@ def _lessons(value: dict, where: str) -> Tuple[dict, List[str]]:
     return clean, notices
 
 
+def _turn_guard(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """turn_guard.enabled (D89): true or false; a bad value is dropped, so the default (true) stays."""
+    clean = {}
+    notices = []
+    for key, item in value.items():
+        if key != "enabled":
+            notices.append("rigger: config %s turn_guard key %s unknown; ignored" % (where, _shown(key)))
+        elif item is None or isinstance(item, bool):
+            clean[key] = item
+        else:
+            notices.append("rigger: config %s turn_guard.enabled must be true or false; ignored" % where)
+    return clean, notices
+
+
 def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
     """The keys of one level's data that its level allows, each of the right shape, and a notice per drop."""
     clean = {}
@@ -272,6 +287,9 @@ def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]
             notices.extend(found)
         if key == "lessons":
             value, found = _lessons(value, where)
+            notices.extend(found)
+        if key == "turn_guard":
+            value, found = _turn_guard(value, where)
             notices.extend(found)
         clean[key] = value
     return clean, notices

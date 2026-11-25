@@ -492,6 +492,38 @@ class ReviewPathsTests(unittest.TestCase):
         self.assertIn(PATHS[3], got.notices[0])
 
 
+class TurnGuardTests(unittest.TestCase):
+    """D89: turn_guard.enabled, levels 2-4; a bad value is dropped with one notice, so the default stays."""
+
+    def test_enabled_applies_at_levels_two_to_four(self):
+        for value in (True, False):
+            got = resolve(l4={"schema": 1, "turn_guard": {"enabled": value}})
+            self.assertEqual((got.effective.get("turn_guard"), got.notices), ({"enabled": value}, []))
+        got = resolve(l2=[("acme", {"turn_guard": {"enabled": False}})], l3={"schema": 1, "turn_guard": {"enabled": True}})
+        self.assertEqual(got.effective["turn_guard"], {"enabled": True})
+        self.assertEqual(got.sources[("turn_guard", "enabled")], "L3:" + PATHS[3])
+        got = resolve(l2=[("acme", {"turn_guard": {"enabled": False}})])
+        self.assertEqual(got.effective["turn_guard"], {"enabled": False})
+        clean, notices = config.validate_level({"turn_guard": {"enabled": False}}, 1, "w")
+        self.assertEqual((clean, len(notices)), ({}, 1))
+        self.assertIn("not allowed at level 1", notices[0])
+
+    def test_bad_value_keeps_the_default_with_one_notice(self):
+        for value in ("no", 0, 1, [], {"x": 1}):
+            with self.subTest(value=value):
+                got = resolve(l3={"schema": 1, "turn_guard": {"enabled": value}})
+                self.assertEqual(got.effective.get("turn_guard"), {})
+                self.assertEqual(len(got.notices), 1, got.notices)
+                self.assertIn("turn_guard.enabled must be true or false", got.notices[0])
+                self.assertIn(PATHS[3], got.notices[0])
+        clean, notices = config.validate_level({"turn_guard": {"enabled": True, "poll": 9}}, 4, "w")
+        self.assertEqual(clean, {"turn_guard": {"enabled": True}})
+        self.assertEqual(len(notices), 1)
+        self.assertIn("turn_guard key poll unknown", notices[0])
+        clean, notices = config.validate_level({"turn_guard": "off"}, 4, "w")
+        self.assertEqual((clean, len(notices)), ({}, 1))
+
+
 class DefaultsTests(unittest.TestCase):
     def test_defaults_file_matches_spec(self):
         path = config.defaults_path(CORE_ROOT)
