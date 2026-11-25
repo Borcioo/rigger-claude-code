@@ -600,7 +600,11 @@ class RenderTests(Base):
         path = lessons_batch.render_rules(self.config, run_dir, lessons_batch.batch_model.child_env(self.env),
                                           lines.append)
         self.assertIsNotNone(path, lines)
-        first = read(path).split("\n", 1)[0]
+        text = read(path).split("\n")
+        # Only rigger-core is installed here, so the two module slots open the text with their install lines.
+        self.assertEqual([line.split(" is empty: ")[0] for line in text[:2]],
+                         ["rigger: slot reviewer", "rigger: slot testing"])
+        first = text[2]
         self.assertTrue(first.startswith("Plugin root: "), first)
         # Compared by identity: the assembler resolves its own path (/private/var on macOS).
         self.assertTrue(os.path.samefile(first[len("Plugin root: "):], str(copy)), first)

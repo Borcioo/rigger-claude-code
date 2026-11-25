@@ -280,6 +280,13 @@ class InstallHintTests(SlotsTestCase):
                 rows, _, _, notices = self.resolve(l3=level({"reviewer": value}), enabled=ENABLED - {"rigger-review"})
                 self.assertEqual(notices, [])
                 self.assertEqual(rows["reviewer"].filled, value is not None)
+        # A plugin named only above level 1 is never offered for install: the command names level 1's plugin.
+        l1_slots = copy.deepcopy(DEFAULT_SLOTS)
+        del l1_slots["reviewer"]
+        _, _, _, notices = self.resolve(l1=level(l1_slots), enabled=ENABLED - {"rigger-review"},
+                                        l3=level({"reviewer": {"kind": "agent", "target": "elsewhere:reviewer"}}))
+        self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: plugin elsewhere is not enabled; "
+                                   "the slot is empty" % L3_FILE])
 
     def test_a_stale_override_falls_back_with_the_install_command(self):
         # A personal file from before the move still names rigger-core's reviewer, which rigger-core no longer has.

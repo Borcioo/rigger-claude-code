@@ -8,7 +8,7 @@
     "plugins/rigger-core/tools/assemble/tests/test_render.py": ["rigger-rules", "rigger-testing", "rigger-windows", "rigger-wp"],
     "plugins/rigger-core/tools/assemble/tests/test_sections.py": ["*"],
     "plugins/rigger-core/tools/assemble/tests/test_slots.py": ["rigger-lessons", "rigger-review", "rigger-testing", "rigger-windows", "rigger-wp"],
-    "plugins/rigger-core/tools/assemble/tests/test_stub_session.py": ["rigger-lessons", "rigger-panel", "rigger-review", "rigger-rules", "rigger-talk", "rigger-windows", "rigger-wp"],
+    "plugins/rigger-core/tools/assemble/tests/test_stub_session.py": ["rigger-lessons", "rigger-panel", "rigger-review", "rigger-rules", "rigger-talk", "rigger-testing", "rigger-windows", "rigger-wp"],
     "plugins/rigger-core/tools/coord-state/tests/test_coordinate_host_stub.py": ["rigger-rules"],
     "plugins/rigger-core/tools/doctor/tests/": ["rigger-lessons", "rigger-review", "rigger-rules", "rigger-testing", "rigger-windows"],
     "plugins/rigger-core/tools/env-check/tests/test_env_check.py": ["rigger-panel"],

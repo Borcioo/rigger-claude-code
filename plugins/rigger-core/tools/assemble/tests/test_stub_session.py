@@ -39,8 +39,8 @@ import assemble  # noqa: E402
 from discover import root_text  # noqa: E402
 from stub_api import USAGE, QuietServer, StubApi  # noqa: E402
 
-ALL = ("rigger-core", "rigger-lessons", "rigger-panel", "rigger-rules", "rigger-talk", "rigger-windows",
-       "rigger-wp")
+ALL = ("rigger-core", "rigger-lessons", "rigger-panel", "rigger-review", "rigger-rules", "rigger-talk",
+       "rigger-testing", "rigger-windows", "rigger-wp")
 LEFT_OUT = "rigger-wp"
 # D24/I1: each of these runs its own core_check.sh <name> at a startup SessionStart.
 CHECKED = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
@@ -300,7 +300,7 @@ class StubSessionTests(unittest.TestCase):
     def test_every_section_reaches_the_first_request(self):
         markers, _ = self.rendered(ALL)
         lines, plugins = self.session(ALL)
-        # The CLI adds built-in plugins of its own; all 7 of ours must be among them.
+        # The CLI adds built-in plugins of its own; all 9 of ours must be among them.
         self.assertEqual(sorted(set(ALL) - set(plugins or [])), [], "init event plugins")
         # Each plugin's own hooks.json loaded and ran its check: the init list alone shows a plugin whose
         # hooks.json is broken. The plugin name argument tells the five copies apart.
