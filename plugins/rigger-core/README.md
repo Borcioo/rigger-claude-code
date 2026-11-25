@@ -165,7 +165,9 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   directory first, as Python 3.11's `shutil.which` and npm's `which` do on Windows, can still find a
   program in the repository root; trust only a command whose lookups you know). The command also runs
   with `PYTHONSAFEPATH=1` and its `PYTHONPATH` cut like `PATH` (empty, `.`, relative and in-repository
-  entries dropped, the variable removed when none is left), so Python 3.11+ started with `-m` or `-c`
+  entries dropped, the variable removed when none is left), `PYTHONUSERBASE` and `PYTHONPYCACHEPREFIX`
+  removed when relative or inside the repository or the working directory (so a Python child runs no
+  `usercustomize` and loads no cached bytecode from there), so Python 3.11+ started with `-m` or `-c`
   imports no module from the repository root through the working directory or an inherited
   `PYTHONPATH` entry; a script's own folder is left off `sys.path` too, so a reviewer script that
   imports a sibling module adds its folder to `sys.path` itself (known limits: `-E` written in the

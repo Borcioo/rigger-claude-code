@@ -603,6 +603,27 @@ class ChildEnvTests(SlotRunCase):
                                      {name: kept} if kept else {})
                     self.assertEqual(env["OTHER"], "1")
 
+    def test_child_python_user_base_and_pycache_prefix_never_point_into_the_repository_or_the_cwd(self):
+        """M7: Python runs `usercustomize` from PYTHONUSERBASE and loads cached bytecode from PYTHONPYCACHEPREFIX."""
+        cwd = self.tmp / "elsewhere"
+        cwd.mkdir()
+        outside = str(self.tmp / "outside")
+        rows = [
+            ("a relative value", "ub", None),
+            ("inside the repository", str(self.repo / "ub"), None),
+            ("inside the working directory", str(cwd / "ub"), None),
+            ("control: outside both", outside, outside),
+        ]
+        for variable in ("PYTHONUSERBASE", "PYTHONPYCACHEPREFIX"):
+            names = [variable, variable.lower()] if NT else [variable]  # Windows reads the name in any case
+            for row, given, kept in rows:
+                for name in names:
+                    with self.subTest(variable=variable, row=row, name=name):
+                        env = slot_run.child_env({name: given, "OTHER": "1"}, self.repo, str(cwd))
+                        self.assertEqual({key: value for key, value in env.items() if key.upper() == variable},
+                                         {name: kept} if kept else {})
+                        self.assertEqual(env["OTHER"], "1")
+
     def test_strip_env_applies_to_the_child(self):
         env = slot_run.child_env({"CLAUDE_X": "1", "git_dir": "1", "RIGGER_MODULE_DIRS": "1", "OTHER": "1"},
                                  self.repo, str(self.repo))

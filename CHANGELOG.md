@@ -46,7 +46,10 @@ format. Releases are tagged `v<version>`.
 - **Command slots run with `PYTHONSAFEPATH=1`, and `PYTHONPATH` cut like `PATH`.** A slot command
   started as `python -m <tool>` or `python -c` no longer imports a module a repository plants at its
   root (Python 3.11+), through the working directory or an inherited `PYTHONPATH` entry: empty, `.`,
-  relative and in-repository entries are dropped, and the variable is removed when none is left. A
+  relative and in-repository entries are dropped, and the variable is removed when none is left.
+  `PYTHONUSERBASE` and `PYTHONPYCACHEPREFIX` are removed when relative or inside the repository or
+  the working directory, so a Python child runs no `usercustomize` and loads no cached bytecode from
+  there. A
   script's own folder is off `sys.path` too: a reviewer script that imports a sibling module adds its
   folder to `sys.path` itself. Known limits: `-E` written in the slot's argv makes Python ignore
   `PYTHONSAFEPATH` (`-I` keeps the working directory off `sys.path` by itself); Python before 3.11 and

@@ -17,7 +17,9 @@ an `.exe` or `.com` file runs.
 The command runs from the repository root, with every CLAUDE_*, HARNESS_* and GIT_* variable and
 RIGGER_MODULE_DIRS removed, PATH cut to the entries that lookup searches and, on Windows,
 NoDefaultCurrentDirectoryInExePath set, so a program the command starts by bare name through the operating
-system's lookup is never the repository's, PYTHONPATH cut the same way, and PYTHONSAFEPATH=1, so Python 3.11+
+system's lookup is never the repository's, PYTHONPATH cut the same way, PYTHONUSERBASE and PYTHONPYCACHEPREFIX
+removed when relative or inside the repository or the working directory, so a Python child runs no
+`usercustomize` and loads no cached bytecode from there, and PYTHONSAFEPATH=1, so Python 3.11+
 started with `-m` or `-c` imports no module from the repository root through the working directory or an
 inherited PYTHONPATH entry (a script's own folder is left off sys.path too). Known limits: a lookup the
 command's own code does that searches the working directory first (on Windows, Python 3.11's shutil.which and
@@ -75,6 +77,7 @@ STRIPPED_NAMES = ("RIGGER_MODULE_DIRS",)
 NO_CWD_SETTING = "NoDefaultCurrentDirectoryInExePath"  # Windows: a bare name is not looked up in the cwd
 SAFE_PATH_SETTING = "PYTHONSAFEPATH"  # Python 3.11+: `-m`, `-c` and a script leave the cwd and script folder off sys.path
 SEARCH_PATHS = ("PATH", "PYTHONPATH")  # cut to the entries review_scope.searchable keeps
+SINGLE_PATHS = ("PYTHONUSERBASE", "PYTHONPYCACHEPREFIX")  # removed unless review_scope.searchable keeps the value
 SHOWN = 300
 USAGE = "usage: slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]"
 
@@ -99,6 +102,8 @@ def child_env(environ: Mapping[str, str], repo: Path, cwd: str) -> Dict[str, str
     """The command's environment: `strip_env(environ)` with PATH and PYTHONPATH cut to the entries
     `review_scope.searchable` keeps (the variable removed when none is left: an empty PATH would search the
     working directory on POSIX, and Python reads an empty PYTHONPATH entry as the working directory),
+    PYTHONUSERBASE and PYTHONPYCACHEPREFIX removed unless `review_scope.searchable` keeps the value (Python runs
+    `usercustomize` from the one and loads cached bytecode from the other),
     SAFE_PATH_SETTING set to 1 (an inherited value, even an empty one, replaced), and on Windows NO_CWD_SETTING
     set, so what the command starts by bare name through the operating system's lookup, or a Python 3.11+ child
     imports, is never a file of the repository (a lookup of the command's own that searches the cwd first is not
@@ -109,6 +114,9 @@ def child_env(environ: Mapping[str, str], repo: Path, cwd: str) -> Dict[str, str
         if kept:
             env[name] = os.pathsep.join(kept)
         else:
+            del env[name]
+    for name in [name for name in env if name.upper() in SINGLE_PATHS]:
+        if not review_scope.searchable(env[name], repo, cwd):
             del env[name]
     names = [NO_CWD_SETTING, SAFE_PATH_SETTING] if NT else [SAFE_PATH_SETTING]
     for setting in names:
