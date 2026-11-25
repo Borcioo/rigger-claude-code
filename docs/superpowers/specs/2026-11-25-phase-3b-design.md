@@ -77,7 +77,9 @@ runs (the coordinator then gets an empty note), and the 3a backlog.
 - (c) Download on the first command: the first command waits on the network.
 
 The download runs in a detached child of the SessionStart handler, so the session start is not held
-by the network; the session gets `shellwise: downloading v<ver>; commands run unguarded until it is
+by the network, if the plan's release spike shows such a child outlives the hook process on Windows
+and Linux; otherwise it runs inside the handler with a 7 s bound and the next session retries. The
+session gets `shellwise: downloading v<ver>; commands run unguarded until it is
 ready` and, from the next session, the slot is filled. The expected SHA-256 per asset is pinned in
 the module (`pin.json`); the release's `.sha256` files only serve the person who updates the pin.
 The archive is unpacked from a temp folder, only its one expected member, never a path with `..`, a
@@ -109,11 +111,11 @@ own `Bash(*commit*)` and `PowerShell(*commit*)` handlers, also when shellwise de
   `side_session_guard.py`; the check joins it, so the hook count does not change.
 
 Which sessions it applies to is the one open fact: the spike could not see a top-level desktop
-session. The design applies the guard when `CLAUDE_CODE_HOST_SESSION_ID` is set and differs from
-the top session the app names, and the plan's first task of that lane measures it in the app
-(both a top-level and a side session) before the code is written. If no marker separates them, the
-guard applies to every session: a top-level session that ends a turn with its own gate running
-loses nothing by waiting.
+session. The plan's first task of that lane reads the hook's own environment from a probe Stop hook
+in the app, in a top-level and in a side session, before the code is written
+(`CLAUDE_CODE_HOST_SESSION_ID` is the candidate). If no marker separates them, the guard applies to
+every session that is not a coordinator and not a `claude -p` run, and only to gate and test
+commands: a session that ends a turn with its own gate running loses little by waiting.
 
 ### D. The state tool
 
@@ -128,7 +130,8 @@ loses nothing by waiting.
 
 - `rigger-module.json`: `fills: shell-guard`, `failure_mode: closed`, `provides.shell-guard =
   {kind: hook, target: rigger-shellwise, rule_checker: tools/rule-checker/rule_checker.py}`, no
-  rules files, `tests.contract: ["shell-guard"]` (the five contract fixtures move here).
+  rules files, `tests.contract: ["shell-guard"]` (the five contract fixtures are copied here and
+  leave rigger-windows with it).
 - `rigger-defaults.json` sets the `shell-guard` default to the shellwise module with no `requires`
   (all systems); a system with no asset leaves it unfilled with its line (D2).
 - `pin.json`: `{"format": 1, "version": "0.1.0", "assets": {"<target>": {"name", "sha256"}}}`
@@ -143,9 +146,11 @@ loses nothing by waiting.
   binary must exist, run `--version` within 3 s and print `shellwise <x.y.z>` at or above the pin;
   otherwise the slot is unfilled with the reason. The decisions doc's spike S7 is answered by the
   observed `--version` output.
-- Hook: `PreToolUse` on `Bash|PowerShell`, `sh "${CLAUDE_PLUGIN_ROOT}/bin/shellwise.sh"`, timeout
-  5 s (`hook_timeout_ms = 5000` in the shipped config), no `|| true` (the binary's exit and stdout
-  are the decision). `SHELLWISE=off` is the binary's own switch.
+- Hook: `PreToolUse` on `Bash|PowerShell`, running `bin/shellwise.sh` through a command that exits
+  0 when the launcher file is missing (exit 2 would deny every call), timeout 5 s
+  (`hook_timeout_ms = 5000` in the shipped config), no `|| true` (the binary's reply is the
+  decision; the release spike records its form). The exec bit is set on POSIX after unpacking.
+  `SHELLWISE=off` is the binary's own switch.
 - `shellwise.toml` is the integration config delivered with the rule map, plus
   `gate_commands` entries for the Python safe-edit's file name; a probe proves each key on the
   pinned binary.
@@ -182,7 +187,8 @@ inactive + purgeable) × `sysctl hw.pagesize`. Output keeps today's line shape
 `mem-check: <measure>, headroom <n> GiB (min <m> GiB), max heavy agents <k>: OK|BUSY` and exits
 0 OK, 1 BUSY, 2 no reading (one heavy agent at a time). Config `load.min_free_gb` (number,
 0–1024) and `load.max_heavy_agents` (integer, 1–8), levels 1–4, schema 1; the defaults per system
-are in `rigger-defaults.json`. The `.ps1` and its tests go.
+live in `mem_check.py` and apply when no level sets a key; the project level may only make a limit
+stricter. The `.ps1` and its tests go with rigger-windows.
 
 ### 4. The testing module takes the test tools
 
@@ -232,28 +238,35 @@ The heavy-job sentence stays inside the one `mem-check` bullet of the skill
   `<session id>.log.md` under `## <id> (<ISO time>)`), `show`, `check`, `clean`. Writes are atomic
   (temp file and replace) and keep every other section byte for byte. Exit 0 `state: ok …`, 2
   `state: refused: <reason>`.
-- `check` (SessionStart `startup|clear|compact`, inside an existing core handler's process or its
-  own handler, the plan decides by the hook count): items whose PR is merged (`gh pr view <N> --json
-  state` with a 3 s bound per call, 5 s in all, merged answers cached in `<state dir>/pr-cache.json`;
-  no `gh` or offline → one `unchecked` line), items whose branch no longer exists locally or as a
-  remote-tracking ref, and `safe_to_compact: false` with `updated:` (else mtime) older than 30
-  minutes. One line per finding, at most 5 and a count.
-- `clean` (at `startup`): a session is idle when its state files and its transcript are all older
-  than 14 days; its files move to `<state dir>/archive/`; archived files older than 60 days are
-  deleted. Never the current session, never one whose transcript or any state file changed in 14
-  days. `<id>.log.md` over 50 kB keeps its newest 25 kB and moves the rest to
-  `archive/<id>.log.<UTC stamp>.md`, cut at a line start.
+- Each item records its repository (`owner/name`, from the cwd's `origin` at `add`, or `--repo`).
+- `check` (SessionStart `clear|compact|resume`, on the current session's file only; a new session
+  at `startup` has none yet): items whose PR is merged (`gh pr view <N> --repo <owner/name> --json
+  state` with a 3 s bound per call, 5 s in all, merged answers cached in `<state dir>/pr-cache.json`
+  by repository and number; no `gh` or offline → one `unchecked` line), items whose branch no
+  longer exists locally or as a remote-tracking ref, and `safe_to_compact: false` with `updated:`
+  (else mtime) older than 30 minutes. One line per finding, at most 5 and a count.
+- `clean` (at `startup`, under a lock file): a session is idle when its newest state file and its
+  transcript (when one exists) are older than 14 days; all its `<id>.*` files move to
+  `<state dir>/archive/` with their mtime set to the move time; archived files older than 60 days
+  are deleted. Never the current session, never one whose transcript or any state file changed in
+  14 days; shared files (`compact-guard.log`, `pr-cache.json`) never. A session resumed after its
+  files were archived gets them back at `resume`, with one line. `<id>.log.md` over 50 kB keeps its
+  newest 25 kB and moves the rest to `archive/<id>.log.<UTC stamp>.md`, cut at a line start.
 - `rules/state-file.md` tells the model to change items only through the tool.
 
 ### 9. The side-session turn-end guard
 
-`side_session_guard.py`'s Stop path gains: when the session is a side session (the marker the lane's
-first task measures) and `background_tasks` lists a `shell` task, poll its output file for
-`[exited with code` or `[killed]` up to 6 s of the 10 s timeout; still running → block with
+`side_session_guard.py`'s Stop path gains, before its transcript scan: when the session is a side
+session (the marker the lane's first task measures; with none, any session), is not a coordinator
+(`coordinator: true` in its state file) and is not a `claude -p` run (`CLAUDE_CODE_ENTRYPOINT`
+`sdk-cli`, which waits for its tasks itself), and `background_tasks` lists a `shell` task whose
+command is a gate or test command (a fixed list: `gate.py`, `run_tests.py`, `pytest`, `unittest`,
+`npm test`, `vitest`, `jest`, `phpunit`, `playwright`, `go test`, `cargo test`, `safe_edit`), poll
+its output file for `[exited with code` or `[killed]` up to 4 s; still running → block with
 `side session: your background task <id> (<description>) is still running; wait for it inside this
-turn (a bounded wait on its end), then report`. With `stop_hook_active` true it blocks again only
-while the same task is listed and at most 3 times per task (counted in the guard's cache), then
-allows with a line naming the task. A missing field or unreadable file allows.
+turn (a bounded wait on its end), then report`. It blocks at most 3 times per task id, counted in
+its own always-written file `<session id>.turn-guard.json`, then allows with a line naming the task.
+The Stop handler's timeout rises from 10 to 15 s. A missing field or unreadable file allows.
 
 ### 10. The 3a backlog
 
@@ -265,10 +278,11 @@ allows with a line naming the task. A missing field or unreadable file allows.
   repository per read-only class.
 - `review_scope.py`: a rules file newly named in the diff that is a link or over the size cap gets
   `review: rules file newly named (link)` / `(over <n> bytes)` and is not handed to the reviewer.
-- Doctor's `rules-d-table` INFO row names the cause (a rules file still holds a skill-trigger table)
-  and puts the step in its fix column.
-- `test_slot_run.py`'s WinError 32 and `test_report_shadow.py`'s flake: fixed after the
-  reproduction the plan records.
+- Doctor's `rules-d-table` INFO row names the cause (a rules file still holds a skill-trigger
+  table), with no FIX, as `commands/doctor.md` requires of an INFO row.
+- `test_slot_run.py`'s WinError 32 and `test_report_shadow.py`'s flake did not reproduce in 48
+  runs: the cleanup gets a diagnostic that reports even a retry that succeeds, and the 70–114 s file
+  is split; no product change without a reproduction.
 - Read-by map: the nine `*` entries are narrowed to the modules their files read where the lint can
   derive a finite set.
 
@@ -279,8 +293,8 @@ exact wording of notices that no test pins, the order of the platform skill's cu
 
 ## Estimate and simpler version
 
-The plan prices it: about 72 agent hours, 2,375 lines of code and 3,745 of tests, about 9,000
-lines moved unchanged and 4,500 deleted. Simpler version, about 44 hours: rigger-windows stays as
+The plan prices it: about 76.5 agent hours, 2,525 lines of code and 4,055 of tests, about 9,000
+lines moved unchanged and 4,500 deleted. Simpler version, about 46 hours: rigger-windows stays as
 the Windows shell-guard filler for one more release (the decisions doc's simpler version), and the
 shellwise module, the test-evidence and gate-lab moves and the removal wait; it keeps the platform
 module, mem-check, safe-edit, drift-lint in core, the coordinate, state and turn-end work and the
