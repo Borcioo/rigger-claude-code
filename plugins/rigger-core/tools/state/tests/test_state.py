@@ -600,6 +600,44 @@ class Restore(Case):
         self.assertEqual(self.listing(self.archive), [])
 
 
+    def test_a_split_group_always_leaves_the_state_file_archived(self):
+        """D65-1: a move that fails mid-group must leave `<sid>.md` in archive/, so the next prompt's
+        restore_on_miss brings the session back instead of leaving its log to the 60-day delete."""
+        real = os.replace
+        for failing in (".log.md", ".md"):
+            with self.subTest(failing=failing):
+                shutil.rmtree(self.config)
+                os.makedirs(self.state)
+                os.makedirs(self.projects)
+                for suffix in (".log.md", ".md"):
+                    self.put(DEAD + suffix, "x", 20)
+                self.put(DEAD + ".jsonl", "{}", 20, folder=os.path.join(self.projects, "p1"))
+
+                def replace(source, target, failing=failing):
+                    if os.path.basename(source) == DEAD + failing and os.path.dirname(target) == self.archive:
+                        raise PermissionError(13, "in use", source)
+                    return real(source, target)
+
+                with mock.patch.object(st.os, "replace", replace):
+                    self.assertEqual(self.run_main("clean", "--now", NOW)[0], 0)
+                in_state = [name for name in self.listing(self.state) if name.startswith(DEAD)]
+                # the state file moves first: its own failure moves nothing, a later failure leaves it archived
+                self.assertEqual(in_state, [DEAD + ".log.md", DEAD + ".md"] if failing == ".md" else
+                                 [DEAD + ".log.md"])
+                st.restore_on_miss(self.state, DEAD, NOW_TS)
+                self.assertEqual([name for name in self.listing(self.state) if name.startswith(DEAD)],
+                                 [DEAD + ".log.md", DEAD + ".md"] + ([] if failing == ".md" else [DEAD + ".restored"]))
+                self.assertFalse([name for name in self.listing(self.archive) if name.startswith(DEAD)]
+                                 if os.path.isdir(self.archive) else [])
+
+    def test_a_command_without_a_session_id_is_refused_by_name(self):
+        """D65-3: check/add/set/done with no session id print the refusal reason, not an error from the restore."""
+        for argv in (("check",), ("add", "a2", "T", "--repo", "o/a"), ("set", "a1", "blocked"),
+                     ("done", "a1", "--pr", "12")):
+            with self.subTest(command=argv[0]):
+                self.assertEqual(self.run_main(*argv, session=None), (2, "state: refused: no session id\n"))
+
+
 class Bounds(Case):
     """S7: one scan of the project folders, a fail-closed scan, and one time budget for the whole clean."""
 
@@ -676,6 +714,21 @@ class Bounds(Case):
                 for ident in (DEAD, SIBLING):
                     left = [name for name in self.listing(self.state) if name.startswith(ident)]
                     self.assertIn(len(left), (0, 3), left)
+
+    def test_a_stop_in_the_archive_step_is_reported_with_nothing_else_to_do(self):
+        """D65-4: archiving runs out of budget and nothing is due for delete or rotation: the stop still shows."""
+        self.dead_session()
+        ticks = iter(range(100))
+        ctx = st.Context(self.state, CURRENT, self.projects, NOW_TS, io.BytesIO(), deadline=0,
+                         clock=lambda: next(ticks))
+        self.assertEqual(st.clean(ctx), (0, 0, 0, True))
+        event = json.dumps({"source": "startup", "session_id": CURRENT}).encode("utf-8")
+        out = io.BytesIO()
+        code = st.main(["--state-dir", self.state, "--projects-dir", self.projects, "hook", "--now", NOW],
+                       environ={}, stdin=event, out=out, started=time.monotonic() - 10)
+        self.assertEqual((code, out.getvalue().decode("utf-8")),
+                         (0, "state: clean moved 0 idle files to archive/, deleted 0, rotated 0 logs; stopped at the "
+                             "time budget, the next start goes on\n"))
 
     def test_the_budget_counts_from_the_process_start(self):
         self.budget_fixture()

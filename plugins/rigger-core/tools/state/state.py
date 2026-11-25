@@ -658,8 +658,8 @@ def drop_lock(ctx, text):
 
 def archive_idle(ctx, archive):
     """(files moved, stopped by the budget). A session's files move one `os.replace` each, so a kill or an
-    OSError can split a group; the next clean moves the rest while the session stays idle, and a restore brings
-    the archived part back."""
+    OSError can split a group; `<sid>.md` moves first, so a split group always has it archived. The next clean
+    moves the rest while the session stays idle, and a restore brings the archived part back."""
     groups = {}
     for entry in regular_files(ctx.state_dir):
         session = session_of(entry.name)
@@ -687,7 +687,9 @@ def archive_idle(ctx, archive):
         os.makedirs(archive, exist_ok=True)
         if any(os.path.lexists(os.path.join(archive, entry.name)) for entry in entries):
             continue
-        for entry in entries:
+        # The state file moves first: a group split by a later failure has `<sid>.md` archived, so the session's
+        # next entry point (restore_on_miss) brings it back; its own failure moves nothing.
+        for entry in sorted(entries, key=lambda entry: entry.name != session + ".md"):
             target = os.path.join(archive, entry.name)
             try:
                 os.replace(entry.path, target)
