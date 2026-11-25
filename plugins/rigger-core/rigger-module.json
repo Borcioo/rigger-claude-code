@@ -32,7 +32,7 @@
     },
     {
       "id": "rigger-core.web-ui-traps",
-      "before": "UI components, optimistic updates, per-item action buttons, ARIA, form and consent controls, translated labels, UI tests",
+      "before": "UI components, lo-fi screens, optimistic updates, per-item action buttons, ARIA, form and consent controls, translated labels, UI tests",
       "load": [
         "rigger-core:web-ui-traps"
       ],

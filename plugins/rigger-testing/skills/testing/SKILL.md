@@ -80,11 +80,15 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
   can challenge it. Branches left unmutated by the cap are listed too.
 - A generated or table-driven matrix (routes × roles, a fixture table) is broken once per rule it
   encodes (each capability, each ownership kind, the wiring that feeds the table), not per cell.
+  A table that overrides a default rule (holidays, closures) is tested only with inputs whose
+  result differs from the default (a holiday on a weekday), so deleting the table turns it red.
 - Where the stack has a mutation tool, run it on the changed files (see `rigger-core:stack-tooling`)
   for branch mutations; table rows, stages and wiring stay hand mutations.
 - With rigger-windows installed, `<rigger-windows root>/tools/safe-edit/safe-edit.ps1 -Run`
   mutates in place, runs and restores (usage in its header); never restore a mutation with
   `git checkout`.
+- A scratch copy of a worktree deletes its `.git` first: the copied pointer makes git act on the
+  real worktree.
 - Python: a mutant that keeps the file's size and mtime second can load a stale `.pyc`; run each
   mutant with `-X pycache_prefix=<dir per mutation>` (`-I` ignores `PYTHONPYCACHEPREFIX`) and read
   the failing case.

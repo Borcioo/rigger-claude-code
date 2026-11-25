@@ -20,6 +20,3 @@
   asks once about deleting branches; my answer, my stop or a new request removes `plan:` and
   `stop:`.
 - Plan task headings: `### Task <integer>: …` (no letters or dots).
-- **Lo-fi means no styling, not no design.** Design each screen from its role's task and decisions
-  (what they must do, what they see, what comes next), with the UI that task needs: statuses,
-  filters, history, empty and error states.

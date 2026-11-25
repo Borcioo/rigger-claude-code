@@ -227,6 +227,37 @@ def _plans_wording(scenario, roots, pieces) -> bool:
     return True
 
 
+LOFI_BULLET = (b"- **Lo-fi means no styling, not no design.** Design each screen from its role's task and decisions\n"
+               b"  (what they must do, what they see, what comes next), with the UI that task needs: statuses,\n"
+               b"  filters, history, empty and error states.\n")
+UI_ROW_OLD = b"| UI components, optimistic updates, "
+UI_ROW_NEW = b"| UI components, lo-fi screens, optimistic updates, "
+
+
+def _lofi_leaves_plans(scenario, roots, pieces) -> bool:
+    """The lo-fi trap moves out of ## Plans: main session into the web-ui-traps skill (phase 3b D99)."""
+    at = _piece(pieces, "rigger-rules", PLANS)
+    if at is None:
+        return False
+    key, text = pieces["rigger-rules"][at]
+    if text.count(LOFI_BULLET) != 1:
+        raise AssertionError("the frozen plans piece holds the lo-fi bullet other than once: %r" % text[-400:])
+    pieces["rigger-rules"][at] = (key, text.replace(LOFI_BULLET, b""))
+    return True
+
+
+def _ui_row_names_lofi(scenario, roots, pieces) -> bool:
+    """The web-ui-traps trigger row names lo-fi screens (phase 3b D99)."""
+    at = _piece(pieces, "rigger-core", SKILLS)
+    if at is None:
+        return False
+    key, text = pieces["rigger-core"][at]
+    if text.count(UI_ROW_OLD) != 1:
+        raise AssertionError("the merged table holds the UI row other than once: %r" % text[:300])
+    pieces["rigger-core"][at] = (key, text.replace(UI_ROW_OLD, UI_ROW_NEW))
+    return True
+
+
 def _state_items(scenario, roots, pieces) -> bool:
     at = _piece(pieces, "rigger-core", STATE)
     if at is None:
@@ -248,6 +279,8 @@ ALLOWED = [
     ("rigger-core gains ## Slots for the main session", _slots_section),
     ("subagents get rigger-core's root line", _core_root_for_subagents),
     ("## Plans: main session names the table, not the slots", _plans_wording),
+    ("the lo-fi trap leaves ## Plans: main session for the web-ui-traps skill", _lofi_leaves_plans),
+    ("the web-ui-traps trigger row names lo-fi screens", _ui_row_names_lofi),
     ("the state-file section sends work items through the state tool", _state_items),
 ]
 
@@ -705,9 +738,9 @@ class GoldenTest(unittest.TestCase):
                              ("rigger-wp", "wp-skills.md")):
             lines = (gb.FIXTURE / "plugins" / module / "rules" / name).read_bytes().splitlines(True)
             frozen[module] = [line for line in lines if line.startswith(b"| ") and line != b"| Before | Skill |\n"]
-        # The testing slot's cell names the testing module (ALLOWED).
+        # The testing slot's cell names the testing module, and the UI row names lo-fi screens (ALLOWED).
         frozen["rigger-rules"] = [line.replace(b"`rigger-core:testing`", b"`rigger-testing:testing`")
-                                  for line in frozen["rigger-rules"]]
+                                  .replace(UI_ROW_OLD, UI_ROW_NEW) for line in frozen["rigger-rules"]]
         self.assertEqual([len(frozen[m]) for m in ("rigger-rules", "rigger-windows", "rigger-wp")], [8, 3, 2])
         every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"] + [REVIEW_ROW]
         core = [row for row in frozen["rigger-rules"] if b"`superpowers:" not in row]
