@@ -4,6 +4,7 @@ real sh. The same script ships in every plugin of RULES_PLUGINS; tests/test_repo
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -273,6 +274,15 @@ class CoreCheckTests(unittest.TestCase):
         self.assertEqual(seen, list(range(1, len(data))))
         printed = sorted(int(block.split("\n", 1)[0]) for block in blocks if block.split("\n", 1)[1])
         self.assertEqual(printed, [], "prefixes of %d bytes that printed" % len(data))
+
+    def test_the_whole_file_is_split_on_a_regex_only(self):
+        # macOS awk (BWK) splits at every newline too when split()'s separator is a one-character string, so an
+        # indented listing never read as complete there; a regex separator has no such rule. Linux and Windows awks
+        # cannot show it, so the script's text is checked here and macOS CI runs the indented rows.
+        text = (PLUGIN / "hooks" / "core_check.sh").read_text(encoding="utf-8")
+        calls = re.findall(r"split\(\$0, *\w+, *(\S)", text)
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls, ["/", "/"])
 
     def test_a_value_with_another_json_escape_is_skipped(self):
         # ó is not undone, so the value is skipped; read literally it would name a folder that does not exist.
