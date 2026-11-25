@@ -8,7 +8,8 @@ system, the test-evidence gates and gate-lab join the testing module, rigger-win
 marketplace; and the harness gets the lane rule, a state tool, a turn-end guard for side sessions
 and the 3a backlog.
 
-**Status:** revision 3: revision 2 fixed an independent plan review's 12 Important findings;
+**Status:** revision 4, approved by the coordinator with the rulings under "Rulings on the plan's
+questions". Revision 2 fixed an independent plan review's 12 Important findings;
 revision 3 adds the coordinator's items from the phase 4 overlay planning (Tasks 32–38, D94–D99)
 and the shellwise `v0.1.1` pin (D77, D78, D100). Written on `1ead09a` (release 0.7.0).
 
@@ -118,8 +119,8 @@ of `docs/superpowers/specs/2026-11-25-phase-3-decisions.md` (D1–D4, D8) and §
   `HARNESS_*` and `RIGGER_*`, then sets `ANTHROPIC_BASE_URL` to the stub. Canary first. Record
   `claude --version` and `command -v claude` before the first run; bounded timeout, `Popen` streaming.
   Never `claude plugin eval`. Scratch under `<temp>/rigger-p3b/<task>/`.
-- Task 1 Step 3 is the one probe in the desktop app; it runs only after the coordinator's OK
-  (question 1).
+- Task 1 Step 3 is the one probe in the desktop app, in a scratch project under
+  `<temp>/rigger-p3b/` only (ruling 1), never in a real repository or the user config.
 
 **Downloads (Tasks 14 and 28)**
 - Only the shellwise release assets named in `pin.json`, from
@@ -263,13 +264,13 @@ The WinError 32 cleanup error of `test_slot_run.py` (one in three runs during 3a
 | D80 | `mem_check.py` per design §3. `load.min_free_gb` and `load.max_heavy_agents` are read from config levels 1–4 (`config.py` gains `load`, `ACTIVE_ABOVE_L1`); the defaults per system live in `mem_check.py` (Windows: `min(30 GiB, 25% of the ceiling)`; Linux and macOS: 4 GiB; heavy agents 2), used when no level sets the key; level 4 (the project) may only make a limit stricter (a higher minimum, fewer agents), a looser value is dropped with one notice. Task 20 Step 1 spikes the Windows reading without `pwsh` against today's `.ps1` output on this machine. | Decisions doc D3; level 1 is static config with no per-system selection; a project must not loosen a machine's limit. |
 | D81 | `safe_edit.py` keeps every option as a long flag (`--path --find --replace --count --run --expect-ran --working-directory --restore`), exit codes 0–4 and the messages, em dash included; `--run` runs through the platform shell (`pwsh -NoProfile -Command` on Windows when present, else `sh -c`), recorded in the backup file. The 15 cases become `unittest` tests. | Decisions doc D4; the shellwise `gate_commands` glob needs the file name. |
 | D82 | drift-lint moves to `plugins/rigger-core/tools/drift-lint/` unchanged, then gains one check, `trigger-load`: a trigger row's `load` names a skill that no module has. | Spec §13 row. |
-| D83 | The platform module: skills, rule, evals, triggers and `core_check.sh` of design §2; trigger ids `rigger-platform.<skill>`; `evals/CASES.md` section renamed. The guard's old marker text in `windows-dev-env` is rewritten to the new marker. Cutting the sentences the redundant-prose survey marks "can be dropped" is Task 25 Step 3, done only with the coordinator's OK (question 3). | Spec §13 rows, design §2; the cuts go beyond spec §13. |
+| D83 | The platform module: skills, rule, evals, triggers and `core_check.sh` of design §2; trigger ids `rigger-platform.<skill>`; `evals/CASES.md` section renamed. The guard's old marker text in `windows-dev-env` is rewritten to the new marker. Cutting the sentences the redundant-prose survey marks "can be dropped" comes after 3b (ruling 3). | Spec §13 rows, design §2; the cuts go beyond spec §13. |
 | D84 | `harness_start.py` prints `rigger: rigger-windows is still enabled; disable it (claude plugin disable rigger-windows@<marketplace>)` once per startup while `installed_plugins.json` lists it enabled. Doctor's line 495 becomes a recommendation of the platform module and a `shell-guard` filler. | Spec §13 migration. |
 | D85 | The five `tests/contract/shell-guard/` fixtures are copied to the shellwise module in Task 15 and deleted from rigger-windows with it in Task 26; `test_module_contracts.py` runs the copies against the shellwise launcher with a stub binary. | They follow the filler; PR B changes no rigger-windows file. |
 | D86 | coordinate: port the source commit with this repository's words, plus three fixes (design §7). The heavy-job sentence stays inside the one `mem-check` bullet. | Owner's scope item 1. |
 | D87 | `state.py` per design §8; one new SessionStart handler `state.py hook` on `startup|clear|compact|resume`, timeout 10: `startup` runs `clean`; `resume` restores the session's archived files first; `clear`, `compact` and `resume` run `check` on the current session's file only. `DuplicateHookTests` counts rise by one. | One process; on `startup` a new session has no state file yet. |
 | D88 | `state.py check` reads PR state with `gh pr view <n> --repo <owner/name>` (the item's repository, recorded at `add` from the cwd's `origin`), 3 s per call and 5 s per run, caching only `MERGED` keyed by repository and number; it never fails the session start. | Offline and `gh`-less machines must not slow or break startup; a PR number alone names no repository. |
-| D89 | The turn-end guard joins `side_session_guard.py`'s Stop path (design §9) and runs before its transcript scan. It holds a turn only for a `shell` entry of `background_tasks` whose command matches the gate and test list (`gate.py`, `run_tests.py`, `pytest`, `python -m unittest`, `npm test`, `npm run test`, `vitest`, `jest`, `phpunit`, `playwright`, `go test`, `cargo test`, `safe_edit`), never in a session whose state file says `coordinator: true` and never under `CLAUDE_CODE_ENTRYPOINT=sdk-cli` (`claude -p` waits for its tasks itself). Side session = the marker Task 1 measures; with no marker, every session that passes those filters. Poll bound 4 s; at most 3 blocks per task id, counted in its own always-written file `<state dir>/<session id>.turn-guard.json`; the Stop handler's timeout rises from 10 to 15 s. | Design approach C; the owner's scope is the session's own gate or test run; the existing cache is written only for large transcripts. |
+| D89 | The turn-end guard joins `side_session_guard.py`'s Stop path (design §9) and runs before its transcript scan. It holds a turn only for a `shell` entry of `background_tasks` whose command matches the gate and test list (`gate.py`, `run_tests.py`, `pytest`, `python -m unittest`, `npm test`, `npm run test`, `vitest`, `jest`, `phpunit`, `playwright`, `go test`, `cargo test`, `safe_edit`), never in a session whose state file says `coordinator: true` and never under `CLAUDE_CODE_ENTRYPOINT=sdk-cli` (`claude -p` waits for its tasks itself). Side session = the marker Task 1 measures; with no marker, every session that passes those filters. Poll bound 4 s; at most 3 blocks per task id, counted in its own always-written file `<state dir>/<session id>.turn-guard.json`; the Stop handler's timeout rises from 10 to 15 s. Config key `turn_guard.enabled` (boolean, levels 2–4, default `true`) turns it off. A block's reason is one line naming the run it waits for (task id and description). | Design approach C; the owner's scope is the session's own gate or test run; the existing cache is written only for large transcripts. |
 | D90 | `slot_run.py` passes the session to `review_scope.scope()` (its own `--session` argument, else `CLAUDE_CODE_SESSION_ID`). | 3a CHANGELOG known limit. |
 | D91 | The review module gets `hooks/hooks.json` with one `SessionStart` handler `sh core_check.sh rigger-review`; the testing module adds `core_check.sh rigger-testing` to its file. Both copies byte-identical to the five others; `tests/read_by.json:24` (`test_core_check.py`) gains both modules. | Owner's scope item 4; core_check prints nothing when rigger-core is present. |
 | D92 | WinError 32 and the `test_report_shadow.py` flake did not reproduce (48 runs). Task 11 adds a diagnostic to `test_slot_run.py`'s cleanup (on `PermissionError`: the path and the alive child processes of the test process to stderr, one retry after 0.5 s; a retry that succeeds still prints `# cleanup retried: <path>` so a run report shows it; a second failure re-raises with that text) and splits `test_slot_run.py` (70–114 s against 120 s). No product change without a reproduction. | A fix without the failure is a guess; the time limit is a measured risk. |
@@ -284,19 +285,21 @@ The WinError 32 cleanup error of `test_slot_run.py` (one in three runs during 3a
 
 ## Rulings on the plan's questions
 
-None yet; the coordinator's rulings go here.
+The coordinator approved the plan with these answers (revision 4 folds them in):
 
-## Questions for the coordinator
-
-1. **Task 1 Step 3** needs one probe Stop hook in the desktop app (a scratch project's
-   `.claude/settings.local.json`, removed after), in a top-level session and in a side session it
-   starts: the only way to see the hook's own environment there. OK to run it? Default if not: no
-   marker, D89's filters alone.
-2. With no marker, D89 holds a top-level session's turn too, for its own gate or test command only,
-   never a coordinator's. Accept, or require a marker and ship the guard off until one exists?
-3. D83's sentence cuts in `windows-dev-env` (the redundant-prose survey's "can be dropped" rows):
-   in 3b, or later? Default: later; only the marker text changes in 3b.
-4. The source harness clone for Task 2 (commit `30a9d2e`): the brief names its local path.
+1. **The probe Stop hook (Task 1 Step 3)** is approved in a scratch project under `<temp>/rigger-p3b/`
+   only, with its own `.claude/settings.local.json`, removed after; never in a real repository or the
+   user config. The session that owns Task 1 runs it inside its own side session; if a top-level
+   session's reading is needed, Task 1 asks the coordinator, who runs that one probe. If the probe
+   cannot run, D89 ships with its filters alone.
+2. **Holding a non-coordinator session's turn end** for its own gate or test command is accepted,
+   on two conditions: the per-task cap of 3 blocks stays, and config key `turn_guard.enabled`
+   (levels 2–4, default `true`) turns the guard off (D89). A held turn prints one line naming the
+   run it waits for.
+3. **The redundant-prose cuts** in `windows-dev-env` come later; in 3b only the marker text changes
+   (D83, Task 25).
+4. **The source clone for Task 2** is a local clone of the source harness with commit `30a9d2e` on
+   its `origin/develop`; the coordinator's brief names its path, and it is read only.
 
 ## Spec corrections
 
@@ -315,7 +318,7 @@ writes these into the spec.
 | `plugins/rigger-core/commands/coordinate.md`, `skills/orchestrating-subagents/SKILL.md`, `tools/coord-state/cli-host.md`, `tools/coord-state/tests/test_coordinate_wiring.py`, `tests/test_core_wiring.py`, `plugins/rigger-core/README.md:52-54` | 2 | lane rule |
 | `plugins/rigger-core/tools/state/state.py`, `tools/state/tests/test_state.py` | 3 | state tool |
 | `plugins/rigger-core/hooks/hooks.json`, `rules/state-file.md`, `tests/test_core_wiring.py` (state-file pin), `tests/test_repo.py` (hook counts), `scripts/hook_latency.py` `CASES`, `tests/test_hook_latency.py` | 4 | state wiring and rule |
-| `plugins/rigger-core/tools/side-session-guard/side_session_guard.py`, its tests, `plugins/rigger-core/hooks/hooks.json` (Stop timeout), `tests/test_repo.py` (timeout pin if any) | 5 | turn-end guard |
+| `plugins/rigger-core/tools/side-session-guard/side_session_guard.py`, its tests, `plugins/rigger-core/hooks/hooks.json` (Stop timeout), `tests/test_repo.py` (timeout pin if any), `plugins/rigger-core/tools/assemble/config.py` (`turn_guard`), `test_config.py` | 5 | turn-end guard |
 | `plugins/rigger-core/tools/slot-run/slot_run.py`, `tests/test_slot_run.py` (one class) | 6 | session |
 | `plugins/rigger-REVIEW/hooks/{hooks.json, core_check.sh}` (new), `plugins/rigger-TESTING/hooks/{hooks.json, core_check.sh}`, `rigger-module.json` of both if `hooks` is declared there, `tests/test_repo.py`, `tests/test_shellcheck.py`, `plugins/rigger-rules/tests/test_core_check.py`, `tests/read_by.json:24`, `hook_latency.py` `CASES` | 7 | core_check |
 | `plugins/rigger-core/tools/review-scope/tests/test_review_scope*.py`, `tests/read_by.json` (keys), `scripts/sweep-allow.txt` (rows keyed by the file, if any) | 8 | split |
@@ -387,14 +390,14 @@ every task in it edits the same registries.
 
 ### Task 1: Spike — the side-session marker and `background_tasks` on the current CLI
 
-**Heavy, opus. 1.5 h.** Inputs: the stub spike (Baselines); question 1's answer. Output: the
+**Heavy, opus. 1.5 h.** Inputs: the stub spike (Baselines); ruling 1. Output: the
 marker D89 uses, or "none".
 
 **Files:** Create `docs/superpowers/spikes/phase-3b/side-session-marker.md`.
 
 - [ ] **Step 1:** Record `claude --version` on PATH and the desktop app's CLI version (from `CLAUDE_CODE_EXECPATH`).
 - [ ] **Step 2:** Repeat the stub spike's run with one background `sleep` on the current CLI: `background_tasks` while running and after; control with no task; one run with `CLAUDE_CODE_ENTRYPOINT` as the CLI sets it under `-p` (expected `sdk-cli`).
-- [ ] **Step 3 (after question 1's OK):** A probe Stop hook in a scratch project's `.claude/settings.local.json` logs, to a scratch file, the env names and the values of `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_ENTRYPOINT`, plus the stdin keys, in a top-level desktop session on that project and in a side session it starts. Known answer: the session ids the app's session list shows. Remove the probe and check the file is gone.
+- [ ] **Step 3 (ruling 1):** A probe Stop hook in a scratch project under `<temp>/rigger-p3b/` (its own `.claude/settings.local.json`; never a real repository or the user config) logs, to a scratch file, the env names and the values of `CLAUDE_CODE_HOST_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_ENTRYPOINT`, plus the stdin keys, in the session that owns Task 1 (a side session) and in a side session it starts on that project; the top-level reading comes from the coordinator, who runs the same probe once when Task 1 asks. Known answer: the session ids the app's session list shows. Remove the probe and check the file is gone. If the probe cannot run, record why and the Decision is "none" (D89's filters alone).
 - [ ] **Step 4:** Write the result file (`## Question`, `## CLI`, `## Setup`, `## Control`, `## Observed`, `## Decision`); sweep; commit `docs(spikes): record the side-session marker and the Stop event's background tasks`.
 
 ### Task 2: coordinate — one session per lane
@@ -450,7 +453,7 @@ Output: D89 in `side_session_guard.py`.
 
 **Files:** file map row 5.
 
-- [ ] **Step 1: Failing tests** (Stop stdin fixtures from the spike; output files written by the test; a state dir in temp): `test_running_gate_task_blocks_with_its_id_and_description`, `test_non_gate_commands_are_not_held` (`npm run dev`, `python -m http.server`), `test_task_that_ends_during_the_poll_allows` (the file gets `[exited with code 0]` after 1 s), `test_killed_trailer_allows`, `test_subagent_entries_are_ignored`, `test_block_names_the_task_and_stops_after_three` (`stop_hook_active` true, same id: blocks 2 and 3, then allows with a line; the count survives a transcript under 1 MiB), `test_poll_is_bounded` (never-ending task: the hook returns within 5 s), `test_coordinator_session_is_not_held`, `test_print_mode_is_not_held` (`CLAUDE_CODE_ENTRYPOINT=sdk-cli`), `test_top_level_session_is_not_held` (by Task 1's marker; with "none" this test asserts the documented fallback instead), `test_missing_field_or_file_allows`; the existing guard's tests still pass.
+- [ ] **Step 1: Failing tests** (Stop stdin fixtures from the spike; output files written by the test; a state dir in temp): `test_running_gate_task_blocks_with_its_id_and_description`, `test_non_gate_commands_are_not_held` (`npm run dev`, `python -m http.server`), `test_task_that_ends_during_the_poll_allows` (the file gets `[exited with code 0]` after 1 s), `test_killed_trailer_allows`, `test_subagent_entries_are_ignored`, `test_block_names_the_task_and_stops_after_three` (`stop_hook_active` true, same id: blocks 2 and 3, then allows with a line; the count survives a transcript under 1 MiB), `test_poll_is_bounded` (never-ending task: the hook returns within 5 s), `test_coordinator_session_is_not_held`, `test_print_mode_is_not_held` (`CLAUDE_CODE_ENTRYPOINT=sdk-cli`), `test_top_level_session_is_not_held` (by Task 1's marker; with "none" this test asserts the documented fallback instead), `test_missing_field_or_file_allows`, `test_config_turns_the_guard_off` (`turn_guard.enabled: false` at level 2, 3 or 4 allows; a bad value keeps the default with one notice), `test_block_reason_is_one_line_naming_the_run`; the existing guard's tests still pass.
 - [ ] **Step 2:** Red; implement (the check runs before the `stop_hook_active` early return at `side_session_guard.py:261` and before the transcript scan, which it skips when it blocks); the Stop handler's timeout to 15 with its pin; green.
 - [ ] **Step 3: Red runs (full):** no poll; no cap; the count in the old cache; cap per session instead of per task; a subagent counted; the command filter off; the coordinator check off; the `sdk-cli` check off; the marker check off.
 - [ ] **Step 4: Commit.** `feat(rigger-core): hold a side session's turn end while its own gate runs`
@@ -676,8 +679,7 @@ evals, drift-lint and the two `.ps1` tools only. **Files:** file map row 23.
 
 - [ ] **Step 1:** Skeleton (manifest, `rigger-module.json` with the three triggers and the rule with `requires: os:windows`, README, marketplace entry, listing tests); `git mv` the skills, `rules/windows.md`, the evals and `core_check.sh` (the copy stays byte-identical; its argument becomes `rigger-platform`); remove them from rigger-windows' manifest, `hooks.json` and README; trigger ids, loads and self-references renamed; `evals/CASES.md` heading; drift baseline rows re-keyed; `read_by.json` modules of `test_core_check.py`; the herd-docs old path read for one release; the guard marker text in `windows-dev-env`.
 - [ ] **Step 2:** `test_plugin_rules.py`, drift-lint, `eval_suite_check.py`, golden and assemble tests for the triggers, full `--fix-round`.
-- [ ] **Step 3 (only with question 3's OK):** the redundant-prose cuts, each listed with its probe from Task 14.
-- [ ] **Step 4: Commit.** `feat(rigger-platform): the Windows and toolchain skills, rule and evals`
+- [ ] **Step 3: Commit.** `feat(rigger-platform): the Windows and toolchain skills, rule and evals`
 
 ### Task 26: Remove rigger-windows
 
@@ -727,7 +729,7 @@ second round. Merging and the release are the owner's steps.
 - The `gate-truncated-pipeline` gap for script hosts other than pwsh
   (`python -I scripts/gate.py | head`, D100): the shellwise owner's call.
 - Linux arm64 and Windows arm64 assets: the shellwise owner's call.
-- The redundant-prose cuts, if question 3 defers them.
+- The redundant-prose cuts in `windows-dev-env` (ruling 3).
 - The hook-process merge, argv-hash pinning of `trust.project_commands`, a Go or Rust port: out of
   scope for phase 3.
 - A WinError 32 fix, once Task 11's diagnostic catches one.
@@ -781,13 +783,24 @@ By pull request: A 33.5 h, B 25.5 h, C 29.5 h.
 About 9,000 lines move with `git mv` and are not counted; about 4,500 lines are deleted (the deny
 half of the guard, its tests, the `.ps1` files).
 
-Against the decisions doc: its 42 h covered 3a and 3b, and 3a's plan priced 40.25 h, so the doc left
-about 21 h of D2–D4 and D8 work for 3b. The same items price here at about 43 h (Tasks 14–28 without
-the backlog: the installer's trust checks, the commit-rule move the spec did not price, the rule
-checker on `explain`/`check`, the platform module, the hand-over kept consistent at every step); the
-owner's added scope (coordinate, state, turn-end, backlog) adds about 24 h; the gates, spikes and
-the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours and phase 3a's at
-1.9.
+**Why 88.5 h and not the decisions doc's 42 h.** The doc's 42 h covered 3a and 3b together; 3a's
+plan priced 40.25 h, which left about 21 h for 3b's own items (D2–D4, D8). Here:
+
+| Part | Hours | Tasks |
+|---|---|---|
+| The decisions doc's 3b items: shellwise with the pinned download, mem-check, safe-edit, the moves, the platform module, the removal | 44.5 | 14–21, 23–28 |
+| Scope added since the doc: the lane rule and the ports from the source harness | 4 | 2, 36 |
+| Added: the state tool and its wiring | 6 | 3, 4 |
+| Added: the side-session turn-end guard with its spike | 5 | 1, 5 |
+| Added: the 3a backlog | 10 | 6–12 |
+| Added: the overlay items (stale-id check, dependency row, lessons paths R4, WordPress hunk list R5, word and command lists from config) | 8.5 | 32–35, 37, 38 |
+| Gates, docs and the release review | 10.5 | 13, 22, 29–31 |
+| **Total** | **88.5** | |
+
+The doc's own items grew from about 21 h to 44.5 h: the installer's trust checks, the commit-rule
+move with its 1,467-line closure that the spec did not price, the rule checker on `explain`/`check`,
+the platform module, and keeping rigger-windows consistent at every step of the hand-over. Phase 2's
+plan ran at 2.7 times the spec's hours and phase 3a's at 1.9.
 
 **Simpler version, about 56 h, 1,800 code lines, 2,910 test lines:**
 - **What it keeps:** PR A whole (with Tasks 32–36); Task 38; mem-check and safe-edit in Python (the `.ps1` tools stay in
@@ -809,7 +822,8 @@ the release review about 10 h. Phase 2's plan ran at 2.7 times the spec's hours 
 ## Open risks
 
 1. **The side-session marker may not exist** (Task 1). The guard then holds any non-coordinator
-   session's turn end while its own gate or test command runs (question 2).
+   session's turn end while its own gate or test command runs (ruling 2: accepted, with the cap
+   and `turn_guard.enabled` to turn it off).
 2. **`background_tasks` is an undocumented field.** A CLI that drops it makes the guard allow (fail
    open); Task 5's tests pin the field so the next CLI update shows it.
 3. **The rule map was probed before `v0.1.1` was tagged.** Task 14 lists every row that differs; a

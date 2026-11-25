@@ -175,9 +175,9 @@ Skills `windows-dev-env`, `php-herd-tooling`, `node-versions` (moved), their tri
 loads renamed; `windows-dev-env` with `requires: os:windows`), `rules/windows.md` with `requires:
 os:windows` and without its `Plugin root:` preamble, the five evals, `hooks/core_check.sh`. The
 herd-docs folder becomes `<config dir>/rigger-platform/herd-docs/`, and the skill reads the old
-path for one release. Sentences the shellwise rules now enforce (the "can be dropped" rows of the
-redundant-prose survey, at the shipped config) are cut; the guard's old marker text is replaced by
-`# shellwise: allow`.
+path for one release. The guard's old marker text is replaced by `# shellwise: allow`. The
+sentences the shellwise rules now enforce (the "can be dropped" rows of the redundant-prose survey)
+are cut after 3b, not in it.
 
 ### 3. mem-check in rigger-core
 
@@ -268,7 +268,8 @@ its output file for `[exited with code` or `[killed]` up to 4 s; still running â
 `side session: your background task <id> (<description>) is still running; wait for it inside this
 turn (a bounded wait on its end), then report`. It blocks at most 3 times per task id, counted in
 its own always-written file `<session id>.turn-guard.json`, then allows with a line naming the task.
-The Stop handler's timeout rises from 10 to 15 s. A missing field or unreadable file allows.
+The Stop handler's timeout rises from 10 to 15 s. Config key `turn_guard.enabled` (levels 2â€“4,
+default `true`) turns the guard off. A missing field or unreadable file allows.
 
 ### 10. The 3a backlog
 
