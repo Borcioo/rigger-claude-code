@@ -2,6 +2,7 @@
 and the CLI fails closed on a missing or empty archive folder."""
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -569,6 +570,187 @@ class LessonsLintTests(unittest.TestCase):
                 code, out, _ = self.run_cli("--archive", str(self.archive), *args)
                 self.assertEqual(code, 2, out)
                 self.assertIn("# not found: ", out)
+
+
+CORE_SOURCE = PLUGIN.parent / "rigger-core"
+TEAM_RULE = "/srv/team-rules/rules/git.md"
+TEAM_GLOB = "/srv/team-rules/rules/*.md"
+
+
+class AllowedPathsTests(unittest.TestCase):
+    """D97: config key lessons.allowed_paths (levels 2-3) adds path patterns where a global rule may live."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="lessons-paths-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.archive = self.tmp / "archive"
+        self.config = self.tmp / "config"
+        self.project = self.tmp / "project"
+        self.project.mkdir()
+        cases = valid_cases()
+        cases[A]["meta"]["rule"] = TEAM_RULE + "#Commits"
+        write_archive(self.archive, cases, CLASSES)
+
+    def install_core(self):
+        """A copy of rigger-core laid out like the plugin cache, listed in installed_plugins.json."""
+        root = self.config / "plugins" / "cache" / "rigger" / "rigger-core" / "1.0.0"
+        skip = shutil.ignore_patterns("tests", "__pycache__")
+        shutil.copytree(str(CORE_SOURCE / "tools" / "assemble"), str(root / "tools" / "assemble"), ignore=skip)
+        for name in ("rigger-module.json", "rigger-defaults.json"):
+            shutil.copy(str(CORE_SOURCE / name), str(root / name))
+        listing = {"version": 2, "plugins": {"rigger-core@rigger": [{"installPath": os.path.abspath(str(root))}]}}
+        self.write_json(self.config / "plugins" / "installed_plugins.json", listing)
+
+    def write_json(self, path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(json.dumps(data).encode("utf-8"))
+
+    def personal(self, lessons):
+        self.write_json(self.config / "rigger" / "config.json", {"schema": 1, "lessons": lessons})
+
+    def company_module(self, lessons):
+        """A company module folder whose config sets `lessons` (level 2), for RIGGER_MODULE_DIRS."""
+        root = self.tmp / "team-module"
+        self.write_json(root / ".claude-plugin" / "plugin.json", {"name": "team-rules"})
+        self.write_json(root / "rigger-module.json", {"schema": 1, "name": "team-rules", "layer": "company",
+                                                      "config": {"lessons": lessons}})
+        return os.path.abspath(str(root))
+
+    def run_cli(self, extra=None, cwd=None):
+        env = {key: value for key, value in os.environ.items()
+               if not key.upper().startswith(("CLAUDE_", "RIGGER_"))}
+        env["CLAUDE_CONFIG_DIR"] = str(self.config)
+        env.update(extra or {})
+        proc = subprocess.run([sys.executable, "-I", str(LINT), "--archive", str(self.archive)],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              cwd=str(cwd or self.project), env=env, timeout=60)
+        return proc.returncode, proc.stdout.decode("utf-8").replace("\r\n", "\n").splitlines(), proc.stderr
+
+    def refused(self):
+        return "%s: scope global needs its rule in %s, not %s" % (
+            os.path.join(str(self.archive), A), lessons_lint.HARNESS_WHERE, TEAM_RULE)
+
+    def test_config_paths_extend_the_allowed_set(self):
+        self.install_core()
+        code, lines, err = self.run_cli()
+        self.assertEqual((code, err, lines[0]), (1, b"", self.refused()), lines)  # control: the fixed set refuses it
+        self.personal({"allowed_paths": [TEAM_GLOB]})
+        code, lines, err = self.run_cli()
+        self.assertEqual((code, err, lines), (0, b"", ["# 5 case files checked, 0 problems"]))
+        self.personal({})
+        module = {"RIGGER_MODULE_DIRS": self.company_module({"allowed_paths": [TEAM_GLOB]})}
+        code, lines, err = self.run_cli(module)  # level 2: a company module's config
+        self.assertEqual((code, err, lines), (0, b"", ["# 5 case files checked, 0 problems"]))
+        meta = {"scope": "project:p", "project": "p", "rule": TEAM_RULE}
+        self.assertIsNone(lessons_lint.scope_problem(meta, [TEAM_GLOB]))  # a project may still keep its rule there
+        spelled = {"scope": "global", "project": "p", "rule": "\\".join(("", "SRV", "Team-Rules", "rules", "Git.md#Commits"))}
+        self.assertIsNone(lessons_lint.scope_problem(spelled, [TEAM_GLOB]))  # backslashes and case, as HARNESS
+        self.assertIsNotNone(lessons_lint.scope_problem(dict(spelled, rule="/srv/team-rules/git.md"), [TEAM_GLOB]))
+
+    def test_bad_entries_are_dropped_with_a_notice(self):
+        self.install_core()
+        where = str(self.config / "rigger" / "config.json")
+        rows = [
+            ("not a list", "/srv/x/*.md", ["rigger: config %s lessons.allowed_paths must be a list of globs; ignored"
+                                          % where]),
+            ("a number and an empty glob", [7, "", TEAM_GLOB],
+             ["rigger: config %s lessons.allowed_paths entry 7 ignored: must be a non-empty string" % where,
+              "rigger: config %s lessons.allowed_paths entry '' ignored: must be a non-empty string" % where]),
+            ("a line break", ["/srv/a\n.md", TEAM_GLOB],
+             ["rigger: config %s lessons.allowed_paths entry '/srv/a\\n.md' ignored: holds a line break "
+              "or control character" % where]),
+            ("too long", ["/srv/" + "a" * 200, TEAM_GLOB],
+             ["rigger: config %s lessons.allowed_paths entry %s ignored: over 200 characters"
+              % (where, ("'/srv/" + "a" * 200)[:79] + "…")]),
+            ("over the cap", ["/srv/n%d/*.md" % n for n in range(50)] + [TEAM_GLOB],
+             ["rigger: config %s holds 51 lessons.allowed_paths entries; the last 1 ignored (at most 50 per file)"
+              % where]),
+            ("an unknown key", {"allowed_paths": [TEAM_GLOB], "extra": 1}, None),
+        ]
+        for label, paths, notices in rows:
+            with self.subTest(row=label):
+                if notices is None:
+                    self.personal(paths)
+                    notices = ["rigger: config %s lessons key extra unknown; ignored" % where]
+                else:
+                    self.personal({"allowed_paths": paths})
+                globs, got, reason = lessons_lint.allowed_paths(str(self.config), str(self.project), {})
+                self.assertEqual((got, reason), (notices, None))
+                self.assertEqual(TEAM_GLOB in globs, label not in ("not a list", "over the cap"), globs)
+                code, lines, _ = self.run_cli()
+                self.assertEqual(lines[:len(notices)], ["# " + notice for notice in notices])
+
+    def test_no_rigger_core_uses_the_fixed_set_and_says_so(self):
+        self.personal({"allowed_paths": [TEAM_GLOB]})
+        code, lines, err = self.run_cli()
+        self.assertEqual((code, err), (1, b""), lines)
+        self.assertEqual(lines[0], "# lessons.allowed_paths not read (no plugin list); the fixed set applies")
+        self.assertEqual(lines[1], self.refused())
+        self.install_core()
+        listing = self.config / "plugins" / "installed_plugins.json"
+        root = json.loads(listing.read_bytes())["plugins"]["rigger-core@rigger"][0]["installPath"]
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(str(self.config))
+        relative = os.path.relpath(root)  # exists from this cwd, but an installPath must be absolute
+        rows = [
+            ("another plugin only", {"plugins": {"rigger-lessons@rigger": [{"installPath": root}]}},
+             "no rigger-core in the plugin list"),
+            ("a relative installPath", {"plugins": {"rigger-core@rigger": [{"installPath": relative}]}},
+             "no tools/assemble/config.py in an installPath of rigger-core@rigger"),
+        ]
+        for label, data, reason in rows:
+            with self.subTest(row=label):
+                self.write_json(listing, data)
+                self.assertEqual(lessons_lint.allowed_paths(str(self.config), str(self.project), {}), ([], [], reason))
+        self.write_json(listing, {"plugins": {"rigger-core@rigger": [{"installPath": root}]}})
+        (Path(root) / "tools" / "assemble" / "config.py").write_bytes(b"raise ValueError('broken copy')\n")
+        globs, notices, reason = lessons_lint.allowed_paths(str(self.config), str(self.project), {})
+        self.assertEqual((globs, notices, reason), ([], [], "rigger-core did not load (ValueError: broken copy)"))
+
+    def test_a_wrongly_shaped_plugin_list_uses_the_fixed_set(self):
+        self.install_core()
+        self.personal({"allowed_paths": [TEAM_GLOB]})
+        listing = self.config / "plugins" / "installed_plugins.json"
+        root = json.loads(listing.read_bytes())["plugins"]["rigger-core@rigger"][0]["installPath"]
+        no_core, no_path = "no rigger-core in the plugin list", "no tools/assemble/config.py in an installPath of rigger-core@rigger"
+        rows = [
+            ("a list file", [{"rigger-core@rigger": [{"installPath": root}]}], no_core),
+            ("plugins a number", {"plugins": 7}, no_core),
+            ("plugins a list of names", {"plugins": ["rigger-core@rigger"]}, no_core),
+            ("its row a number", {"plugins": {"rigger-core@rigger": 7}}, no_path),
+            ("its row item a string", {"plugins": {"rigger-core@rigger": [root]}}, no_path),
+        ]
+        for label, data, reason in rows:
+            with self.subTest(row=label):
+                self.write_json(listing, data)
+                code, lines, err = self.run_cli()
+                self.assertEqual((code, err, lines[:2]), (1, b"", [
+                    "# lessons.allowed_paths not read (%s); the fixed set applies" % reason, self.refused()]))
+
+    def test_level_4_is_ignored(self):
+        self.install_core()
+        self.write_json(self.project / ".claude" / "rigger.json", {"schema": 1, "lessons": {"allowed_paths": [TEAM_GLOB]}})
+        linked = self.tmp / "linked-project"
+        make_dir_link(linked, self.project)  # macOS temp folders sit behind /var -> /private/var
+        for label, folder in (("the folder", self.project), ("a link to it", linked)):
+            with self.subTest(row=label):
+                code, lines, err = self.run_cli(cwd=folder)
+                self.assertEqual((code, err), (1, b""), lines)
+                project_file = os.path.join(cwd_as_seen(folder), ".claude", "rigger.json")
+                self.assertEqual(lines[:2], ["# rigger: config %s key lessons not allowed at level 4; ignored"
+                                             % project_file, self.refused()])
+
+
+def cwd_as_seen(folder):
+    """What os.getcwd() returns inside `folder`, the project path the lint reads and prints: POSIX resolves
+    symlinks there, Windows keeps a junction's own path."""
+    saved = os.getcwd()
+    os.chdir(str(folder))
+    try:
+        return os.getcwd()
+    finally:
+        os.chdir(saved)
 
 
 def make_dir_link(link, target):

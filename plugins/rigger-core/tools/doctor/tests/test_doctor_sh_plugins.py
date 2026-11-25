@@ -486,7 +486,7 @@ class DoctorShTests(DoctorShCase):
             "WARN", "loads process.tdd without testing before it", "assemble.py --doctor")})
 
     def table_json(self, detail, config):
-        head = "holds a trigger table; move its rows to triggers in %s: " % config
+        head = "rules file still holds a skill-trigger table; its rows as triggers for %s: " % config
         self.assertTrue(detail.startswith(head), detail)
         return detail[len(head):]
 
@@ -508,6 +508,16 @@ class DoctorShTests(DoctorShCase):
             "personal.mine-2": {"before": "meeting notes", "load": ["notes:style"]},
         }})
 
+    def test_the_rules_d_table_row_names_the_cause_and_has_no_fix(self):
+        """An INFO row is information only, never with a FIX (commands/doctor.md): the text is the cause."""
+        self.write_file(self.config / "rigger" / "rules.d" / "mine.md", "| Before | Skill |\n|---|---|\n| notes | `a:b` |\n")
+        result = self.run_assembly()
+        status, detail, _how = result.checks["rules-d-table rules.d/mine.md"]
+        self.assertEqual(status, "INFO")
+        self.assertTrue(detail.startswith("rules file still holds a skill-trigger table; "), detail)
+        self.assertNotIn("move", detail.split(": {")[0])
+        self.assertEqual([line for line in result.stdout.splitlines() if line.startswith("FIX\trules-d-table")], [])
+
     def test_the_old_rigger_rules_table_moves_whole_under_the_shipped_ids(self):
         """Spec section 13, migration: the table release 0.5.0 shipped, copied into rules.d, fits uncut."""
         old = REPO_PLUGINS.parent / "tests" / "fixtures" / "golden-34e7713" / "plugins" / "rigger-rules" / "rules" / "skills.md"
@@ -526,6 +536,20 @@ class DoctorShTests(DoctorShCase):
             "rigger-core.debugging": ["superpowers:systematic-debugging"],
         })
         self.assertEqual(rows["rigger-core.debugging"]["before"], "a bug, a failing test or unexpected behaviour")
+
+    def test_a_row_whose_skills_two_shipped_rows_load_keeps_a_personal_id(self):
+        """A rules.d row whose `before` matches no shipped row takes a shipped id only by a load list one row has."""
+        self.personal_config({"triggers": {"personal.twin": {"before": "UI words of my own",
+                                                             "load": ["rigger-core:web-ui-traps"]}}})
+        self.write_file(self.config / "rigger" / "rules.d" / "mine.md", (
+            "| Before | Skill |\n|---|---|\n| old UI words | `rigger-core:web-ui-traps` |\n"
+            "| old git words | `rigger-core:git-workflow` |\n"))
+        result = self.run_assembly()
+        text = self.table_json(result.checks["rules-d-table rules.d/mine.md"][1], self.config / "rigger" / "config.json")
+        self.assertEqual(json.loads(text)["triggers"], {
+            "personal.mine-1": {"before": "old UI words", "load": ["rigger-core:web-ui-traps"]},
+            "rigger-core.git-workflow": {"before": "old git words", "load": ["rigger-core:git-workflow"]},
+        })
 
     def test_empty_slot_rows_say_why_above_level_one(self):
         self.personal_config({"slots": {"testing": None, "lessons": {"kind": "hook", "target": "rigger-rules"}}})

@@ -14,6 +14,19 @@ STATE_FILE = (CORE / "rules" / "state-file.md").read_text(encoding="utf-8")
 # RIGGER_CLI_HOST_MD does the same for the terminal steps.
 CLI_HOST = " ".join(Path(os.environ.get("RIGGER_CLI_HOST_MD") or CORE / "tools" / "coord-state" / "cli-host.md")
                     .read_text(encoding="utf-8").split())
+# RIGGER_ORCHESTRATING_MD does the same for the orchestrating-subagents skill.
+SKILL = " ".join(Path(os.environ.get("RIGGER_ORCHESTRATING_MD")
+                      or CORE / "skills" / "orchestrating-subagents" / "SKILL.md").read_text(encoding="utf-8").split())
+
+
+def flat_step(number):
+    return " ".join(COORDINATE[COORDINATE.index("\n%d. " % number):COORDINATE.index("\n%d. " % (number + 1))].split())
+
+
+def flat_paragraph(opening):
+    start = COORDINATE.index("\n\n" + opening)
+    end = COORDINATE.find("\n\n", start + 2)
+    return " ".join(COORDINATE[start:end if end != -1 else len(COORDINATE)].split())
 
 
 class CliHostWiring(unittest.TestCase):
@@ -94,20 +107,117 @@ class CoordinateWiring(unittest.TestCase):
         self.assertRegex(COORDINATE, r"quoting the user's plan approval \(for the default branch, their\s+"
                                      r"instruction\) in quotes")
 
-    def test_brief_step_loads_testing_and_keeps_the_full_suite(self):
-        step_three = " ".join(COORDINATE[COORDINATE.index("\n3. "):COORDINATE.index("\n4. ")].split())
+    def test_brief_step_loads_testing(self):
+        step_three = flat_step(3)
         self.assertIn("loads the testing skill the Skill triggers table names and runs only those", step_three)
-        self.assertIn("the full suite and the gate are yours, at checkpoints", step_three)
 
-    def test_split_step_runs_heavy_parts_two_at_once_and_groups_light_ones(self):
-        step_two = " ".join(COORDINATE[COORDINATE.index("\n2. "):COORDINATE.index("\n3. ")].split())
-        self.assertIn("at most 2 heavy parts run at once", step_two)
-        self.assertIn("several light parts go to one session", step_two)
+    def assert_all_in(self, phrases, text):
+        for phrase in phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+
+    def test_split_step_defines_session_granularity_once(self):
+        step_two = flat_step(2)
+        self.assert_all_in(("runs in one session on one model", "a part that needs no other is a lane of one",
+                            "several small light parts may share a lane"), step_two)
+        for stale in ("each in its own session", "as a step in its own session"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, step_two)
+                self.assertNotIn(stale, " ".join(COORDINATE.split()))
+                self.assertNotIn(stale, SKILL)
+
+    def test_split_step_keeps_reviews_and_other_models_out_of_the_lane(self):
+        self.assert_all_in(("A stage on another model gets its own session (a session's model is fixed when it "
+                            "starts)", "a lane never reviews its own work: reviews run in a review session, "
+                            "fix rounds in the lane's session"), flat_step(2))
+
+    def test_split_step_starts_every_session_in_the_users_turn(self):
+        self.assert_all_in(("in this user's turn start every session the plan needs: one per lane, the review "
+                            "session and one per stage on another model, plus one spare standby session per model the "
+                            "plan uses for parts not in the plan yet",
+                            "record each id under `## Side sessions kept` as it starts",
+                            "every other one, a lane whose first part waits included, is a standby session",
+                            "has no part until it gets one: add none for it",
+                            "Later stages go with `SendMessage`, which works on any turn",
+                            "a new part to a free standby session on its model",
+                            "Only a spare is free: a standby kept for a lane, the review or a model stage waits for "
+                            "that work"), flat_step(2))
+
+    def test_split_step_has_no_session_cap_of_its_own_and_keeps_the_load_rule(self):
+        self.assert_all_in(('Sessions have no cap of our own (the app\'s cap: "A refused start")',
+                            "every stage keeps the `rigger-core:orchestrating-subagents` load rule in its session",
+                            "a build or test starts only while `mem-check` allows",
+                            "heavy jobs (WSL, Docker, wp-env, e2e) run at most 2 at a time across all lanes",
+                            "You keep that count: send a heavy stage only while fewer than 2 are out"), flat_step(2))
+        self.assertNotIn("with no cap on their number", flat_step(2))
+
+    def test_the_coordinator_does_not_implement_and_names_every_agent_exception(self):
+        self.assert_all_in(("you do not implement",
+                            'A background agent never stands in for a session, except under host `none`, where '
+                            'sessions cannot start (last paragraph) and in "A refused start"'), flat_step(2))
+        self.assertIn("`none`: run the parts with background subagents", flat_step(1))
+        self.assertIn("run the parts with background subagents instead", flat_paragraph("Where this environment"))
+
+    def test_a_refused_start_tries_a_standby_session_before_a_card_or_an_agent(self):
+        refused = flat_paragraph("A refused start:")
+        self.assertIn("give the step to a free standby session on its model with `SendMessage`", refused)
+        self.assertLess(refused.index("free standby session"), refused.index("propose the session as a card"))
+        self.assertLess(refused.index("free standby session"), refused.index("background agent"))
+        self.assertIn("else to a free standby session on its model, else set `stop: app-refused`", flat_step(8))
+
+    def test_standby_sessions_have_a_brief_and_a_close(self):
+        self.assert_all_in(("A standby session's brief says only: end this turn at once with the line "
+                            "`standby: ready`", "take your first message from the coordinator as the brief",
+                            "step lists but the model, fixed at its start",
+                            "its `standby: ready` note needs no action"), flat_step(3))
+        self.assertIn("A standby session stays there as `standby` until it gets a part; close the unused ones "
+                      "once every part is merged", flat_step(5))
+
+    def test_cli_host_starts_no_standby_sessions(self):
+        self.assert_all_in(("no standby sessions: a terminal start is never refused for the turn that asks for it, "
+                            "so start each session when its stage is due", "an idle standby would read as `done`"),
+                           CLI_HOST)
+
+    def test_skill_allows_coordinator_sessions_and_shares_the_heavy_slots(self):
+        self.assert_all_in(("or `/rigger-core:coordinate` runs a plan (the sessions its step 2 lists)",
+                            "the sessions of one coordinator share these 2 slots, and the coordinator counts them, "
+                            "lock or not"), SKILL)
+
+    def test_skill_and_command_cap_the_same_heavy_jobs_at_two(self):
+        pattern = r"[Hh]eavy jobs \(WSL, Docker, wp-env, e2e\) run at most (\d+)"
+        self.assertEqual(re.findall(pattern, SKILL), ["2"])
+        self.assertEqual(re.findall(pattern, flat_step(2)), ["2"])
+
+    def test_step_two_has_lane_start_and_load_paragraphs(self):
+        raw = COORDINATE[COORDINATE.index("\n2. "):COORDINATE.index("\n3. ")]
+        paragraphs = [" ".join(chunk.split()) for chunk in raw.split("\n\n") if chunk.strip()]
+        self.assertEqual(len(paragraphs), 3, paragraphs)
+        lanes, start, load = paragraphs
+        self.assertIn("a lane is a chain of parts", lanes)
+        self.assertIn("start every session the plan needs", start)
+        self.assertIn("Sessions have no cap of our own", load)
+        self.assertNotIn("start every session", lanes + load)
+        self.assertNotIn("Sessions have no cap", lanes + start)
+
+    def test_a_lanes_next_part_waits_for_the_merge(self):
+        self.assertRegex(flat_step(2), r"[Aa] lane's next part starts only after the previous part is merged")
+        self.assert_all_in(("add it with `--waits-on <previous part>`",
+                            "`coord_state` refuses an earlier `move <part> started`"), flat_step(2))
+
+    def test_one_owner_of_the_full_gate(self):
+        for number in (3, 4):
+            step = flat_step(number)
+            with self.subTest(step=number):
+                self.assertRegex(step, r"[Aa] side session runs the full gate on its branch before it reports")
+                self.assertIn("you run the full gate only once per merge point", step)
+                self.assertNotIn("the gate are yours, at checkpoints", step)
+                self.assertNotIn("at checkpoints", step)
 
     def test_over_the_app_cap_the_user_starts_a_card_and_no_agent_takes_it(self):
         flat = " ".join(COORDINATE.split())
         self.assertIn("past the app's cap of sessions working at once", flat)
         self.assertIn("never to a background agent without the user's OK", flat)
+        self.assertIn("once a session ends, give the step to a free standby session on its model", flat)
 
     def test_the_wrap_up_start_button_follows_app_refused(self):
         self.assertRegex(COORDINATE, r"set `stop: app-refused`[^.]{0,60}`wrap_up` question with a start button")

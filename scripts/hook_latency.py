@@ -506,6 +506,25 @@ def case_compact_guard(ctx: Context, h: Handler) -> List[Variant]:
                     prepare=lambda: summary.unlink() if summary.exists() else None)]
 
 
+def case_state(ctx: Context, h: Handler) -> List[Variant]:
+    # startup: an idle session's files (20 days old, no transcript) are archived, which prints one line;
+    # clear with no state file of this session: nothing to check, nothing printed.
+    state = ctx.config / "state"
+    idle = "0a1b2c3d-0000-4000-8000-0000000000ff"
+
+    def plant() -> None:
+        old = time.time() - 20 * 86400
+        for suffix in (".md", ".log.md"):
+            path = _write(state / (idle + suffix), "---\nsafe_to_compact: true\n---\n## Items\n")
+            os.utime(str(path), (old, old))
+        archive = state / "archive"
+        for suffix in (".md", ".log.md"):
+            if (archive / (idle + suffix)).exists():
+                (archive / (idle + suffix)).unlink()
+    return [Variant("match", ctx.stdin(h, {"source": "startup"}), expect(b"state: clean moved 2"), prepare=plant),
+            Variant("non-match", ctx.stdin(h, {"source": "clear"}), silent)]
+
+
 def case_part(ctx: Context, h: Handler) -> List[Variant]:
     # part.sh is silent only when the assembler exited 10 (an empty part: the rules fill parts 1-5 of a
     # session); every failure prints a `not loaded` line. Part 1 always holds rules.
@@ -653,6 +672,7 @@ CASES = {
     ("rigger-core", "harness_start.py"): case_harness_start,
     ("rigger-core", "compact_guard.py"): case_compact_guard,
     ("rigger-core", "part.sh"): case_part,
+    ("rigger-core", "state.py"): case_state,
     ("rigger-core", "context_guard.py"): case_context_guard,
     ("rigger-core", "side_session_guard.py"): case_side_session_guard,
     ("rigger-core", "env_check.py"): case_env_check,
@@ -662,8 +682,10 @@ CASES = {
     ("rigger-lessons", "inbox_guard.py"): case_inbox_guard,
     ("rigger-lessons", "skill_lessons.py"): case_skill_lessons,
     ("rigger-rules", "worktree_root.sh"): case_worktree_root,
+    ("rigger-review", "core_check.sh"): case_core_check,
     ("rigger-rules", "core_check.sh"): case_core_check,
     ("rigger-talk", "core_check.sh"): case_core_check,
+    ("rigger-testing", "core_check.sh"): case_core_check,
     ("rigger-testing", "weak_test_guard.py"): case_weak_test_guard,
     ("rigger-windows", "core_check.sh"): case_core_check,
     ("rigger-windows", "shell_guard.py"): case_shell_guard,

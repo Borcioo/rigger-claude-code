@@ -199,12 +199,13 @@ class WiringTests(HookRun):
                          '"${CLAUDE_PLUGIN_ROOT}/tools/harness_start/harness_start.py" || true')
         compact_guard = ('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S '
                          '"${CLAUDE_PLUGIN_ROOT}/tools/context-guard/compact_guard.py" start || true')
+        state = 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S "${CLAUDE_PLUGIN_ROOT}/tools/state/state.py" hook || true'
         parts = [part_command(i) for i in range(1, SESSION_PARTS + 1)]
         for source, commands in (
-            ("startup", [harness_start] + parts),
-            ("compact", [compact_guard] + parts),
-            ("clear", parts),
-            ("resume", []),
+            ("startup", [harness_start, state] + parts),
+            ("compact", [compact_guard, state] + parts),
+            ("clear", [state] + parts),
+            ("resume", [state]),
         ):
             with self.subTest(source=source):
                 self.assertEqual([h["command"] for h in session_handlers("rigger-core", source)], commands)
@@ -370,6 +371,11 @@ class CrossPluginWordingTests(unittest.TestCase):
             "CLAUDE.md or `.claude/environments.json` says so) is edited there, one writer at a time. "
             "Remove the worktree after the merge.", self.text("git.md"))
 
+    def test_the_hunk_list_names_the_kinds_the_wordpress_skill_maps(self):
+        """rigger-wp-traps maps WordPress options, capabilities and nonces onto these words (D98)."""
+        self.assertIn("settings, permissions or auth",
+                      " ".join(rules_text("rigger-talk", "talk.md").decode("utf-8").split()))
+
 
 class StateFileTests(unittest.TestCase):
     def test_the_bullet_is_under_its_own_heading_and_is_for_the_main_session(self):
@@ -380,7 +386,7 @@ class StateFileTests(unittest.TestCase):
             "  handoff.",
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
         self.assertNotIn("coordinator", "\n".join(lines))
-        self.assertEqual(lines[-2:], ["  from the state file.", ""])
+        self.assertEqual(lines[-2:], ["  on stale items named at session start.", ""])
         self.assertEqual(rules_text("rigger-core", "state-file.md", "subagent"), b"")
 
 
@@ -449,6 +455,40 @@ class TestingSkillTriggerTests(unittest.TestCase):
         lines = TESTING_SKILL.read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines[:4], ["---", "name: testing", "description: >-",
                                      "  Load BEFORE writing, changing or reviewing tests or a red run: a feature or bugfix test, a test"])
+
+
+def flat_file(path):
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+class PortedLessonTests(unittest.TestCase):
+    """General lessons ported from the source harness (D99), one pin each."""
+
+    def test_the_lo_fi_trap_moved_to_the_ui_skill_and_its_trigger(self):
+        skill = CORE / "skills" / "web-ui-traps" / "SKILL.md"
+        description = " ".join(skill.read_text(encoding="utf-8").split("\n---", 1)[0].split())
+        self.assertIn("lo-fi screens", description)
+        self.assertIn("**Lo-fi means no styling, not no design.** Design each screen from its role's task and "
+                      "decisions (what they must do, what they see, what comes next), with the UI that task needs: "
+                      "statuses, filters, history, empty and error states.", flat_file(skill))
+        self.assertNotIn("lo-fi", flat_file(PLUGINS / "rigger-rules" / "rules" / "plans-main.md").lower())
+        rows = [row for row in load_manifest(CORE)["triggers"] if row["id"] == "rigger-core.web-ui-traps"]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("lo-fi screens", rows[0]["before"])
+
+    def test_an_override_table_is_tested_where_it_differs_from_the_default(self):
+        self.assertIn("A table that overrides a default rule (holidays, closures) is tested only with inputs whose "
+                      "result differs from the default (a holiday on a weekday), so deleting the table turns it red.",
+                      flat_file(TESTING_SKILL))
+
+    def test_a_scratch_copy_of_a_worktree_drops_its_git_pointer(self):
+        self.assertIn("A scratch copy of a worktree deletes its `.git` first: the copied pointer makes git act on "
+                      "the real worktree.", flat_file(TESTING_SKILL))
+
+    def test_a_reviewer_re_measures_a_sample_of_visual_measurements(self):
+        self.assertIn("recount an agent's total, and have a read-only reviewer re-measure a sample of a builder's "
+                      "own visual measurements, before relaying it.",
+                      flat_file(CORE / "skills" / "orchestrating-subagents" / "SKILL.md"))
 
 
 class RulesSizeTests(unittest.TestCase):

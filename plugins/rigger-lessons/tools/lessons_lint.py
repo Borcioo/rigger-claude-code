@@ -5,13 +5,15 @@ python lessons_lint.py --archive DIR [--classes FILE] [--repo REPO ...] [--rule-
     parent). Rule checkers are each --rule-checker FILE plus every REPO's
     plugins/*/tools/*/lessons_guard.py; a live:<rule id> guard whose rule id a checker claims (its
     RULES), or in a case whose tools name a shell, passes only when one of them confirms it.
-    Prints one `path: problem` line per problem.
+    Config key lessons.allowed_paths (levels 2-3, read through rigger-core) adds globs where a global
+    rule may live. Prints one `path: problem` line per problem.
     Exit 0: at least one case file and no problem. Exit 1: any problem.
     Exit 2: DIR is missing or holds no case file.
 """
 
 import argparse
 import datetime
+import fnmatch
 import glob
 import importlib.util
 import json
@@ -19,6 +21,7 @@ import os
 import posixpath
 import re
 import sys
+from pathlib import Path
 
 REQUIRED = ("date", "project", "stack", "tools", "kind", "class", "signature", "guard", "status",
             "rule", "scope", "repeat_of", "rule_loaded", "session")
@@ -285,7 +288,77 @@ def guard_problem(value, repo, meta=None, checkers=()):
     return first or f"guard {value}: test file {rel} not found"
 
 
-def scope_problem(meta):
+def _core_assemble_dir(config_dir):
+    """(rigger-core's tools/assemble folder, None) from the first absolute installPath of the first
+    `rigger-core@` key of installed_plugins.json that holds config.py, or (None, reason)."""
+    try:
+        with open(os.path.join(config_dir, "plugins", "installed_plugins.json"), "rb") as fh:
+            data = json.loads(fh.read().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None, "no plugin list"
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    key = next((name for name in plugins if isinstance(name, str) and name.startswith("rigger-core@")), None) \
+        if isinstance(plugins, dict) else None
+    if key is None:
+        return None, "no rigger-core in the plugin list"
+    for item in plugins[key] if isinstance(plugins[key], list) else []:
+        root = item.get("installPath") if isinstance(item, dict) else None
+        if isinstance(root, str) and os.path.isabs(root) and (os.name != "nt" or os.path.splitdrive(root)[0]):
+            folder = os.path.join(root, "tools", "assemble")
+            if os.path.isfile(os.path.join(folder, "config.py")):
+                return folder, None
+    return None, "no tools/assemble/config.py in an installPath of " + key
+
+
+def allowed_paths(config_dir, project_dir, environ):
+    """(globs, notices, None) of config key lessons.allowed_paths, resolved by rigger-core's config module from
+    company modules (level 2), the personal config (level 3) and the project's (level 4, which may not set
+    it); ([], [], reason) when rigger-core cannot be found or loaded."""
+    folder, reason = _core_assemble_dir(config_dir)
+    if folder is None:
+        return [], [], reason
+    names = ("config", "manifest", "discover")
+    saved_modules = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+    sys.path.insert(0, folder)
+    try:
+        config = importlib.import_module("config")
+        discover = importlib.import_module("discover")
+        core = os.path.dirname(os.path.dirname(folder))
+        found = discover.discover(Path(config_dir), Path(project_dir), environ, Path(core))
+        paths = {3: os.path.join(config_dir, "rigger", "config.json"),
+                 4: os.path.join(project_dir, ".claude", "rigger.json")}
+        levels, notices = {}, []
+        for level, path in paths.items():
+            data, read = config.load_level(Path(path), level)
+            levels[level], notices = _only_lessons(data), notices + read
+        company = [(m.name, _only_lessons(m.config)) for m in found.modules
+                   if m.layer == "company" and isinstance(m.config, dict)]
+        resolved = config.resolve({}, company, levels[3], levels[4], paths)
+    except Exception as exc:  # a core that does not load reads no config
+        return [], [], "rigger-core did not load (%s: %s)" % (type(exc).__name__, exc)
+    finally:
+        sys.path.remove(folder)
+        for name in names:
+            sys.modules.pop(name, None)
+        sys.modules.update(saved_modules)
+    lessons = resolved.effective.get("lessons")
+    globs = lessons.get("allowed_paths") if isinstance(lessons, dict) else None
+    return list(globs or []), notices + resolved.notices, None
+
+
+def _only_lessons(data):
+    """The `lessons` key of one level's config, so notices about its other keys stay the assembler's."""
+    return {"lessons": data["lessons"]} if "lessons" in data else {}
+
+
+def allowed_by_config(path, allowed):
+    """True when the normalised posix `path` matches one of the `allowed` globs, ignoring case (`*` also
+    crosses `/`)."""
+    return any(fnmatch.fnmatchcase(path.lower(), posixpath.normpath(glob.replace("\\", "/")).lower())
+               for glob in allowed)
+
+
+def scope_problem(meta, allowed=()):
     """None when `scope` is valid and the `rule` path fits it."""
     scope = meta.get("scope")
     if not isinstance(scope, str) or not SCOPE.match(scope):
@@ -304,13 +377,13 @@ def scope_problem(meta):
         return f"scope {scope} needs its rule in that project, not {path}" if HARNESS.search(path) else None
     if kind == "skill":
         return None if skill and skill.group(1) == name else f"scope {scope} needs its rule under skills/{name}/"
-    if not HARNESS.search(path):
+    if not HARNESS.search(path) and not allowed_by_config(path, allowed):
         return f"scope global needs its rule in {HARNESS_WHERE}, not {path}"
     return f"scope global but the rule is in a skill: scope skill:{skill.group(1)}" if skill else None
 
 
 def check_case(name, meta, body, own, classes, classes_name, by_name, class_projects, project_scoped, repo,
-               checkers=()):
+               checkers=(), allowed=()):
     found = list(own)
     match = CASE_NAME.match(name)
     if not match:
@@ -363,7 +436,7 @@ def check_case(name, meta, body, own, classes, classes_name, by_name, class_proj
     if meta.get("status") == "rule" and meta.get("rule") == "none":
         found.append("status rule needs a rule path, not none")
     if "scope" in meta:
-        problem = scope_problem(meta)
+        problem = scope_problem(meta, allowed)
         if problem:
             found.append(problem)
         cls = text_key(meta.get("class"))
@@ -398,10 +471,10 @@ def check_case(name, meta, body, own, classes, classes_name, by_name, class_proj
     return found
 
 
-def lint(archive, classes_path=None, repo=None, rule_checkers=()):
+def lint(archive, classes_path=None, repo=None, rule_checkers=(), allowed=()):
     """(number of case files, problem lines). Test guards resolve against `repo` (one folder or a
     list; by default the archive's parent folder). Rule checkers: the `rule_checkers` files, then
-    each repo's plugins/*/tools/*/lessons_guard.py."""
+    each repo's plugins/*/tools/*/lessons_guard.py. `allowed` globs add places a global rule may live."""
     classes_path = classes_path or os.path.join(archive, CLASSES_FILE)
     repos = repo_list(repo) if repo else [os.path.dirname(os.path.abspath(archive))]
     classes, problems = read_classes(classes_path)
@@ -421,7 +494,7 @@ def lint(archive, classes_path=None, repo=None, rule_checkers=()):
             problems += [f"{path}: {p}" for p in own]
             continue
         found = check_case(name, meta, body, own, classes, classes_name, by_name, class_projects, project_scoped,
-                           repos, checkers)
+                           repos, checkers, allowed)
         problems += [f"{path}: {p}" for p in found]
     return len(cases), problems
 
@@ -445,7 +518,13 @@ def main(argv=None):
     if missing:
         print(f"# not found: {', '.join(missing)}")
         return 2
-    count, problems = lint(args.archive, args.classes, args.repo, args.rule_checker)
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    allowed, notices, unread = allowed_paths(config_dir, os.getcwd(), os.environ)
+    for notice in notices:
+        print("# " + notice)
+    count, problems = lint(args.archive, args.classes, args.repo, args.rule_checker, allowed)
+    if unread and any(": scope global needs its rule in " in problem for problem in problems):
+        print(f"# lessons.allowed_paths not read ({unread}); the fixed set applies")
     for problem in problems:
         print(problem)
     if not count:

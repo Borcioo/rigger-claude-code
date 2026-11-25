@@ -4,8 +4,8 @@ description: >-
   Load BEFORE building or changing UI components: dialogs and confirmations, optimistic updates,
   per-item action buttons, ARIA and accessible names, form controls (consent or newsletter
   opt-ins, WooCommerce checkout fields), translated labels, UI tests (jsdom, Testing Library,
-  browser), phone-width checks, sliders, third-party embeds, modal scroll lock; and when a button
-  "does nothing".
+  browser), phone-width checks, sliders, third-party embeds, modal scroll lock, lo-fi screens; and
+  when a button "does nothing".
 ---
 
 # Web UI traps
@@ -85,6 +85,9 @@ Each entry: what happens, then what to do.
     the anchor bubble to the row, whose own navigate runs last and wins, so mutating the link's
     address stays green. Assert the link's `href` (what open-in-new-tab and copy-link use), and test
     the row's path through a click on the row itself.
+19. **Lo-fi means no styling, not no design.** Design each screen from its role's task and decisions
+    (what they must do, what they see, what comes next), with the UI that task needs: statuses,
+    filters, history, empty and error states.
 
 ## Tools on demand
 

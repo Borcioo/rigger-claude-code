@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "context_guard.py")
@@ -103,6 +104,70 @@ def reminder(path, *args, cwd=None):
     return text.split(". ")[0] if text and not text.startswith("exit ") else text
 
 
+STATE_TOOL = os.path.join(os.path.dirname(os.path.dirname(HERE)), "state", "state.py")
+
+
+def put_old(path, text, days):
+    """`text` into `path`, last written `days` ago by the real clock (the hook has no other clock)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    moment = time.time() - days * 86400
+    os.utime(path, (moment, moment))
+
+
+def text_of(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return None
+
+
+def names(folder):
+    return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+
+
+def restore_rows(folder):
+    """S1: a session archived while its window stayed open gets its files back on the next prompt, before
+    any Write, compaction or tool call; a present state file is never replaced by the archived copy."""
+    config = os.path.join(folder, "restore-config")
+    state, archive = os.path.join(config, "state"), os.path.join(config, "state", "archive")
+    env = base_env(CLAUDE_CONFIG_DIR=config)
+    back, kept, lonely = ("aaaaaaaa-0000-4000-8000-00000000000%d" % n for n in (1, 2, 3))
+    put_old(os.path.join(archive, back + ".md"), "archived\n", 20)
+    put_old(os.path.join(archive, back + ".log.md"), "log\n", 20)
+    put_old(os.path.join(state, kept + ".md"), "current\n", 20)
+    put_old(os.path.join(archive, kept + ".md"), "archived\n", 20)
+    put_old(os.path.join(archive, kept + ".log.md"), "log\n", 20)
+    put_old(os.path.join(archive, lonely + ".log.md"), "log\n", 20)
+    for sid in (back, kept, lonely):
+        # no transcript_path: the restore runs before the reminder's own early returns
+        check(f"prompt hook for {sid[-1]} exits 0 and prints nothing",
+              run(json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": sid}), env=env), (0, ""))
+    check("S1: the archived state file and its sibling are back, with a restore stamp",
+          [name for name in names(state) if name.startswith(back)],
+          [back + ".log.md", back + ".md", back + ".restored"])
+    check("S1: nothing of the restored session is left in archive/",
+          [name for name in names(archive) if name.startswith(back)], [])
+    check("S1: the restored file keeps its text", text_of(os.path.join(state, back + ".md")), "archived\n")
+    check("a present state file is never replaced by the archived copy", text_of(os.path.join(state, kept + ".md")),
+          "current\n")
+    check("a present state file: its archived siblings stay in archive/, no stamp",
+          ([name for name in names(state) if name.startswith(kept)],
+           [name for name in names(archive) if name.startswith(kept)]),
+          ([kept + ".md"], [kept + ".log.md", kept + ".md"]))
+    check("no archived state file: an archived sibling alone is not restored",
+          ([name for name in names(state) if name.startswith(lonely)],
+           [name for name in names(archive) if name.startswith(lonely)]), ([], [lonely + ".log.md"]))
+    proc = subprocess.run([sys.executable, "-I", STATE_TOOL, "--state-dir", state, "--projects-dir",
+                           os.path.join(config, "projects"), "--session", "bbbbbbbb-0000-4000-8000-000000000000",
+                           "clean"], capture_output=True, timeout=30, env=env)
+    check("S1: another session's clean right after the prompt keeps the restored session",
+          (proc.returncode, [name for name in names(state) if name.startswith(back)]),
+          (0, [back + ".log.md", back + ".md", back + ".restored"]))
+
+
 def main():
     global CONFIG
     folder = tempfile.mkdtemp(prefix="ctx-guard-")
@@ -179,6 +244,7 @@ def main():
         os.makedirs(elsewhere)
         check("runs under python -I from another cwd", reminder(over, cwd=elsewhere), "Context is at 250k tokens")
         check("the reminder never mentions handing off", "hand" in (full_reminder(over) or "hand").lower(), False)
+        restore_rows(folder)
     finally:
         shutil.rmtree(folder)
     print(f"# context-guard: {passed} passed, {len(failures)} failed")

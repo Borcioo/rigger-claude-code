@@ -28,7 +28,8 @@ sys.path.insert(0, str(HERE))
 import slots  # noqa: E402
 import snapshot  # noqa: E402
 from config import Resolved, _shown, defaults_path, load_level, resolve  # noqa: E402
-from discover import INLINE, PERSONAL, Discovery, _read_json, _Unreadable, discover, root_text  # noqa: E402,F401
+from discover import (INLINE, INSTALLED, KNOWN, LISTING, PERSONAL, Discovery, _enabled_flags, _read_json,  # noqa: E402,F401
+                      _Unreadable, discover, root_text)
 from manifest import CORE, SLOT_PATHS, UNSAFE, ManifestError, Module, TriggerRow, load_manifest  # noqa: E402
 from parts import PART_CAP, SESSION_PARTS, SUBAGENT_PARTS, Block, pack  # noqa: E402
 from render import SECOND_TABLE, RenderContext, _slot_target, collect_rows, fits_part, render  # noqa: E402
@@ -53,6 +54,10 @@ LANGUAGE_DEFAULT = ("the language of Claude Code's `language` setting (the user'
 TALK_DEFAULTS = {"reply_language": LANGUAGE_DEFAULT, "reply_lines": "5", "report_lines": "15"}
 DUPLICATE = "rigger: rule id {id} in {a} and {b}; kept {a}"
 OVERRIDE = "rigger: {file} replaces rule {id}"
+STALE = "stale override {id} in {file}: {lower} has no such id, so both rules print"
+STALE_NOTICE = ("rigger: stale override {items}: the lower rules file has no such id, so both rules print "
+                "(run /rigger-core:doctor)")
+STALE_SHOWN = 3  # ids the session notice names before "+N more"
 SECOND_TABLE_NOTICE = "rigger: second trigger table in {where} not shown; the first one holds every row"
 SLOTS_ID = "slots.slots"
 # Names the Bash tool: the PowerShell tool finds no `sh` to run it.
@@ -96,6 +101,7 @@ class Assembly:
     skipped: bool = False
     slot_rows: List[slots.Row] = field(default_factory=list)
     trusted: FrozenSet[str] = frozenset()
+    stale: List[Tuple[str, str, str]] = field(default_factory=list)  # (section id, file, STALE line), D94
 
 
 @dataclass
@@ -165,6 +171,25 @@ def _requires_met(requires: Iterable[str], slots: dict, enabled: Iterable[str]) 
 def _stem(file: str) -> str:
     name = file.rsplit("/", 1)[-1]
     return name[:-3] if name.endswith(".md") else name.rsplit(".", 1)[0]
+
+
+# file stem -> (the first lower file with that stem, every id the lower layers have under it)
+_Lower = Dict[str, Tuple[str, Set[str]]]
+
+
+def _note_lower(lower: _Lower, stem: str, where: str, section_id: str) -> None:
+    lower.setdefault(stem, (where, set()))[1].add(section_id)
+
+
+def stale_override(layer: str, stem: str, section_id: str, where: str, lower: _Lower) -> Optional[str]:
+    """D94: a company section in a file whose stem the general layer has, under an id it lacks, is appended
+    instead of replacing anything, so the session prints both rules. The personal layer adds sections by design."""
+    if LAYER_RANK[layer] == 0:
+        return None
+    known = lower.get(stem)
+    if known is None or section_id in known[1]:
+        return None
+    return STALE.format(id=section_id, file=where, lower=known[0])
 
 
 def _empty_body(text: bytes) -> bool:
@@ -441,6 +466,8 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
 
     entries = []  # type: List[_Entry]
     index = {}  # type: Dict[str, int]
+    general = {}  # type: _Lower  the general layer, below every company file
+    stale = []  # type: List[Tuple[str, str, str]]
     for layer in ("general", "company"):
         for module in modules:
             for rule in module.rules:
@@ -452,7 +479,13 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
                     notices.append("rigger: rules file %s of %s unreadable (%s); skipped"
                                    % (_shown(rule.file), _shown(module.name), _shown(error.strerror or error)))
                     continue
+                where = "%s/%s" % (module.name, rule.file)
                 for section in split(_stem(rule.file), data):
+                    line = stale_override(layer, section.stem, section.id, where, general)
+                    if line:
+                        stale.append((section.id, where, line))
+                    if layer == "general":
+                        _note_lower(general, section.stem, where, section.id)
                     _place(entries, index, _Entry(section.id, layer, module, rule.file, section.text, rule.audience,
                                                   section.heading, rule.requires), notices)
             if layer == "general" and module is core:  # D36: ## Slots closes rigger-core's rules
@@ -464,7 +497,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     personal = next((m for m in discovery.modules if m.origin == PERSONAL), None)
     if personal is not None and any(m.name == RULES_MODULE for m in modules):  # D4
         kept, extra = _personal_entries(personal, subagent)
-        for name, piece in kept:
+        for name, piece in kept:  # adds sections by design (rules.d/lessons.md): never a stale override (D1)
             file = "%s/%s" % (PERSONAL_DIR, name)
             if not piece:  # its "cannot read" line goes where the file would have printed (M3)
                 line = next(e for e in extra if e.line and e.file == file)
@@ -520,7 +553,17 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
             sections.append({"id": entry.id, "layer": entry.layer,
                              "module": entry.module.name if entry.module is not None else PERSONAL,
                              "file": entry.file, "audience": entry.audience})
-    return Assembly(blocks, notices, sections, rows, resolved, discovery, slot_rows=slot_rows, trusted=trusted)
+    stale = list(dict.fromkeys(stale))
+    if stale:
+        notices.append(_stale_notice(stale))
+    return Assembly(blocks, notices, sections, rows, resolved, discovery, slot_rows=slot_rows, trusted=trusted,
+                    stale=stale)
+
+
+def _stale_notice(stale: List[Tuple[str, str, str]]) -> str:
+    items = ", ".join("%s in %s" % (_shown(section_id), _shown(file, 300)) for section_id, file, _ in stale[:STALE_SHOWN])
+    more = len(stale) - STALE_SHOWN
+    return STALE_NOTICE.format(items=items + (" +%d more" % more if more > 0 else ""))
 
 
 def part_bodies(found: Assembly, subagent: bool, count: Optional[int] = None) -> List[bytes]:
@@ -773,6 +816,7 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
     files = 0
     seen = {}  # type: Dict[str, Tuple[str, str]]  id -> (layer, module)
     general_stems = {}  # type: Dict[str, List[str]]  file stem -> general section ids, in file order
+    lower = {}  # type: _Lower  the general layer, below every company file
     for layer in ("general", "company"):
         for module in modules:
             for rule in module.rules:
@@ -789,16 +833,21 @@ def check(module_dirs: List[Path], self_root: Path) -> Tuple[List[str], List[str
                     if section.heading is not None and not slug(section.heading):
                         findings.append("empty heading slug in %s:%d" % (where, section.line))
                     before = seen.get(section.id)
+                    stale = stale_override(layer, section.stem, section.id, where, lower) if before is None else None
                     if before is not None and before[0] == layer:
                         findings.append("duplicate rule id %s in %s and %s" % (section.id, before[1], module.name))
+                    elif stale:
+                        nearest = _closest(section.id, general_stems.get(_stem(rule.file), []))
+                        findings.append(stale + ("; closest general id %s" % nearest if nearest else ""))
                     elif before is None and layer == "company" and (
-                            _stem(rule.file) in general_stems
-                            or (section.heading is not None and _empty_body(section.text))):
+                            section.heading is not None and _empty_body(section.text)):
                         line = "orphan override %s in %s: no lower section has that id" % (section.id, where)
                         nearest = _closest(section.id, general_stems.get(_stem(rule.file), []))
                         findings.append(line + ("; closest general id %s" % nearest if nearest else ""))
                     if layer == "general" and section.id not in general_stems[_stem(rule.file)]:
                         general_stems[_stem(rule.file)].append(section.id)
+                    if layer == "general":
+                        _note_lower(lower, section.stem, where, section.id)
                     if before is None or before[0] != layer:
                         seen[section.id] = (layer, module.name)
                     text, unknown = render(section.text, ctx)
@@ -838,6 +887,14 @@ def _same_plugin(root: Path, name: object) -> bool:
     return name is not None and isinstance(other, dict) and other.get("name") == name
 
 
+def _module_name(root: Path) -> object:
+    try:
+        data = _read_json(root / "rigger-module.json")
+    except _Unreadable:
+        return None
+    return data.get("name") if isinstance(data, dict) else None
+
+
 def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
     inputs = _inputs(environ, {})
     if "--modules" in argv:
@@ -851,6 +908,12 @@ def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
         name = own.get("name") if isinstance(own, dict) else None
         # In an installed cache the siblings are other versions of this plugin: only the running one is checked.
         dirs = [d for d in dirs if d == inputs.self_root or not _same_plugin(d, name)]
+        # D94: the modules a session reads too (RIGGER_MODULE_DIRS, the installed list); a sibling keeps its name.
+        names = {_module_name(d) for d in dirs}
+        for module in discover(inputs.config_dir, inputs.project_dir, environ, inputs.self_root).modules:
+            if module.origin != PERSONAL and module.name not in names:
+                names.add(module.name)
+                dirs.append(module.root)
     findings, info, count, files = check(dirs, inputs.self_root)
     lines = info + findings
     if not findings:
@@ -963,6 +1026,60 @@ def _table_rows(text: str) -> List[Tuple[str, List[str]]]:
     return found
 
 
+def _json_or_none(path: Path):
+    try:
+        return _read_json(path)
+    except _Unreadable:
+        return None
+
+
+def _dependency_rows(inputs: Inputs) -> List[_Row]:
+    """D96: one row per dependency of each enabled, installed plugin. Static: it sees a dependency that is missing
+    or not enabled, never whether the session loaded the plugin."""
+    flags = _enabled_flags(inputs.config_dir, inputs.project_dir, [])
+    data = _json_or_none(inputs.config_dir / INSTALLED)
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    plugins = plugins if isinstance(plugins, dict) else {}
+    known = _json_or_none(inputs.config_dir / KNOWN)
+    known = known if isinstance(known, dict) else {}
+
+    def present(key: str) -> bool:
+        entries = plugins.get(key)
+        return flags.get(key) is True and isinstance(entries, list) and any(
+            isinstance(e, dict) and isinstance(e.get("installPath"), str) and e["installPath"] for e in entries)
+
+    def allows(market: str, other: str) -> bool:
+        entry = known.get(market)
+        source = entry.get("source") if isinstance(entry, dict) and isinstance(entry.get("source"), dict) else {}
+        folder = (entry.get("installLocation") if isinstance(entry, dict) else None) or source.get("path")
+        listing = _json_or_none(Path(folder) / LISTING) if isinstance(folder, str) and folder else None
+        allowed = listing.get("allowCrossMarketplaceDependenciesOn") if isinstance(listing, dict) else None
+        return isinstance(allowed, list) and other in allowed
+
+    rows = []  # type: List[_Row]
+    for key in sorted(k for k in plugins if present(k)):
+        market = key.rpartition("@")[2]
+        entry = next(e for e in plugins[key] if isinstance(e, dict) and isinstance(e.get("installPath"), str))
+        manifest = _json_or_none(Path(entry["installPath"]) / ".claude-plugin" / "plugin.json")
+        deps = manifest.get("dependencies") if isinstance(manifest, dict) else None
+        for dep in deps if isinstance(deps, list) else ():
+            if not isinstance(dep, str) or not dep:
+                continue
+            target = dep if "@" in dep else "%s@%s" % (dep, market)  # a bare name resolves in the same marketplace
+            name = "dependency " + _shown(key)
+            if present(target):
+                rows.append((name, "OK", "needs %s: installed and enabled" % _shown(target), None))
+                continue
+            detail = "needs %s: not installed or not enabled, so %s does not load" % (_shown(target), _shown(key))
+            other = target.rpartition("@")[2]
+            if other != market and not allows(market, other):
+                detail += ("; install skips it until %s's marketplace.json lists \"%s\" in "
+                           "allowCrossMarketplaceDependenciesOn" % (_shown(market), _shown(other)))
+            fix = "claude plugin install " + target if _FIX_TARGET.fullmatch(target) else None
+            rows.append((name, "MISSING", detail, fix))
+    return rows
+
+
 def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> List[_Row]:
     """A rules.d file that holds a trigger table, with its rows as `triggers` JSON (spec section 13, migration)."""
     folder = inputs.config_dir / "rigger" / PERSONAL_DIR
@@ -971,7 +1088,11 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
     except OSError:
         return []
     effective = found.resolved.effective if found.resolved is not None else {}
-    shipped = {row.before: row.id for row in collect_rows(modules, effective)}
+    shipped_rows = collect_rows(modules, effective)
+    shipped = {row.before: row.id for row in shipped_rows}
+    by_load = {}  # type: Dict[tuple, List[str]]
+    for row in shipped_rows:
+        by_load.setdefault(tuple(row.load), []).append(row.id)
     rows = []  # type: List[_Row]
     for name in names:
         try:
@@ -983,14 +1104,17 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
         stem = slug(name[:-len(".md")]) or "rules-d"
         triggers = {}
         for number, (before, load) in enumerate(table, 1):
-            row_id = shipped.get(before, "personal.%s-%d" % (stem, number))
+            # A shipped row whose wording changed is found by its load list, when only one row has that list.
+            same_load = by_load.get(tuple(load), [])
+            fallback = same_load[0] if len(same_load) == 1 else "personal.%s-%d" % (stem, number)
+            row_id = shipped.get(before, fallback)
             triggers[row_id] = {"before": before, "load": load}
         text = json.dumps({"triggers": triggers}, ensure_ascii=False)
         text = _shown(text, len(text) + 1)  # one line: _shown writes a control character as a JSON \u escape
         if len(text) > TABLE_JSON_MAX:
             text = text[:TABLE_JSON_MAX] + " …"
         rows.append(("rules-d-table " + _shown("%s/%s" % (PERSONAL_DIR, name)), "INFO",
-                     "holds a trigger table; move its rows to triggers in %s: %s"
+                     "rules file still holds a skill-trigger table; its rows as triggers for %s: %s"
                      % (_shown(_personal_config(inputs), 300), text), None))
     return rows
 
@@ -1012,6 +1136,10 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
             if line in found.notices and line not in own:
                 own.add(line)
                 rows.append(("rule-override " + _shown(section["id"]), "INFO", line[len("rigger: "):]))
+    if found.stale:
+        own.add(_stale_notice(found.stale))  # the session notice: these rows stand for it
+    for section_id, _, line in found.stale:  # D94: both rules print, so the row warns
+        rows.append(("stale-override " + _shown(section_id), "WARN", _shown(line, 300)))
     fixes = {}  # type: Dict[int, str]  by position in rows: two long names can show as one row name
     expects = found.resolved.effective.get("expects") if found.resolved is not None else None
     for name in dict.fromkeys(expects if isinstance(expects, list) else ()):
@@ -1028,7 +1156,7 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
         rows.append(("config-inactive " + key, "INFO", "%s in %s: no effect in this release" % (key, where)))
     plain = [m for m in found.discovery.modules if m.origin != PERSONAL]
     for name, status, detail, fix in (_slot_rows(found, plain, own) + _order_rows(found)
-                                      + _rules_d_rows(inputs, found, plain)):
+                                      + _rules_d_rows(inputs, found, plain) + _dependency_rows(inputs)):
         rows.append((name, status, detail))
         if fix is not None:
             fixes[len(rows) - 1] = fix

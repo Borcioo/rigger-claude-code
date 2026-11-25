@@ -640,6 +640,8 @@ def hook_checks(root):
     check("the Stop handler is the same command, synchronous, with no matcher",
           (stop_handler["command"], stop_handler.get("async"), "matcher" in stop_group, len(shipped_hooks("Stop"))),
           (shipped_hook()[1]["command"], None, False, 1))
+    check("the Stop handler allows 15 s: the turn guard's 4-s poll plus a busy machine's start",
+          stop_handler.get("timeout"), 15)
     check("PreToolUse runs the script under exactly these matchers", sorted(shipped_hooks()), sorted([ASK, WRAP_UP]))
     group, handler = shipped_hook()
     ask_group, ask_handler = shipped_hook(matcher=ASK)

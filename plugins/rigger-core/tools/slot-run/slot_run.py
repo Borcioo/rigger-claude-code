@@ -1,6 +1,7 @@
 """Runs a command slot: the argv the session's snapshot holds, with no shell, inside its bounds.
 
   slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]
+(`--session` defaults to CLAUDE_CODE_SESSION_ID, as review_scope.py's does)
 
 The slot is read only from the session's snapshot (<config dir>/rigger/state/<id>.resolved.json, the
 config dir from CLAUDE_CONFIG_DIR); config is never resolved here, and a snapshot that is missing, of
@@ -33,7 +34,8 @@ has exited but a process it started still holds the console after EXIT_GRACE sec
 (known limit: on POSIX a process that left the process group with setsid can outlive the run). The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
 ids, `{out}` the output file and `{scope}` a file of `<verdict><TAB><path>` lines from
-`review_scope.scope()`, all in a fresh folder in the temp directory that is kept for the caller.
+`review_scope.scope()` with the session's `review.paths` rules (an entry dropped on the way prints a
+`# review.paths: <reason>` line before the output line), all in a fresh folder in the temp directory that is kept for the caller.
 
 The last line is `slot-run: ok <slot> <n> findings` (exit 0) or `slot-run: refused: <reason>` (exit 2); once
 the folder exists, the line before it is `slot-run: output <output file>`.
@@ -387,9 +389,10 @@ def _parse(argv: List[str]):
             return None
         values[name] = argv[index + 1]
         index += 2
-    if "--session" not in values or "--base" not in values:
+    session = values["--session"] if "--session" in values else os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if not session and "--session" not in values or "--base" not in values:
         return None
-    return argv[0], values["--session"], values["--base"], values.get("--head", "HEAD"), values.get("--repo")
+    return argv[0], session, values["--base"], values.get("--head", "HEAD"), values.get("--repo")
 
 
 def _row(slot: str, session: str):
@@ -409,7 +412,7 @@ def _row(slot: str, session: str):
         raise Refusal("slot %s is %s; dispatch its target instead" % (slot, row.kind))
     if row.source == "project" and slot not in trusted:
         raise Refusal("the project's command for %s is not trusted" % slot)
-    return row
+    return row, data
 
 
 def _check_output(slot: str, out_path: str, root: Path, base_id: str, head_id: str) -> int:
@@ -430,15 +433,19 @@ def _main(argv: List[str], emit) -> int:
     if parsed is None:
         raise Refusal(USAGE)
     slot, session, base, head, repo_arg = parsed
-    row = _row(slot, session)
+    row, session_data = _row(slot, session)
     root = _repository_root(repo_arg if repo_arg is not None else os.getcwd())
     program = resolve_program(row.target[0], root)
     try:
         base_id = review_scope.resolve_commit(root, base)
         head_id = review_scope.resolve_commit(root, head)
-        rows = review_scope.scope(root, base_id, head_id)
+        notices = []  # type: List[str]
+        rules = review_scope.path_rules(session_data, root, base_id, notices)
+        rows = review_scope.scope(root, base_id, head_id, rules)
     except review_scope.ScopeError as exc:
         raise Refusal(str(exc))
+    for notice in notices:
+        emit("# review.paths: %s\n" % _shown(notice))
     if not rows:
         raise Refusal("nothing to review between %s and %s" % (_shown(base), _shown(head)))
     work = tempfile.mkdtemp(prefix="rigger-slot-run-")

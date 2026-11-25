@@ -34,8 +34,12 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
   with the module and section counts, or WARN with the first problem), one `rule-override` per
   `rules.d` section that replaces a Rigger one, one `expects` per plugin the project file expects
   that is not installed and enabled (FIX `claude plugin install <name>`), one `config-inactive`
-  per config key that is read but has no effect yet (`shell_guard`, `company`, `leak_guard`), and
-  these slot rows:
+  per config key that is read but has no effect yet (`shell_guard`, `company`, `leak_guard`), one
+  `stale-override <id>` WARN per company section whose file stem matches a general file but whose
+  id matches no general section there (both rules print), one `dependency <plugin@marketplace>` per
+  `plugin.json` dependency of an enabled plugin (OK, or MISSING with FIX
+  `claude plugin install <dependency>`, naming the missing `allowCrossMarketplaceDependenciesOn`
+  entry for another marketplace's plugin), and these slot rows:
   - `slot <path>`: OK with what fills it and from which level; WARN when two plugins fill a hook slot
     (FIX `claude plugin disable <name>`); MISSING when the filler your config expects is not enabled
     (FIX `claude plugin install <name>`), and when the `reviewer` or `testing` default's plugin is
@@ -49,8 +53,8 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
 - `/rigger-core:harness-setup`: runs doctor, then writes the Compact Instructions section into your
   user `CLAUDE.md` and, if you opt in, the `autoCompactWindow` setting. It
   asks before each change and changes nothing else.
-- `/rigger-core:coordinate [plan]`: runs an approved plan with each independent part in its own
-  session. Needs the Claude desktop app (its session tools) and the superpowers plugin; elsewhere it
+- `/rigger-core:coordinate [plan]`: runs an approved plan with each lane (a chain of parts on one
+  model) in its own side session, plus standby sessions for later parts. Needs the Claude desktop app (its session tools) and the superpowers plugin; elsewhere it
   falls back to background subagents.
 - `/rigger-core:environments`: fills `.claude/environments.json` from what the repo says, for the
   rigger-panel Environments pane.
@@ -139,13 +143,15 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
 - **`--render [--subagent]`** prints the whole text a session or a subagent is assembled from, without the hook limits:
   every notice, and any section the parts leave out over the 9,000-byte cap (the parts name those in their last line);
   **`--check [--modules
-  <dir>...]`** fails on a duplicate id in one layer, an orphan override (a company section whose file
-  stem matches a general file but whose id matches no general section there, or an empty one), a
-  section over 9,000 bytes, an unknown placeholder, a trigger `load` that resolves to nothing, a slot
+  <dir>...]`** fails on a duplicate id in one layer, a stale override (a company section whose file
+  stem matches a general file but whose id matches no general section there), an orphan override (an
+  empty company section whose id no lower section has), a section over 9,000 bytes, an unknown placeholder, a trigger `load` that resolves to nothing, a slot
   default that does not validate, a second trigger table, a `{{slot:<path>}}` whose default plugin is
   absent, a row that loads `process.tdd` without `testing` before it, or 0 rules files read.
-  `rules.d` is not checked. Without `--modules` it checks the plugins next to this one, which is only this
-  plugin in an installed cache: pass `--modules <dir>...` there (the summary line names how many modules it read).
+  `rules.d` is not checked: it adds sections. Without `--modules` it checks the plugins next to this one
+  (only this plugin in an installed cache) and the modules a session reads (`RIGGER_MODULE_DIRS`, the
+  installed plugins); `--modules <dir>...` checks exactly those folders (the summary line names how many
+  modules it read).
 
 ## Tools
 
@@ -193,7 +199,8 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   the files a review covers, one `<verdict><TAB><path>` line each: `review`, `review: binary added`,
   `review: rules file newly named` (a rules file the head's `.claude/rigger.json` names and the base's
   does not, listed even when the diff leaves it unchanged: it has no hunk, so read the whole file;
-  every verdict that starts with `review` is to review), or `skip: <reason>` (deleted, binary,
+  `(link)`, `(not a regular file)`, `(object missing)` or `(over <n> bytes)` after it means a later review drops that file,
+  so it is not to be opened; every verdict that starts with `review` is to review), or `skip: <reason>` (deleted, binary,
   lockfile, vendored, generated, or a `review.paths` skip). A file named like a test is never skipped
   unless `review.paths` names it; `.claude/rigger.json` and every rules file it names at base or at
   head are always `review`, whatever a skip says. Then `# review.paths: …` notices, one

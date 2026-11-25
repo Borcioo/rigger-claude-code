@@ -263,6 +263,12 @@ class DocTests(unittest.TestCase):
             with self.subTest(topic=topic):
                 self.assertIn(topic, " ".join(text.split()))
 
+    def test_the_skill_maps_wordpress_kinds_onto_the_hunk_list(self):
+        """D98: the skill, loaded before any WordPress code, says which WordPress kinds the final-report hunk
+        list's "settings, permissions or auth" covers (that wording is pinned in test_plugin_rules.py)."""
+        self.assertIn("- In the final report's hunk list, a WordPress option counts as a setting, and a capability "
+                      "or nonce check as permissions or auth.", " ".join(SKILL.read_text(encoding="utf-8").split()))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

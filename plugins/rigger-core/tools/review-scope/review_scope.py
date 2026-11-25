@@ -69,6 +69,7 @@ TEST_SEGMENT_ENDS = (".tests", ".test")  # a .NET test project, compared in lowe
 TEST_NAMES = ("test_*", "*_test.*", "*.test.*", "*.spec.*", "*_spec.*", "*.tests.*", "test-*", "*Tests.*",
               "*Test.*")  # compared case-sensitively
 REGULAR = (b"100644", b"100755")
+LINK = b"120000"
 PROJECT_CONFIG = ".claude/rigger.json"
 OBJECT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
 LEVEL_NAMES = {2: "company", 3: "personal", 4: "project"}
@@ -356,10 +357,16 @@ def _diff(repo, base_id, head_id):
             path = fields[index + 1].decode("utf-8")
         except UnicodeDecodeError:
             raise ScopeError("path is not UTF-8: %r" % fields[index + 1])
-        if "\t" in path or "\n" in path or "\r" in path:
-            raise ScopeError("path holds a tab or a line break: %r" % path)
+        _check_line_path(path)
         changes.append((path, status))
     return changes
+
+
+def _check_line_path(path):
+    # type: (str) -> None
+    """Refuse a path that would break the one-line `<verdict><TAB><path>` output."""
+    if "\t" in path or "\n" in path or "\r" in path:
+        raise ScopeError("path holds a tab or a line break: %r" % path)
 
 
 def _segment_match(pattern, text):
@@ -543,8 +550,27 @@ def scope(repo, base, head, rules=()):
         changed = set(path for path, _status in changes)
         newly = (_named_rules_files(blobs, head_tree.get(PROJECT_CONFIG))
                  - _named_rules_files(blobs, base_tree.get(PROJECT_CONFIG)))
-        rows += [(name, NEWLY_NAMED) for name in newly if name not in changed and name in head_tree]
+        listed = sorted(name for name in newly if name not in changed and name in head_tree)
+        for name in listed:
+            _check_line_path(name)
+        rows += [(name, _newly_named(head_tree[name])) for name in listed]
     return sorted(rows)
+
+
+def _newly_named(entry):
+    # type: (TreeEntry) -> str
+    """NEWLY_NAMED, or a variant that says why the file is not to be read: a link leads wherever its target
+    points, any other entry that is not a regular file (a submodule commit) holds no rules text, a blob missing
+    from the object store has no size to check, and a file over TEXT_CAP is one a later review drops."""
+    if entry[0] == LINK:
+        return NEWLY_NAMED + " (link)"
+    if entry[0] not in REGULAR:
+        return NEWLY_NAMED + " (not a regular file)"
+    if entry[2] < 0:
+        return NEWLY_NAMED + " (object missing)"
+    if entry[2] > TEXT_CAP:
+        return NEWLY_NAMED + " (over %d bytes)" % TEXT_CAP
+    return NEWLY_NAMED
 
 
 # --- review.paths (D61) --------------------------------------------------------------------------------

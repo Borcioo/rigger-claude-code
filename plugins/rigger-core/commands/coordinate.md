@@ -1,5 +1,5 @@
 ---
-description: Run the approved plan as its coordinator, with each independent part in a separate session (needs the Claude desktop app's session tools and the superpowers plugin)
+description: Run the approved plan as its coordinator, with each lane of the plan in its own side session (needs the Claude desktop app's session tools and the superpowers plugin)
 argument-hint: "[plan file]"
 ---
 
@@ -36,22 +36,47 @@ one full gate runs on the machine at a time.
    agent, and sets `false` only around such a step, back to `true` right after; its running
    sessions are the output of the `show` call, not memory. Copy these two sentences into the state
    file's `## Keep verbatim`: compaction brings back the state file, not this command.
-2. Split the approved plan by real inputs: parts that need nothing from each other start now, each
-   in its own session (`move <part> started --session <id>` or `--branch <branch>`); a part that
-   waits names the exact input it waits for. List every stage up
-   front as a step in its own session, review and fix rounds included: running this command is the
-   user's ask for each. A review goes through a session, not a background agent, so the next turn
-   may start the fix round. Each listed stage names the model it runs on and whether it is heavy (runs
-   tests, a build, WSL, Docker or e2e) or light (only writes files): at most 2 heavy parts run at
-   once, and several light parts go to one session (it may hand them to its own subagents), so the
-   app's few concurrent sessions cover more of the plan.
+2. Split the approved plan by real inputs into lanes: a lane is a chain of parts where each needs the
+   one before, and runs in one session on one model with its own subagents; a part that needs no
+   other is a lane of one, and several small light parts may share a lane. A stage on another model
+   gets its own session (a session's model is fixed when it starts), and a lane never reviews its own
+   work: reviews run in a review session, fix rounds in the lane's session. List every stage up front
+   with its lane, model and whether it is heavy (runs the full suite or gate, a build, WSL, Docker or
+   e2e) or light (writes files and runs the tests they reach): running this command is the user's ask
+   for each; a part that waits names the exact input it waits for. A lane's next part starts only
+   after the previous part is merged: add it with `--waits-on <previous part>`, and `coord_state`
+   refuses an earlier `move <part> started`.
+
+   A turn an event starts cannot start sessions, so in this user's turn start every session the plan
+   needs: one per lane, the review session and one per stage on another model, plus one spare
+   standby session per model the plan uses for parts not in the plan yet; record each id under
+   `## Side sessions kept` as it starts (`show` lists no standby). A session whose part has its
+   inputs gets its brief now (`move <part> started --session <id>` or `--branch <branch>`); every
+   other one, a lane whose first part waits included, is a standby session (step 3) and has no part
+   until it gets one: add none for it. Later stages go with `SendMessage`, which works on any turn: a
+   lane's next stage and fix rounds to its session, a review to the review session, a new part to a
+   free standby session on its model. Only a spare is free: a standby kept for a lane, the review or
+   a model stage waits for that work.
+
+   Sessions have no cap of our own (the app's cap: "A refused start"), but every stage keeps the
+   `rigger-core:orchestrating-subagents` load rule in its session: a build or test starts only while
+   `mem-check` allows, and heavy jobs (WSL, Docker, wp-env, e2e) run at most 2 at a time across all
+   lanes. You keep that count: send a heavy stage only while fewer than 2 are out. The e2e run lock
+   (`rigger-core:e2e-playwright-speed` §9) and a project's gate lock only keep two runs of one kind
+   apart. You plan, brief, help a stuck session, check results, merge and open the pull requests; you
+   do not implement. A background agent never stands in for a session, except under host `none`,
+   where sessions cannot start (last paragraph) and in "A refused start".
 3. Every brief states: goal, files, what done looks like, which checks fit what the change can
-   reach (the session loads the testing skill the Skill triggers table names and runs only those; the full suite and the gate
-   are yours, at checkpoints), the model it runs on (passed as `model` to `start_session`: the skill's model rule covers
+   reach (the session loads the testing skill the Skill triggers table names and runs only those while
+   it works; a side session runs the full gate on its branch before it reports, and you run the full
+   gate only once per merge point), the model it runs on (passed as `model` to `start_session`: the skill's model rule covers
    sessions too, and a session without it inherits the strongest model), the parts it hands to a
    cheaper worker when its tasks mix risk, and that the session ends each turn with no ask and none
    while its own background run is going: it waits inside the turn and ends with a result or a
-   question to you. A session mid-turn receives your message only when that turn ends:
+   question to you. A standby session's brief says only: end this turn at once with the line
+   `standby: ready`, then take your first message from the coordinator as the brief (send it all this
+   step lists but the model, fixed at its start); its `standby: ready` note needs no action. A
+   session mid-turn receives your message only when that turn ends:
    everything it must know goes in the brief, and a rule found mid-wave is repeated in the next
    brief and checked in each report. A side session saves its final report as a file in the
    scratch folder its brief names, opening with the STATUS line and the Summary, and ends with five
@@ -89,7 +114,8 @@ one full gate runs on the machine at a time.
    session once its result is checked and relayed, except: a
    builder session stays until the review of its part has no finding for it or its fix is verified
    and merged, and the review session until its re-review; list each under `## Side sessions kept`
-   with that reason.
+   with that reason. A standby session stays there as `standby` until it gets a part; close the unused
+   ones once every part is merged.
 6. Ask the user only at a stop of the `plans-main.md` rule, with `stop:` set (clear it once they
    answer), in plain words, by what they get. When a side
    session's report names an approval it needs, put that question first in your reply, in the
@@ -115,7 +141,8 @@ one full gate runs on the machine at a time.
    in a permission mode other than `bypassPermissions`), started again on each notice. A turn a
    background notice began cannot start a session (the app refuses until the user writes): a
    stage due then goes with `SendMessage` to an open session that has its context (a re-review to
-   the review session: no start, so no refusal), else set `stop: app-refused` and send the user the
+   the review session: no start, so no refusal), else to a free standby session on its model, else
+   set `stop: app-refused` and send the user the
    `wrap_up` question with a start button, so one click starts it.
 9. On a `quiet` line, tell the user in one line, with the session's link, that it may wait for
    their approval or answer in its own window.
@@ -128,13 +155,14 @@ not AskUserQuestion: its button answer starts a user turn, where the start works
 
 A refused start: the app refuses a new session on a turn started by an automated event or another
 session's message, apart from a `<side-sessions-event>` turn right after the user's turn, for a
-step they asked to have apart. Then propose the session as a card (`initiation: "own_initiative"`)
+step they asked to have apart. Then give the step to a free standby session on its model with
+`SendMessage`; with none free, propose the session as a card (`initiation: "own_initiative"`)
 and keep other work moving. Schedule a wake in 10 minutes (`ScheduleWakeup`, else `CronCreate`):
 on it, withdraw the card with `dismiss_task`; if the result says it started, leave it, otherwise run
 the step with a background agent and say so. A start refused past the app's cap of sessions working
 at once is the user's card to click: tell them in one line what waits on it; once a session
-ends, withdraw the card (`dismiss_task`) and, unless it started, start it yourself; give it
-never to a background agent without the user's OK. Where `start_session` is missing, `spawn_task` proposes
+ends, give the step to a free standby session on its model and withdraw the card (`dismiss_task`);
+with none, the card stays the user's; give it never to a background agent without the user's OK. Where `start_session` is missing, `spawn_task` proposes
 the session as a chip, coordination goes on with `SendMessage`, and `dismiss_task` withdraws it on
 the 10 minute wake.
 

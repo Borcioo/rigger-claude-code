@@ -1374,10 +1374,7 @@ class CheckTests(unittest.TestCase):
         # D22: a company file whose stem matches a general file overrides that file's sections.
         lay = self.layout
         good = lay.module("mod-a", {"rules/tests.md": ("## Tests\n\nx\n## Plans\n\np\n", "both")})
-        rows = [
-            ("renamed heading", {"rules/tests.md": ("## Testz\n\ny\n", "both")},
-             "orphan override tests.testz in acme/rules/tests.md: no lower section has that id; "
-             "closest general id tests.tests"),
+        rows = [  # a renamed heading in a file the general layer has is a stale override (StaleOverrideTests)
             ("empty section, new file", {"rules/fresh.md": ("## Fresh\n\n", "both")},
              "orphan override fresh.fresh in acme/rules/fresh.md: no lower section has that id"),
         ]
@@ -1476,6 +1473,220 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(len(pairs), 2)
         for (row, fix), name in zip(pairs, names):
             self.assertEqual(fix, "FIX\t%s\tclaude plugin install %s" % (row, name))
+
+
+class StaleOverrideTests(unittest.TestCase):
+    """D94: a company section in a file whose stem the general layer has, under an id that layer lacks."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.layout = Layout(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(str(self.tmp), ignore_errors=True)
+
+    def check(self, *roots):
+        return self.layout.cli("--check", "--modules", *[str(root) for root in roots])
+
+    def doctor_rows(self):
+        code, out, err = self.layout.cli("--doctor")
+        self.assertEqual(code, 0, out + err)
+        return [line.split("\t") for line in out.decode("utf-8").splitlines()
+                if line.startswith("CHECK\tstale-override")]
+
+    def lower(self):  # rigger-rules: the personal layer is read only with it enabled (D4)
+        return self.layout.module("rigger-rules", {"rules/tests.md": ("## Tests\n\nx\n## Plans\n\np\n", "both")})
+
+    def test_stale_override_names_the_id_and_both_files(self):
+        lay = self.layout
+        good = self.lower()
+        acme = lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        code, out, err = self.check(lay.core, good, acme)
+        self.assertEqual(code, 1, out + err)
+        lines = [l for l in out.decode("utf-8").splitlines() if " override " in l]
+        self.assertEqual(lines, ["stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no "
+                                 "such id, so both rules print; closest general id tests.tests"])
+
+    def test_matching_override_is_not_flagged(self):
+        lay = self.layout
+        good = self.lower()
+        # A second general file with that stem adds ids to the same layer: never an override.
+        more = lay.module("mod-b", {"rules/tests.md": ("## More tests\n\nm\n", "both")})
+        acme = lay.module("acme", {"rules/tests.md": ("## Plans\n\nours\n", "both"),
+                                   "rules/policy.md": ("## Policy\n\nnew\n", "both")}, layer="company")
+        # A second company file with a stem only the company layer has: no general file lies below it.
+        lay.module("acme-b", {"rules/policy.md": ("## Policy extra\n\ne\n", "both")}, layer="company")
+        lay.personal("tests.md", "## Tests\n\nmine\n")
+        lay.personal("notes.md", "## Notes\n\nmine\n")
+        code, out, err = self.check(lay.core, good, more, acme)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.doctor_rows(), [])
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [])
+
+    def test_personal_layer_adds_sections(self):
+        # D1: rules.d is additive (curate-lessons writes rules.d/lessons.md), so a new id there is no stale override.
+        lay = self.layout
+        self.lower()
+        lay.module("rigger-lessons", {"rules/lessons.md": ("## Lessons\n\nl\n", "both")})
+        lay.module("acme", {"rules/policy.md": ("## Policy\n\np\n", "both")}, layer="company")
+        lay.personal("lessons.md", "## Git\n\n- a lesson\n")
+        lay.personal("tests.md", "a line with no heading\n")  # tests._preamble
+        lay.personal("policy.md", "## Policy rules\n\nmine\n")  # over a company file
+        self.assertEqual(self.doctor_rows(), [])
+        found = lay.assemble()
+        self.assertEqual([n for n in found.notices if "stale" in n], [])
+        self.assertIn(b"- a lesson", lay.part(1))  # read, so the silence is not a skipped rules.d
+        lay.module("acme-b", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        self.assertEqual([row[1] for row in self.doctor_rows()], ["stale-override tests.testz"])  # company still fires
+
+    def test_doctor_shows_the_stale_override(self):
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        self.assertEqual(self.doctor_rows(), [
+            ["CHECK", "stale-override tests.testz", "WARN",
+             "stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no such id, so both "
+             "rules print", "assemble.py --doctor"]])
+        code, out, err = lay.cli("--doctor")
+        head = out.decode("utf-8").splitlines()[0].split("\t")
+        self.assertEqual(head[:3], ["CHECK", "rules-assembly", "OK"])  # the session notice has its own row
+
+    def test_session_notice_is_one_bounded_line(self):
+        # Nobody runs doctor daily: the session that gets both rules says so, in one line.
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n## Tests a\n\na\n## Tests b\n\nb\n## Tests c\n\nc\n",
+                                               "both")}, layer="company")
+        line = ("rigger: stale override tests.testz in acme/rules/tests.md, tests.tests-a in acme/rules/tests.md, "
+                "tests.tests-b in acme/rules/tests.md +1 more: the lower rules file has no such id, so both rules "
+                "print (run /rigger-core:doctor)")
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [line])
+        self.assertIn(line.encode("utf-8") + b"\n", lay.part(1))
+
+    def test_check_without_modules_reads_the_modules_a_session_reads(self):
+        # The overlay's 0 findings: --check alone looked only next to itself, never at RIGGER_MODULE_DIRS.
+        lay = self.layout
+        self.lower()
+        lay.plugins = self.tmp / "elsewhere"  # not next to rigger-core, where --check alone already looks
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        code, out, err = lay.cli("--check")
+        self.assertEqual(code, 1, out + err)
+        # Only that line: a module both next to rigger-core and in RIGGER_MODULE_DIRS is read once.
+        self.assertEqual([l for l in out.decode("utf-8").splitlines() if not l.startswith("#")],
+                         ["stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no such "
+                          "id, so both rules print; closest general id tests.tests"])
+        code, out, err = lay.cli("--check", RIGGER_MODULE_DIRS="")
+        self.assertEqual(code, 0, out + err)  # control: without the variable that module is not read
+        self.assertNotIn("acme", out.decode("utf-8"))
+
+
+class DependencyRowTests(unittest.TestCase):
+    """D96: doctor reads each enabled plugin's `dependencies`. Layouts as `claude plugin` 2.1.327 wrote them (Task 33
+    spike): known_marketplaces.json gives a directory marketplace's folder as `installLocation`, a bare dependency
+    resolves in the plugin's own marketplace, and install skips a cross-marketplace dependency the plugin's
+    marketplace does not allow."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.layout = Layout(self.tmp)
+        self.installed = {}
+        self.enabled = {}
+        self.known = {}
+
+    def tearDown(self):
+        shutil.rmtree(str(self.tmp), ignore_errors=True)
+
+    def marketplace(self, name, allow=None):
+        folder = self.tmp / ("mkt-" + name)
+        listing = {"name": name, "owner": {"name": "t"}, "plugins": []}
+        if allow is not None:
+            listing["allowCrossMarketplaceDependenciesOn"] = allow
+        write_json(folder / ".claude-plugin" / "marketplace.json", listing)
+        self.known[name] = {"source": {"source": "directory", "path": str(folder)}, "installLocation": str(folder)}
+
+    def plugin(self, key, deps=None, installed=True, enabled=True):
+        name, _, market = key.partition("@")
+        root = self.layout.config / "plugins" / "cache" / market / name / "0.1.0"
+        data = {"name": name, "version": "0.1.0"}
+        if deps is not None:
+            data["dependencies"] = deps
+        write_json(root / ".claude-plugin" / "plugin.json", data)
+        if installed:
+            self.installed[key] = [{"scope": "user", "installPath": str(root), "version": "0.1.0"}]
+        self.enabled[key] = enabled
+
+    def rows(self):
+        config = self.layout.config
+        write_json(config / "plugins" / "installed_plugins.json", {"version": 2, "plugins": self.installed})
+        write_json(config / "plugins" / "known_marketplaces.json", self.known)
+        write_json(config / "settings.json", {"enabledPlugins": self.enabled})
+        code, out, err = self.layout.cli("--doctor")
+        self.assertEqual(code, 0, out + err)
+        lines = out.decode("utf-8").splitlines()
+        return [line.split("\t") for line in lines if line.split("\t")[1].startswith("dependency ")]
+
+    def test_missing_dependency_is_an_error_row(self):
+        for name, installed, enabled in (("not installed", False, True), ("installed, disabled", True, False)):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.marketplace("core-fx")
+                self.plugin("mod-b@core-fx", ["core-a"])
+                self.plugin("core-a@core-fx", installed=installed, enabled=enabled)
+                self.assertEqual(self.rows(), [
+                    ["CHECK", "dependency mod-b@core-fx", "MISSING", "needs core-a@core-fx: not installed or not "
+                     "enabled, so mod-b@core-fx does not load", "assemble.py --doctor"],
+                    ["FIX", "dependency mod-b@core-fx", "claude plugin install core-a@core-fx"]])
+
+    def test_cross_marketplace_without_allowlist_names_the_fix(self):
+        self.marketplace("core-fx")
+        self.marketplace("company-fx")
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.assertEqual(self.rows(), [
+            ["CHECK", "dependency mod-b@company-fx", "MISSING", "needs core-a@core-fx: not installed or not enabled, "
+             "so mod-b@company-fx does not load; install skips it until company-fx's marketplace.json lists "
+             "\"core-fx\" in allowCrossMarketplaceDependenciesOn", "assemble.py --doctor"],
+            ["FIX", "dependency mod-b@company-fx", "claude plugin install core-a@core-fx"]])
+        self.tearDown()
+        self.setUp()  # control: with the allowlist the row is the plain missing row
+        self.marketplace("core-fx")
+        self.marketplace("company-fx", allow=["core-fx"])
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.assertEqual(self.rows()[0][3], "needs core-a@core-fx: not installed or not enabled, so mod-b@company-fx "
+                                            "does not load")
+
+    def test_a_string_allowlist_allows_nothing(self):
+        # marketplace.json is another maintainer's file: a string is a wrong shape, never a substring match (D2).
+        self.marketplace("core-fx")
+        self.marketplace("company-fx", allow="core-fx")
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.assertTrue(self.rows()[0][3].endswith("install skips it until company-fx's marketplace.json lists "
+                                                   "\"core-fx\" in allowCrossMarketplaceDependenciesOn"))
+
+    def test_dependency_present_is_ok(self):
+        self.marketplace("core-fx")
+        self.marketplace("company-fx")  # installed by hand, a dependency loads without the allowlist (spike q2)
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.plugin("core-a@core-fx")
+        self.assertEqual(self.rows(), [["CHECK", "dependency mod-b@company-fx", "OK",
+                                        "needs core-a@core-fx: installed and enabled", "assemble.py --doctor"]])
+
+    def test_a_plugin_without_dependencies_has_no_row(self):
+        self.marketplace("core-fx")
+        self.plugin("core-a@core-fx")
+        self.plugin("mod-c@core-fx", [])
+        self.plugin("mod-d@core-fx", ["core-z"], enabled=False)  # a disabled plugin is not checked
+        self.assertEqual(self.rows(), [])
+
+    def test_wrong_shapes_give_no_row(self):
+        # plugin.json is the plugin author's file: a shape doctor cannot read names no dependency.
+        for name, deps in (("a string", "core-z"), ("not strings", [1, {"name": "core-z"}, ""])):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.marketplace("core-fx")
+                self.plugin("mod-b@core-fx", deps)
+                self.assertEqual(self.rows(), [])
 
 
 if __name__ == "__main__":
