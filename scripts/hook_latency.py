@@ -128,12 +128,24 @@ def nearest_rank(values: List[float], pct: float) -> float:
 _LAUNCHER = []  # type: List[str]
 
 
-def git_bash() -> str:
-    sys.path.insert(0, str(ROOT / "plugins" / "rigger-core" / "tools" / "review-scope"))
+def _review_scope():
+    folder = str(ROOT / "plugins" / "rigger-core" / "tools" / "review-scope")
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
     import review_scope
+    return review_scope
+
+
+def find_git() -> str:
+    """git from an absolute PATH entry outside this repository and the working directory."""
+    return _review_scope().find_git(ROOT)
+
+
+def git_bash() -> str:
+    scope = _review_scope()
     try:
-        git = Path(review_scope.find_program("git", ROOT, (".exe",)))
-    except review_scope.ScopeError as error:
+        git = Path(scope.find_program("git", ROOT, (".exe",)))
+    except scope.ScopeError as error:
         raise RuntimeError("no Git Bash: %s" % error)
     for folder in (git.parent, git.parent.parent, git.parent.parent.parent):
         if (folder / "bin" / "bash.exe").is_file() and (folder / "usr" / "bin" / "bash.exe").is_file():
@@ -238,12 +250,22 @@ def _empty(folder: Path) -> Callable[[], None]:
 
 def _rows_written(folder: Path) -> Callable[[bytes], Optional[str]]:
     def check(out: bytes) -> Optional[str]:
-        rows = list(folder.glob("*.json")) if folder.is_dir() else []
+        rows = [json.loads(line) for path in (folder.glob("*.json") if folder.is_dir() else [])
+                for line in path.read_bytes().decode("utf-8").splitlines() if line.strip()]
         if out.strip():
             return "stdout not empty: %r" % out[:200]
-        if not rows or not all(row.read_bytes().strip() for row in rows):
+        if not rows:
             return "no row written in %s" % folder
-        return None
+        failed = [row for row in rows if "error" in (row.get("verdict"), row.get("contract"))]
+        return "the hook wrote an error row: %r" % failed[0] if failed else None
+    return check
+
+
+def _no_rows(folder: Path) -> Callable[[bytes], Optional[str]]:
+    def check(out: bytes) -> Optional[str]:
+        if out.strip():
+            return "stdout not empty: %r" % out[:200]
+        return "a row was written in %s" % folder if folder.is_dir() and any(folder.iterdir()) else None
     return check
 
 
@@ -252,6 +274,7 @@ class Context:
 
     def __init__(self, tmp: Path, plugins: Path, names: List[str]):
         self.tmp = tmp
+        self.git_global = _write(tmp / "gitconfig", b"")
         self.home = tmp / "home"
         self.home.mkdir()
         self.project = self.repo("project")
@@ -267,7 +290,6 @@ class Context:
                      for name, root in self.roots.items()}
         _write(self.config / "plugins" / "installed_plugins.json", json.dumps({"version": 2, "plugins": installed}))
         self.settings({})
-        self.git_global = _write(tmp / "gitconfig", b"")
         self._built = {}  # type: Dict[str, object]
 
     def settings(self, extra: dict) -> None:
@@ -282,15 +304,13 @@ class Context:
         return env
 
     def git(self, repo: Path, *args: str) -> None:
-        subprocess.run(["git", "-C", str(repo)] + list(args), env=self.git_env(), check=True,
+        subprocess.run([find_git(), "-C", str(repo)] + list(args), env=self.git_env(), check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=TIMEOUT)
 
     def repo(self, name: str) -> Path:
         path = self.tmp / name
         path.mkdir()
-        subprocess.run(["git", "init", "-q", str(path)], env=self.git_env() if hasattr(self, "git_global") else
-                       {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")},
-                       check=True, timeout=TIMEOUT)
+        self.git(path, "init", "-q")
         return path
 
     def base_env(self) -> dict:
@@ -504,16 +524,25 @@ def case_context_guard(ctx: Context, h: Handler) -> List[Variant]:
 
 def case_side_session_guard(ctx: Context, h: Handler) -> List[Variant]:
     ctx.state()
-    if h.event == "Stop":
-        return _sizes(lambda case, kind: Variant(case, ctx.stdin(
-            h, {"transcript_path": str(ctx.transcript(kind))}, SESSION), expect(b'"decision": "block"')))
     if h.matcher == "AskUserQuestion":
         ask = {"questions": [{"question": "Which one?", "options": [{"label": "a"}, {"label": "b"}]}]}
         return [Variant("match", ctx.stdin(h, {"tool_input": ask}, PLAN_SESSION), expect(b'"deny"')),
                 Variant("non-match", ctx.stdin(h, {"tool_input": ask}, SESSION), silent)]
-    return _sizes(lambda case, kind: Variant(case, ctx.stdin(
-        h, {"transcript_path": str(ctx.transcript(kind))}, SESSION), expect(SIDE.encode("ascii")))) + [
-        Variant("non-match", ctx.stdin(h, {"transcript_path": str(ctx.transcript("low"))}, SESSION), silent)]
+    found = expect(b'"decision": "block"') if h.event == "Stop" else expect(SIDE.encode("ascii"))
+    # From 1 MiB of transcript the guard keeps an offset cache beside the state file: `match-large` reads the
+    # whole transcript (cache removed before each run), `match-large-warm` only what it gained (nothing).
+    cache = ctx.config / "state" / (SESSION + ".side-guard.json")
+
+    def cold() -> None:
+        if cache.exists():
+            cache.unlink()
+
+    def call(kind: str) -> Callable[[], bytes]:
+        return ctx.stdin(h, {"transcript_path": str(ctx.transcript(kind))}, SESSION)
+    return [Variant("match", call("small"), found, prepare=cold),
+            Variant("match-large", call("large"), found, prepare=cold),
+            Variant("match-large-warm", call("large"), found),
+            Variant("non-match", call("low"), silent, prepare=cold)]
 
 
 def case_weak_test_guard(ctx: Context, h: Handler) -> List[Variant]:
@@ -609,9 +638,15 @@ def case_shell_guard(ctx: Context, h: Handler) -> List[Variant]:
 def case_stop_shadow(ctx: Context, h: Handler) -> List[Variant]:
     ctx.state()
     rows = ctx.data(h.plugin) / "turn-gate" / "rows"
-    return _sizes(lambda case, kind: Variant(case, ctx.stdin(
-        h, {"transcript_path": str(ctx.transcript(kind)), "last_assistant_message": "All done.",
-            "prompt_id": PROMPT_ID, "background_tasks": []}), _rows_written(rows), prepare=_empty(rows)))
+
+    def stop(kind: str, closing: str) -> Callable[[], bytes]:
+        return ctx.stdin(h, {"transcript_path": str(ctx.transcript(kind)), "last_assistant_message": closing,
+                             "prompt_id": PROMPT_ID, "background_tasks": []})
+    return _sizes(lambda case, kind: Variant(case, stop(kind, "All done."), _rows_written(rows),
+                                             prepare=_empty(rows))) + [
+        # A closing that claims nothing: the hook ends before it reads the transcript.
+        Variant("non-match", stop("large", "Here is the plan for the next step."), _no_rows(rows),
+                prepare=_empty(rows))]
 
 
 CASES = {

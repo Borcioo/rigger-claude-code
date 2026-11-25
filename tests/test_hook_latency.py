@@ -158,6 +158,26 @@ class LauncherTests(unittest.TestCase):
         else:                 # /bin/sh -c (Task 17 (c) on Linux; assumed on macOS)
             self.assertEqual(zero, "/bin/sh")
 
+    def test_without_git_bash_the_run_says_why(self):
+        tmp = Path(tempfile.mkdtemp(prefix="hook-latency-test-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        empty, lone = tmp / "empty", tmp / "Git" / "cmd"
+        empty.mkdir()
+        lone.mkdir(parents=True)
+        (lone / "git.exe").write_bytes(b"")
+        os.chmod(str(lone / "git.exe"), 0o755)
+        rows = [(empty, "no Git Bash: git not found"), (lone, "no Git Bash: no bin\\bash.exe with usr\\bin\\bash.exe")]
+        saved = os.environ.get("PATH")
+        try:
+            for folder, reason in rows:
+                with self.subTest(reason=reason):
+                    os.environ["PATH"] = str(folder)
+                    with self.assertRaises(RuntimeError) as caught:
+                        hl.git_bash()
+                    self.assertIn(reason, str(caught.exception))
+        finally:
+            os.environ["PATH"] = saved
+
 
 class NearestRankTests(unittest.TestCase):
     def test_nearest_rank(self):
