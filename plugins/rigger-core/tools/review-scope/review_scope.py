@@ -466,7 +466,8 @@ def _verdict(path, status, at_base, at_head, blobs, rules):
         return VENDORED
     if at_base is not None and name.endswith(MINIFIED):
         return GENERATED
-    if head_prefix is not None and _marked(head_prefix) and base_prefix is not None and _marked(base_prefix):
+    # The base blob is read only for a head blob with a NUL byte (returned above) or a marker.
+    if base_prefix is not None and _marked(base_prefix):
         return GENERATED
     return REVIEW
 
