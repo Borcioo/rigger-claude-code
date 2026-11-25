@@ -54,6 +54,9 @@ TALK_DEFAULTS = {"reply_language": LANGUAGE_DEFAULT, "reply_lines": "5", "report
 DUPLICATE = "rigger: rule id {id} in {a} and {b}; kept {a}"
 OVERRIDE = "rigger: {file} replaces rule {id}"
 STALE = "stale override {id} in {file}: {lower} has no such id, so both rules print"
+STALE_NOTICE = ("rigger: stale override {items}: the lower rules file has no such id, so both rules print "
+                "(run /rigger-core:doctor)")
+STALE_SHOWN = 3  # ids the session notice names before "+N more"
 SECOND_TABLE_NOTICE = "rigger: second trigger table in {where} not shown; the first one holds every row"
 SLOTS_ID = "slots.slots"
 # Names the Bash tool: the PowerShell tool finds no `sh` to run it.
@@ -97,7 +100,7 @@ class Assembly:
     skipped: bool = False
     slot_rows: List[slots.Row] = field(default_factory=list)
     trusted: FrozenSet[str] = frozenset()
-    stale: List[Tuple[str, str]] = field(default_factory=list)  # (section id, STALE line), D94
+    stale: List[Tuple[str, str, str]] = field(default_factory=list)  # (section id, file, STALE line), D94
 
 
 @dataclass
@@ -463,7 +466,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
     entries = []  # type: List[_Entry]
     index = {}  # type: Dict[str, int]
     below = {"general": {}, "company": {}}  # type: Dict[str, _Lower]
-    stale = []  # type: List[Tuple[str, str]]
+    stale = []  # type: List[Tuple[str, str, str]]
     for layer in ("general", "company"):
         for module in modules:
             for rule in module.rules:
@@ -479,7 +482,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
                 for section in split(_stem(rule.file), data):
                     line = stale_override(layer, section.stem, section.id, where, below["general"])
                     if line:
-                        stale.append((section.id, line))
+                        stale.append((section.id, where, line))
                     _note_lower(below[layer], section.stem, where, section.id)
                     _place(entries, index, _Entry(section.id, layer, module, rule.file, section.text, rule.audience,
                                                   section.heading, rule.requires), notices)
@@ -507,7 +510,7 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
             for section in split(_stem(name), piece):
                 line = stale_override(PERSONAL, section.stem, section.id, file, lower)
                 if line:
-                    stale.append((section.id, line))
+                    stale.append((section.id, file, line))
                 _place(entries, index, _Entry(section.id, PERSONAL, None, file, section.text,
                                               "main" if main_only else "both", section.heading), notices)
     ordered = entries + extra  # the left-out line ends the personal text
@@ -555,8 +558,17 @@ def assemble(inputs: Inputs, audience: str, agent_type: Optional[str] = None,
             sections.append({"id": entry.id, "layer": entry.layer,
                              "module": entry.module.name if entry.module is not None else PERSONAL,
                              "file": entry.file, "audience": entry.audience})
+    stale = list(dict.fromkeys(stale))
+    if stale:
+        notices.append(_stale_notice(stale))
     return Assembly(blocks, notices, sections, rows, resolved, discovery, slot_rows=slot_rows, trusted=trusted,
-                    stale=list(dict.fromkeys(stale)))
+                    stale=stale)
+
+
+def _stale_notice(stale: List[Tuple[str, str, str]]) -> str:
+    items = ", ".join("%s in %s" % (_shown(section_id), _shown(file, 300)) for section_id, file, _ in stale[:STALE_SHOWN])
+    more = len(stale) - STALE_SHOWN
+    return STALE_NOTICE.format(items=items + (" +%d more" % more if more > 0 else ""))
 
 
 def part_bodies(found: Assembly, subagent: bool, count: Optional[int] = None) -> List[bytes]:
@@ -880,6 +892,14 @@ def _same_plugin(root: Path, name: object) -> bool:
     return name is not None and isinstance(other, dict) and other.get("name") == name
 
 
+def _module_name(root: Path) -> object:
+    try:
+        data = _read_json(root / "rigger-module.json")
+    except _Unreadable:
+        return None
+    return data.get("name") if isinstance(data, dict) else None
+
+
 def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
     inputs = _inputs(environ, {})
     if "--modules" in argv:
@@ -893,6 +913,12 @@ def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
         name = own.get("name") if isinstance(own, dict) else None
         # In an installed cache the siblings are other versions of this plugin: only the running one is checked.
         dirs = [d for d in dirs if d == inputs.self_root or not _same_plugin(d, name)]
+        # D94: the modules a session reads too (RIGGER_MODULE_DIRS, the installed list); a sibling keeps its name.
+        names = {_module_name(d) for d in dirs}
+        for module in discover(inputs.config_dir, inputs.project_dir, environ, inputs.self_root).modules:
+            if module.origin != PERSONAL and module.name not in names:
+                names.add(module.name)
+                dirs.append(module.root)
     findings, info, count, files = check(dirs, inputs.self_root)
     lines = info + findings
     if not findings:
@@ -1054,7 +1080,9 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
             if line in found.notices and line not in own:
                 own.add(line)
                 rows.append(("rule-override " + _shown(section["id"]), "INFO", line[len("rigger: "):]))
-    for section_id, line in found.stale:  # D94: both rules print, so the row warns
+    if found.stale:
+        own.add(_stale_notice(found.stale))  # the session notice: these rows stand for it
+    for section_id, _, line in found.stale:  # D94: both rules print, so the row warns
         rows.append(("stale-override " + _shown(section_id), "WARN", _shown(line, 300)))
     fixes = {}  # type: Dict[int, str]  by position in rows: two long names can show as one row name
     expects = found.resolved.effective.get("expects") if found.resolved is not None else None

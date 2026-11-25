@@ -1519,6 +1519,7 @@ class StaleOverrideTests(unittest.TestCase):
         code, out, err = self.check(lay.core, good, more, acme)
         self.assertEqual(code, 0, out + err)
         self.assertEqual(self.doctor_rows(), [])
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [])
 
     def test_personal_layer_too(self):
         lay = self.layout
@@ -1542,6 +1543,37 @@ class StaleOverrideTests(unittest.TestCase):
             ["CHECK", "stale-override tests.testz", "WARN",
              "stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no such id, so both "
              "rules print", "assemble.py --doctor"]])
+        code, out, err = lay.cli("--doctor")
+        head = out.decode("utf-8").splitlines()[0].split("\t")
+        self.assertEqual(head[:3], ["CHECK", "rules-assembly", "OK"])  # the session notice has its own row
+
+    def test_session_notice_is_one_bounded_line(self):
+        # Nobody runs doctor daily: the session that gets both rules says so, in one line.
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        lay.personal("tests.md", "## Tests a\n\na\n## Tests b\n\nb\n## Tests c\n\nc\n## Tests d\n\nd\n")
+        line = ("rigger: stale override tests.testz in acme/rules/tests.md, tests.tests-a in rules.d/tests.md, "
+                "tests.tests-b in rules.d/tests.md +2 more: the lower rules file has no such id, so both rules "
+                "print (run /rigger-core:doctor)")
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [line])
+        self.assertIn(line.encode("utf-8") + b"\n", lay.part(1))
+
+    def test_check_without_modules_reads_the_modules_a_session_reads(self):
+        # The overlay's 0 findings: --check alone looked only next to itself, never at RIGGER_MODULE_DIRS.
+        lay = self.layout
+        self.lower()
+        lay.plugins = self.tmp / "elsewhere"  # not next to rigger-core, where --check alone already looks
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        code, out, err = lay.cli("--check")
+        self.assertEqual(code, 1, out + err)
+        # Only that line: a module both next to rigger-core and in RIGGER_MODULE_DIRS is read once.
+        self.assertEqual([l for l in out.decode("utf-8").splitlines() if not l.startswith("#")],
+                         ["stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no such "
+                          "id, so both rules print; closest general id tests.tests"])
+        code, out, err = lay.cli("--check", RIGGER_MODULE_DIRS="")
+        self.assertEqual(code, 0, out + err)  # control: without the variable that module is not read
+        self.assertNotIn("acme", out.decode("utf-8"))
 
 
 if __name__ == "__main__":
