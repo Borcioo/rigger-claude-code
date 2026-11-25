@@ -29,7 +29,8 @@ MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows")
 PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
 # Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
-PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
+PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk",
+                           "rigger-review", "rigger-testing")
 
 
 def load_json(path):
@@ -459,8 +460,7 @@ class HookFileTests(unittest.TestCase):
                     self.assertEqual(proc.stdout, b"")
                     self.assertTrue(proc.stderr, "the command never ran")
                     checked.append(plugin.name)
-        self.assertEqual(sorted(checked), ["rigger-lessons", "rigger-rules", "rigger-talk", "rigger-windows",
-                                           "rigger-wp"])
+        self.assertEqual(sorted(checked), sorted(PLUGINS_WITH_CORE_CHECK))
 
     def test_pretooluse_commands_still_deny_with_their_exit_zero(self):
         event = json.dumps(
@@ -557,9 +557,9 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 16)
+        self.assertEqual(len(names), moved + 18)
         self.assertEqual(names.count("state.py"), 1)
-        self.assertEqual(names.count("core_check.sh"), 4)
+        self.assertEqual(names.count("core_check.sh"), 6)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
