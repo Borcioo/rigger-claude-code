@@ -497,14 +497,19 @@ STUB_OK = ("import json, os, sys\n"
            "print('second line')\n")
 STUB_EXIT = "print('RENDERED-MARK half')\nraise SystemExit(3)\n"
 STUB_EMPTY = "pass\n"
-STUB_SLEEP = ("import os, subprocess, sys, time\n"
-              "child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'])\n"
+STUB_SLEEP = ("import os, subprocess, sys, time\n"  # its grandchild holds no pipe: only a tree stop ends it
+              "child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'],\n"
+              "                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
               "with open(os.environ['RENDER_GRANDCHILD'] + '.tmp', 'w') as handle:\n"
               "    handle.write(str(child.pid))\n"
               "os.replace(os.environ['RENDER_GRANDCHILD'] + '.tmp', os.environ['RENDER_GRANDCHILD'])\n"
               "print('RENDERED-MARK late', flush=True)\n"
               "time.sleep(60)\n")
-STUB_CLOSED = "import os, time\nos.write(1, b'RENDERED-MARK early')\nos.close(1)\ntime.sleep(60)\n"
+STUB_ORPHAN = ("import os, subprocess, sys\n"  # exits at once; its grandchild keeps the output pipe open
+               "child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'], stdout=sys.stdout)\n"
+               "with open(os.environ['RENDER_ORPHAN'], 'w') as handle:\n"
+               "    handle.write(str(child.pid))\n")
+STUB_CLOSED ="import os, time\nos.write(1, b'RENDERED-MARK early')\nos.close(1)\ntime.sleep(60)\n"
 CAP = 100  # the patched RENDER_CAP of the bound rows
 
 
@@ -521,13 +526,16 @@ class RenderTests(Base):
         super().setUp()
         write(self.config / "CLAUDE.md", "# Global\n")  # a raw file in every corpus, whatever the plugin list holds
         self.record, self.grandchild = self.tmp / "render-record.json", self.tmp / "grandchild.pid"
+        self.orphan = self.tmp / "orphan.pid"
         self.env = dict(self.env, RENDER_RECORD=str(self.record), RENDER_GRANDCHILD=str(self.grandchild),
+                        RENDER_ORPHAN=str(self.orphan),
                         CLAUDE_PLUGIN_ROOT=str(PLUGIN))  # a hook's environment names rigger-lessons' root
-        self.addCleanup(self.stop_grandchild)
+        self.addCleanup(self.stop_grandchildren)
 
-    def stop_grandchild(self):
-        if self.grandchild.exists() and stub_claude.alive(int(read(self.grandchild))):
-            os.kill(int(read(self.grandchild)), 9)
+    def stop_grandchildren(self):
+        for path in (self.grandchild, self.orphan):
+            if path.exists() and read(path) and stub_claude.alive(int(read(path))):
+                os.kill(int(read(path)), 9)
 
     def core(self, name, script):
         root = self.tmp / "cache" / "rigger" / name
@@ -589,7 +597,9 @@ class RenderTests(Base):
                                           lines.append)
         self.assertIsNotNone(path, lines)
         first = read(path).split("\n", 1)[0]
-        self.assertEqual(first, "Plugin root: %s" % (copy.as_posix() if os.name == "nt" else str(copy)))
+        self.assertTrue(first.startswith("Plugin root: "), first)
+        # Compared by identity: the assembler resolves its own path (/private/var on macOS).
+        self.assertTrue(os.path.samefile(first[len("Plugin root: "):], str(copy)), first)
 
     def test_render_failures_fall_back_to_raw_text_in_time(self):
         ok = str(self.core("ok", STUB_OK))
@@ -621,6 +631,8 @@ class RenderTests(Base):
             ("exit 3", core_with(STUB_EXIT), "exit 3"),
             ("a stub that sleeps", core_with(STUB_SLEEP), "timeout after 1 s"),
             ("a stub that closes its output and sleeps", core_with(STUB_CLOSED), "timeout after 1 s"),
+            ("a stub that exits and leaves a grandchild holding its output", core_with(STUB_ORPHAN),
+             "timeout after 1 s"),
             ("output over the cap", core_with(stub_bytes(CAP + 1)), "over %d bytes" % CAP),
             ("no output", core_with(STUB_EMPTY), "no output"),
         ]
@@ -640,6 +652,7 @@ class RenderTests(Base):
                     if (self.config / name).exists():
                         (self.config / name).unlink()
                 with mock.patch.object(lessons_batch, "RENDER_TIMEOUT", 1), \
+                        mock.patch.object(lessons_batch, "RENDER_KILL_WAIT", 1), \
                         mock.patch.object(lessons_batch, "RENDER_CAP", CAP), working_directory(self.tmp):
                     code, corpus, log, seconds = self.run_with_corpus()
                 self.assertEqual(code, 0, log)
@@ -647,7 +660,7 @@ class RenderTests(Base):
                 self.assertNotIn(RENDER_MARK, corpus)
                 self.assertNotIn("rendered rules in use", corpus)
                 self.assertIn("===== FILE: %s\n" % (self.config / "CLAUDE.md").as_posix(), corpus)
-                self.assertLess(seconds, 1 + 5)
+                self.assertLess(seconds, 1 + 2 * 1 + 5)  # timeout, two kill waits, and the run's own work
         # The sleeping stub's grandchild is stopped with it.
         self.assertTrue(self.grandchild.exists())
         self.assertFalse(stub_claude.alive(int(read(self.grandchild))), "the render's grandchild left running")
@@ -660,6 +673,13 @@ class RenderTests(Base):
             path = lessons_batch.render_rules(self.config, run_dir, dict(self.env), lambda text: None)
         self.assertIsNotNone(path)
         self.assertEqual(len(path.read_bytes()), CAP)
+
+    def test_render_that_cannot_start_falls_back(self):
+        self.installed({"plugins": {"rigger-core@rigger": [{"installPath": str(self.core("start", STUB_OK))}]}})
+        lines = []
+        with mock.patch.object(lessons_batch.subprocess, "Popen", side_effect=OSError("no such program")):
+            path = lessons_batch.render_rules(self.config, self.tmp, dict(self.env), lines.append)
+        self.assertEqual((path, lines), (None, ["rendered rules: unavailable (start failed (OSError))"]))
 
     def test_render_runs_without_a_shell(self):
         """An installPath holding `;`, spaces and `%OS%` (which cmd.exe expands) is one argument to the program."""

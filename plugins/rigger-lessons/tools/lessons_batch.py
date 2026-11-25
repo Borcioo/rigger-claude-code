@@ -49,6 +49,7 @@ SPAWN_LOG_LIMIT = 1 << 20
 RENDER_TIMEOUT = 30
 RENDER_CAP = 1_000_000
 RENDER_CHUNK = 65536
+RENDER_KILL_WAIT = 10  # seconds for the reader and the process after the tree is stopped
 RENDERED_NAME = "rules-rendered.md"
 ARCHIVE_NAME, QUEUE_NAME = "lessons-archive.md", "lessons-proposals.md"
 RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9]+")
@@ -369,7 +370,10 @@ def _assembler(config: Path):
 def render_rules(config: Path, run_dir: Path, env: dict, log) -> Path | None:
     """rigger-core's `assemble.py --render` output, CRLF made LF, as run_dir/rules-rendered.md; None, with one
     `rendered rules: unavailable (<reason>)` line, on any failure. No shell; stdout is read by one thread and
-    counted: past RENDER_TIMEOUT seconds or RENDER_CAP bytes the whole process tree is stopped. The hook's
+    counted: past RENDER_TIMEOUT seconds or RENDER_CAP bytes the whole process tree is stopped, and the call
+    returns within RENDER_TIMEOUT plus twice RENDER_KILL_WAIT (plus the stop itself) even when a process outside
+    the tree still holds the pipe. Known limit: on Windows a grandchild whose parent has already exited is not
+    in the tree `taskkill /T` finds, so it outlives the call. The hook's
     CLAUDE_PLUGIN_ROOT is left out of `env`: it names rigger-lessons, which the assembler would take for the core."""
     def unavailable(reason):
         log("rendered rules: unavailable (%s)" % reason)
@@ -412,12 +416,13 @@ def render_rules(config: Path, run_dir: Path, env: dict, log) -> Path | None:
             stopped = "timeout after %g s" % timeout
     if stopped:
         batch_model._kill_tree(proc)
-        reader.join(batch_model.KILL_WAIT)
+        reader.join(RENDER_KILL_WAIT)
         try:
-            proc.wait(batch_model.KILL_WAIT)
+            proc.wait(RENDER_KILL_WAIT)
         except subprocess.TimeoutExpired:
             pass
-    proc.stdout.close()
+    if not reader.is_alive():  # closing the pipe under a blocked read would wait for whoever still holds it
+        proc.stdout.close()
     if stopped:
         return unavailable(stopped)
     if proc.returncode != 0:
