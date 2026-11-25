@@ -117,8 +117,8 @@ failure on the stronger model goes to the user with the diagnosis.
   file-disjoint. Every count, line number, baseline or code value a plan or brief
   names comes from a command run now and pasted (`git ls-files` for file counts, the gate's own
   scanner for lines), or from reading every route that sets the value, never from a summary. A count passed between
-  agents names its unit and the tree or commit it was counted on; recount an agent's total before
-  relaying it.
+  agents names its unit and the tree or commit it was counted on; recount an agent's total, and have a
+  read-only reviewer re-measure a sample of a builder's own visual measurements, before relaying it.
 - After the first fix round, dispatch a fresh implementation agent (brief + last report) instead of
   resuming.
 - A report whose first line is `STATUS: PARTIAL` or `STATUS: BLOCKED` is accepted only with the exact call, its raw output and one
