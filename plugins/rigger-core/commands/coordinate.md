@@ -77,9 +77,9 @@ one full gate runs on the machine at a time.
    `move <part> reviewed` comes after the second round: a fresh agent of the `reviewer` slot
    reviews again after the first fix round (`orchestrating-subagents`, Fix rounds). With the
    `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install line from
-   the session notice, or the slot's own notice when there is none; never skip the review or give
-   it to an agent outside the slot. That part
-   stays `built`; set `stop: goal-unreachable` and ask the user to fill the slot as that notice says (step 6).
+   the session notice, or the `slot reviewer` line `/rigger-core:doctor` prints when there is none;
+   never skip the review or give it to an agent outside the slot. That part
+   stays `built`; set `stop: goal-unreachable` and ask the user to fill the slot as that line says (step 6).
 5. Merge each reviewed part into the integration branch (the approved plan is
    the user's OK; the default branch only on their explicit instruction, at
    `stop: main`, also when it is the integration branch), and call
