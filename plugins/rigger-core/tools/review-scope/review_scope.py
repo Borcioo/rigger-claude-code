@@ -551,9 +551,12 @@ def scope(repo, base, head, rules=()):
 def _newly_named(entry):
     # type: (TreeEntry) -> str
     """NEWLY_NAMED, or a variant that says why the file is not to be read: a link leads wherever its target
-    points, and a file over TEXT_CAP is one a later review drops."""
+    points, any other entry that is not a regular file (a submodule commit) holds no rules text, and a file
+    over TEXT_CAP is one a later review drops."""
     if entry[0] == LINK:
         return NEWLY_NAMED + " (link)"
+    if entry[0] not in REGULAR:
+        return NEWLY_NAMED + " (not a regular file)"
     if entry[2] > TEXT_CAP:
         return NEWLY_NAMED + " (over %d bytes)" % TEXT_CAP
     return NEWLY_NAMED
