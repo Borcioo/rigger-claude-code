@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "readers": {
+    "plugins/rigger-core/tools/assemble/tests/test_assemble.py": ["*"],
+    "plugins/rigger-core/tools/assemble/tests/test_config.py": ["rigger-lessons", "rigger-windows"],
+    "plugins/rigger-core/tools/assemble/tests/test_discover.py": ["rigger-lessons", "rigger-rules", "rigger-talk", "rigger-wp"],
+    "plugins/rigger-core/tools/assemble/tests/test_render.py": ["rigger-rules", "rigger-windows", "rigger-wp"],
+    "plugins/rigger-core/tools/assemble/tests/test_sections.py": ["*"],
+    "plugins/rigger-core/tools/assemble/tests/test_slots.py": ["rigger-lessons", "rigger-windows", "rigger-wp"],
+    "plugins/rigger-core/tools/assemble/tests/test_stub_session.py": ["rigger-lessons", "rigger-panel", "rigger-rules", "rigger-talk", "rigger-windows", "rigger-wp"],
+    "plugins/rigger-core/tools/coord-state/tests/test_coordinate_host_stub.py": ["rigger-rules"],
+    "plugins/rigger-core/tools/doctor/tests/": ["rigger-lessons", "rigger-rules", "rigger-windows"],
+    "plugins/rigger-core/tools/env-check/tests/test_env_check.py": ["rigger-panel"],
+    "plugins/rigger-core/tools/harness_start/tests/test_harness_start.py": ["rigger-rules"],
+    "plugins/rigger-core/tools/report-gate/tests/test_report_shadow.py": ["rigger-lessons"],
+    "plugins/rigger-core/tools/token-audit/tests/test_archive.py": ["*"],
+    "plugins/rigger-lessons/tests/test_batch_apply.py": ["rigger-rules"],
+    "plugins/rigger-lessons/tests/test_lessons_batch.py": ["rigger-core", "rigger-rules"],
+    "plugins/rigger-lessons/tests/test_lessons_lint.py": ["*"],
+    "plugins/rigger-lessons/tests/test_lessons_rules.py": ["rigger-core"],
+    "plugins/rigger-lessons/tests/test_proposal_check.py": ["rigger-rules"],
+    "plugins/rigger-rules/tests/test_core_check.py": ["rigger-core", "rigger-lessons", "rigger-talk", "rigger-windows", "rigger-wp"],
+    "plugins/rigger-rules/tests/test_plugin_rules.py": ["*"],
+    "plugins/rigger-rules/tests/test_reinject.py": ["*"],
+    "plugins/rigger-rules/tests/test_rules_hooks.py": ["*"],
+    "plugins/rigger-talk/tests/test_talk.py": ["rigger-core"],
+    "plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py": ["*"],
+    "plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py": ["*"]
+  }
+}

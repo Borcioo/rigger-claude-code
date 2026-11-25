@@ -2,7 +2,7 @@
 
 Usage: python -I scripts/run_tests.py [--no-claude] [--min-files N] [--jobs N] [--agent]
                                       [--fix-round [--base REV]] [--control]
-       python -I scripts/run_tests.py --changed-modules [--base REV] [--no-claude] [--jobs N]
+       python -I scripts/run_tests.py --changed-modules [--base REV | --changed-from FILE] [--no-claude] [--jobs N]
 
 Discovers tests/test_*.py, plugins/*/tests/test_*.py and plugins/*/tools/*/tests/test_*.py and
 runs each as `<python> -I -X utf8 <file>` from the repo root, in an environment without CLAUDE_*
@@ -51,11 +51,18 @@ and the `# files` line ends with `, load-only N`. One that fails again stays fai
               failure or an ALWAYS_RUN file that is not there prints one line and exits 2 with
               nothing run: only the gate says anything
               then. Otherwise it runs the test files of each changed module and of each module whose
-              plugin.json dependencies reach one, plus ALWAYS_RUN, then the sweep with
+              plugin.json dependencies reach one, plus ALWAYS_RUN, plus every file whose entry in
+              tests/read_by.json names such a module or "*" and every tests/test_*.py the map does
+              not list (a read-by map it cannot use exits 2 too), then the sweep with
               --no-denylist and its control (the gate's planted file, in a temp folder). Exit 0
               only when every file passed, the sweep printed "# files N, findings 0" with N > 0
               and the control found the planted line, else 1. --fix-round, --control and --agent are
               refused next to it.
+--changed-from
+              with --changed-modules only: the changed paths come from FILE (one per line, UTF-8, as
+              scripts/gate.py --changed-modules writes it), git never runs, and the sweep and its
+              control are left to the gate's sweep legs. A missing, unreadable or non-UTF-8 file, a
+              NUL byte or no path in it exits 2.
 """
 
 import argparse
@@ -73,7 +80,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 PATTERNS = (
@@ -124,6 +131,8 @@ ALWAYS_RUN = (
     "plugins/rigger-rules/tests/test_plugin_rules.py",
 )
 MODULE_MANIFEST = "rigger-module.json"
+# Which test files read another module's files: --changed-modules runs them when that module changes.
+READ_BY = "tests/read_by.json"
 # The file the sweep controls of the gate and of --changed-modules must report (see plant).
 PLANTED = "planted.md"
 SWEEP_COUNT_RE = re.compile(r"^# files (\d+), findings (\d+)", re.M)
@@ -560,6 +569,59 @@ def changed_modules(root: Path, changed: List[str]) -> Tuple[List[str], Optional
     return sorted(names | dependents(root, names)), shared
 
 
+def read_by(root: Path) -> Dict[str, FrozenSet[str]]:
+    """READ_BY as test file -> the modules it reads ("*": all), folder keys expanded over discover(root).
+
+    Raises ValueError on a missing or unreadable file, another format, an unknown module or a key that
+    matches no discovered test file. Keys and paths are compared by "/" segments."""
+    try:
+        data = json.loads((root / READ_BY).read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        raise ValueError("%s: missing" % READ_BY)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise ValueError("%s: unreadable: %s" % (READ_BY, error))
+    if not isinstance(data, dict) or set(data) != {"format", "readers"} or data["format"] != 1 \
+            or isinstance(data["format"], bool) or not isinstance(data["readers"], dict):
+        raise ValueError('%s: not format 1 ({"format": 1, "readers": {...}})' % READ_BY)
+    modules = set(module_names(root)) | {"*"}
+    tests = [path.relative_to(root).as_posix() for path in discover(root)]
+    result = {}
+    for key, reads in data["readers"].items():
+        if not isinstance(reads, list) or not reads or not all(isinstance(name, str) for name in reads):
+            raise ValueError("%s: %s: not a list of module names" % (READ_BY, key))
+        unknown = sorted(set(reads) - modules)
+        if unknown:
+            raise ValueError("%s: %s: unknown module %s" % (READ_BY, key, unknown[0]))
+        if key.endswith("/"):
+            prefix = key[:-1].split("/")
+            matched = [rel for rel in tests if rel.split("/")[: len(prefix)] == prefix]
+        else:
+            matched = [rel for rel in tests if rel == key]
+        if not matched:
+            raise ValueError("%s: key %s matches no test file" % (READ_BY, key))
+        for rel in matched:
+            result[rel] = result.get(rel, frozenset()) | frozenset(reads)
+    return result
+
+
+def selected_files(root: Path, names: Set[str]) -> List[Path]:
+    """The --changed-modules selection: the files of `names`, ALWAYS_RUN, every file whose READ_BY entry
+    meets `names` or holds "*", and every tests/test_*.py the map does not list (it reads every module)."""
+    readers = read_by(root)
+    files = []
+    for path in discover(root):
+        rel = path.relative_to(root).as_posix()
+        parts = rel.split("/")
+        if rel in ALWAYS_RUN or (parts[0] == "plugins" and parts[1] in names):
+            files.append(path)
+        elif rel in readers:
+            if "*" in readers[rel] or readers[rel] & names:
+                files.append(path)
+        elif len(parts) == 2 and parts[0] == "tests" and parts[1].startswith("test_") and parts[1].endswith(".py"):
+            files.append(path)
+    return files
+
+
 def plant(out):
     """A file the sweep must report. Built here: a literal path in this file would be a finding."""
     path = out / PLANTED
@@ -594,23 +656,53 @@ def run_sweep(root, env, log, files=(), show=True):
     return (int(counts[-1][0]), int(counts[-1][1])), done.returncode
 
 
-def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int:
-    """A local pre-check, not a gate: the tests of the changed modules, their dependents and ALWAYS_RUN, then the sweep."""
-    spec = importlib.util.spec_from_file_location("select_tests", Path(__file__).with_name("select_tests.py"))
-    selector = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(selector)
+def read_changed_list(path) -> List[str]:
+    """The repository-relative paths of a --changed-from file, one per line; ValueError says why it cannot be used."""
     try:
-        changed = selector.changed_files(root, base)
-    except (OSError, subprocess.SubprocessError) as error:
-        detail = (getattr(error, "stderr", None) or "").strip() or str(error)
-        tell("changed-modules: git failed: %s; run the gate" % " ".join(detail.split()), log)
-        return 2
+        data = Path(path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError("missing")
+    except OSError as error:
+        raise ValueError("unreadable: %s" % error)
+    if b"\0" in data:
+        raise ValueError("holds a NUL byte")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("not UTF-8")
+    changed = [line for line in text.split("\n") if line]
+    if not changed:
+        raise ValueError("no path in it")
+    return changed
+
+
+def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log, changed_from=None) -> int:
+    """A local pre-check, not a gate: the tests of the changed modules, their dependents and ALWAYS_RUN, then the sweep.
+
+    With `changed_from` the changed paths come from that file, no git runs and the sweep is left to the gate's legs."""
+    if changed_from is not None:
+        try:
+            changed = read_changed_list(changed_from)
+        except ValueError as error:
+            tell("changed-modules: changed list %s: %s; run the gate" % (changed_from, error), log)
+            return 2
+    else:
+        spec = importlib.util.spec_from_file_location("select_tests", Path(__file__).with_name("select_tests.py"))
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        try:
+            changed = selector.changed_files(root, base)
+        except (OSError, subprocess.SubprocessError) as error:
+            detail = (getattr(error, "stderr", None) or "").strip() or str(error)
+            tell("changed-modules: git failed: %s; run the gate" % " ".join(detail.split()), log)
+            return 2
     names, shared = changed_modules(root, changed)
     if shared is not None:
         tell("changed-modules: shared file %s; run the gate" % shared, log)
         return 2
+    source = "base %s" % base if changed_from is None else "list %s" % changed_from
     tell(
-        "# changed-modules: base %s, changed %d, modules %s" % (base, len(changed), ", ".join(names) or "none"),
+        "# changed-modules: %s, changed %d, modules %s" % (source, len(changed), ", ".join(names) or "none"),
         log,
     )
     discovered = discover(root)
@@ -619,14 +711,16 @@ def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int
     if missing:
         tell("changed-modules: always-run file %s not found; run the gate" % missing[0], log)
         return 2
-    selected = set(names)
-    files = []
-    for path in discovered:
-        rel = path.relative_to(root).as_posix()
-        parts = rel.split("/")
-        if rel in ALWAYS_RUN or (parts[0] == "plugins" and parts[1] in selected):
-            files.append(path)
+    try:
+        files = selected_files(root, set(names))
+    except ValueError as error:
+        tell("changed-modules: read-by map: %s; run the gate" % error, log)
+        return 2
     code = run_suite([files], env, root, jobs, 1, log)
+    if changed_from is not None:
+        # The sweep reads the git index, which WSL git cannot open in a Windows worktree; the gate sweeps on the host.
+        tell("# changed-modules: sweep left to the gate's sweep legs", log)
+        return 1 if code != 0 else 0
     counts, sweep_exit = run_sweep(root, env, log)
     if counts is None:
         tell("# changed-modules: sweep printed no count (exit %d)" % sweep_exit, log)
@@ -732,10 +826,16 @@ def main(argv=None, root=ROOT):
     parser.add_argument(
         "--changed-modules", action="store_true", help="local pre-check: the changed modules' tests, never a gate"
     )
+    parser.add_argument(
+        "--changed-from", metavar="FILE", default=None,
+        help="with --changed-modules: the changed paths, one per line, instead of asking git",
+    )
     args = parser.parse_args(argv)
     for flag, value in (("--fix-round", args.fix_round), ("--control", args.control), ("--agent", args.agent)):
         if args.changed_modules and value:
             parser.error("--changed-modules cannot be combined with %s" % flag)
+    if args.changed_from is not None and not args.changed_modules:
+        parser.error("--changed-from needs --changed-modules")
     env = clean_env(os.environ, no_claude=args.no_claude)
 
     if args.control:
@@ -755,7 +855,7 @@ def main(argv=None, root=ROOT):
         return 1
     jobs = args.jobs if args.jobs is not None else min(JOBS, os.cpu_count() or 1)
     if args.changed_modules:
-        return run_changed_modules(root, args.base, env, jobs, None)
+        return run_changed_modules(root, args.base, env, jobs, None, changed_from=args.changed_from)
     minimum = args.min_files if args.min_files is not None else read_min(root)
     if minimum is None and not args.fix_round:
         print("# cannot read a positive integer from %s" % MIN_FILE)

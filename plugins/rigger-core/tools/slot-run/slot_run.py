@@ -112,10 +112,17 @@ def fill(argv: List[str], values: Dict[str, str]) -> List[str]:
 
 
 def _inside(path: str, root: str) -> bool:
-    """`path` lies in `root`, compared both as given and with links resolved on each side."""
-    return any(review_scope.inside(candidate, base)
-               for candidate in (os.path.abspath(path), os.path.realpath(path))
-               for base in (os.path.abspath(root), os.path.realpath(root)))
+    """`path` lies in `root`, compared as given, with links resolved on each side and by file identity (another
+    spelling of `root`: its name in another case, the admin share `\\\\localhost\\<drive>$`). A `root` that cannot
+    be read holds every path, since no other spelling of it can be ruled out."""
+    try:
+        identity = os.stat(root)
+    except OSError:
+        return True
+    return (any(review_scope.inside(candidate, base)
+                for candidate in (os.path.abspath(path), os.path.realpath(path))
+                for base in (os.path.abspath(root), os.path.realpath(root)))
+            or review_scope.under_by_identity(os.path.realpath(path), [identity]))
 
 
 def _is_batch(name: str) -> bool:
