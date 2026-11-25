@@ -17,10 +17,18 @@ an `.exe` or `.com` file runs.
 The command runs from the repository root, with every CLAUDE_*, HARNESS_* and GIT_* variable and
 RIGGER_MODULE_DIRS removed, PATH cut to the entries that lookup searches and, on Windows,
 NoDefaultCurrentDirectoryInExePath set, so a program the command starts by bare name through the operating
-system's lookup is never the repository's. Known limit: a lookup the command's own code does that searches the
-working directory first (on Windows, Python 3.11's shutil.which and npm's `which`) can still find a program in
-the repository root. stdin is closed, and stdout and stderr on one pipe that a thread reads and counts:
-past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
+system's lookup is never the repository's, PYTHONPATH cut the same way, PYTHONUSERBASE and PYTHONPYCACHEPREFIX
+removed when relative or inside the repository or the working directory, so a Python child runs no
+`usercustomize` and loads no cached bytecode from there, and PYTHONSAFEPATH=1, so Python 3.11+
+started with `-m` or `-c` imports no module from the repository root through the working directory or an
+inherited PYTHONPATH entry (a script's own folder is left off sys.path too). Known limits: a lookup the
+command's own code does that searches the working directory first (on Windows, Python 3.11's shutil.which and
+npm's `which`) can still find a program in the repository root; `-E` written in the command's argv makes
+Python ignore PYTHONSAFEPATH and import from the repository root again (`-I` ignores it too, but keeps the
+working directory off sys.path by itself); Python before 3.11 and other interpreters that resolve modules
+from the working directory can still load the repository's code; and on Windows the DLL search of the
+program's process can still read the working directory. stdin is closed, and stdout and stderr on one pipe
+that a thread reads and counts: past CONSOLE_CAP bytes, or past TIMEOUT seconds, the whole process tree is stopped; so it is when the command
 has exited but a process it started still holds the console after EXIT_GRACE seconds, and after every run
 (known limit: on POSIX a process that left the process group with setsid can outlive the run). The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
@@ -67,6 +75,9 @@ BATCH_EXTS = review_scope.BATCH_EXTS
 STRIPPED_PREFIXES = ("CLAUDE_", "HARNESS_", "GIT_")
 STRIPPED_NAMES = ("RIGGER_MODULE_DIRS",)
 NO_CWD_SETTING = "NoDefaultCurrentDirectoryInExePath"  # Windows: a bare name is not looked up in the cwd
+SAFE_PATH_SETTING = "PYTHONSAFEPATH"  # Python 3.11+: `-m`, `-c` and a script leave the cwd and script folder off sys.path
+SEARCH_PATHS = ("PATH", "PYTHONPATH")  # cut to the entries review_scope.searchable keeps
+SINGLE_PATHS = ("PYTHONUSERBASE", "PYTHONPYCACHEPREFIX")  # removed unless review_scope.searchable keeps the value
 SHOWN = 300
 USAGE = "usage: slot_run.py <slot> --session <id> --base REV [--head REV] [--repo DIR]"
 
@@ -88,21 +99,30 @@ def strip_env(environ: Mapping[str, str]) -> Dict[str, str]:
 
 
 def child_env(environ: Mapping[str, str], repo: Path, cwd: str) -> Dict[str, str]:
-    """The command's environment: `strip_env(environ)` with PATH cut to the entries `review_scope.searchable`
-    keeps (no PATH at all when none is left: an empty one would search the working directory on POSIX), and on
-    Windows NO_CWD_SETTING set, so what the command starts by bare name through the operating system's lookup is
-    never a file of the repository (a lookup of the command's own that searches the cwd first is not covered)."""
+    """The command's environment: `strip_env(environ)` with PATH and PYTHONPATH cut to the entries
+    `review_scope.searchable` keeps (the variable removed when none is left: an empty PATH would search the
+    working directory on POSIX, and Python reads an empty PYTHONPATH entry as the working directory),
+    PYTHONUSERBASE and PYTHONPYCACHEPREFIX removed unless `review_scope.searchable` keeps the value (Python runs
+    `usercustomize` from the one and loads cached bytecode from the other),
+    SAFE_PATH_SETTING set to 1 (an inherited value, even an empty one, replaced), and on Windows NO_CWD_SETTING
+    set, so what the command starts by bare name through the operating system's lookup, or a Python 3.11+ child
+    imports, is never a file of the repository (a lookup of the command's own that searches the cwd first is not
+    covered)."""
     env = strip_env(environ)
-    for name in [name for name in env if name.upper() == "PATH"]:
+    for name in [name for name in env if name.upper() in SEARCH_PATHS]:
         kept = [entry for entry in env[name].split(os.pathsep) if review_scope.searchable(entry, repo, cwd)]
         if kept:
             env[name] = os.pathsep.join(kept)
         else:
             del env[name]
-    if NT:
-        for name in [name for name in env if name.upper() == NO_CWD_SETTING.upper()]:
+    for name in [name for name in env if name.upper() in SINGLE_PATHS]:
+        if not review_scope.searchable(env[name], repo, cwd):
             del env[name]
-        env[NO_CWD_SETTING] = "1"
+    names = [NO_CWD_SETTING, SAFE_PATH_SETTING] if NT else [SAFE_PATH_SETTING]
+    for setting in names:
+        for name in [name for name in env if (name.upper() == setting.upper() if NT else name == setting)]:
+            del env[name]
+        env[setting] = "1"
     return env
 
 

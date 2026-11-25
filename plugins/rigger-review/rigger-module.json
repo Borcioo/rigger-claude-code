@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "name": "rigger-review",
+  "layer": "general",
+  "fills": "reviewer",
+  "provides": {
+    "reviewer": { "kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule" }
+  },
+  "rules": [],
+  "triggers": [
+    {
+      "id": "rigger-review.review",
+      "before": "reviewing a change, a branch or a PR, or verifying an agent's claim",
+      "load": [
+        "rigger-review:review"
+      ],
+      "section": "skills.skill-triggers"
+    }
+  ],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": [
+      "reviewer"
+    ]
+  }
+}

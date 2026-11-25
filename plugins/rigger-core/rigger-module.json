@@ -62,7 +62,6 @@
       "tools/*/tests/"
     ],
     "contract": [
-      "reviewer",
       "worker",
       "implementer",
       "mapper"

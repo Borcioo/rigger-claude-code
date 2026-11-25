@@ -1,5 +1,5 @@
 """Tests for hooks/core_check.sh: one visible line when a rules plugin runs from its cache next to a rigger-core
-that has no assembler, and silence everywhere else. Each row runs the plugin's own hooks.json command through a
+older than its contract file, and silence everywhere else. Each row runs the plugin's own hooks.json command through a
 real sh. The same script ships in every plugin of RULES_PLUGINS; tests/test_repo.py checks the copies are equal."""
 
 import json
@@ -86,11 +86,15 @@ class CoreCheckTests(unittest.TestCase):
         shutil.copytree(str(plugin / ".claude-plugin"), str(root / ".claude-plugin"))
         return root
 
-    def core(self, folder, assembler):
+    def core(self, folder, assembler, triggers=None):
+        """A cached rigger-core: `assembler` adds tools/assemble/part.sh (0.5.0 has it); `triggers`, by default
+        the same as `assembler`, adds rules/skills.md, the shared Skill triggers table the modules fill since 0.6.0."""
         (folder / "rules").mkdir(parents=True)
         if assembler:
             (folder / "tools" / "assemble").mkdir(parents=True)
             (folder / "tools" / "assemble" / "part.sh").write_bytes(b"#!/bin/sh\n")
+        if assembler if triggers is None else triggers:
+            (folder / "rules" / "skills.md").write_bytes(b"## Skill triggers\n\n{{triggers:skills.skill-triggers}}\n")
         return folder
 
     def spelled(self, path, form):
@@ -134,6 +138,17 @@ class CoreCheckTests(unittest.TestCase):
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
         self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": old})
         self.assertEqual(self.run_check(), LINE)
+
+    def test_a_core_with_the_assembler_but_no_shared_triggers_table_prints_the_line(self):
+        # rigger-core 0.5.0 already holds part.sh, but not rules/skills.md: every module trigger row would land in
+        # a table that core does not print, so the modules' Skill triggers rows vanish with no notice of their own.
+        older = self.core(self.cache / "rigger-core" / "50a0c0de1234", assembler=True, triggers=False)
+        current = self.core(self.cache / "rigger-core" / "945ea046f764", assembler=True)
+        for row, core, expected in (("0.5.0 core: part.sh, no rules/skills.md", older, LINE),
+                                    ("current core", current, b"")):
+            with self.subTest(row=row):
+                self.listing({"rigger-rules@rigger": self.rules, "rigger-core@rigger": core})
+                self.assertEqual(self.run_check(), expected)
 
     def test_rows(self):
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
@@ -226,9 +241,11 @@ class CoreCheckTests(unittest.TestCase):
         through_link = link / self.rules.relative_to(self.config)
         self.assertEqual(self.run_check(root=through_link), LINE)
 
-    def test_the_assembler_path_it_probes_exists_in_rigger_core(self):
-        # rigger-rules probes this path in whatever rigger-core is installed: renaming it in core breaks the check.
-        self.assertTrue((PLUGIN.parent / "rigger-core" / "tools" / "assemble" / "part.sh").is_file())
+    def test_the_file_it_probes_exists_in_rigger_core(self):
+        # The check probes this file in whatever rigger-core is installed: renaming it in core breaks the check,
+        # and it is the file that holds the table every module trigger row targets.
+        probed = PLUGIN.parent / "rigger-core" / "rules" / "skills.md"
+        self.assertIn("{{triggers:skills.skill-triggers}}", probed.read_text(encoding="utf-8"))
 
     def test_one_current_core_entry_is_enough(self):
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)

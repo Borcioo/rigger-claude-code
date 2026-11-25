@@ -1,6 +1,6 @@
 """Checks a slot filler's reply against its slot's output contract (spec section 10.4 and 10.5).
 
-  slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--shape-only]
+  slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--session ID] [--shape-only]
 
 prints `slot-check: ok <slot>` (`slot-check: ok reviewer <n> findings`) and exits 0, or prints
 `slot-check: refused: <rule id>: <reason>` and exits 2. Rules run in the order of RULES; the first that
@@ -27,17 +27,18 @@ sys.path.insert(0, HERE)
 sys.path.insert(1, os.path.join(os.path.dirname(HERE), "review-scope"))
 
 import review_scope  # noqa: E402
+import snapshot  # noqa: E402  (rigger-core's assemble folder, on the path through review_scope)
 
 RULES = {
     "reviewer": ("json", "contract", "status", "finding-shape", "severity", "path", "coverage-sum", "skip-reason",
-                 "shortcuts", "base-head", "coverage-scope", "anchor"),
+                 "shortcuts", "base-head", "coverage-scope", "coverage-test-skipped", "anchor"),
     "worker": ("status-line", "summary"),
     "implementer": ("status-line", "fields", "blocked-fields"),
     "mapper": ("line-shape", "words", "not-found-alone", "path-exists"),
     "shell-guard": ("reply-shape", "deny-reason"),
     "lessons": ("inbox-line",),
 }  # type: Dict[str, Tuple[str, ...]]
-GIT_RULES = frozenset(("base-head", "coverage-scope", "anchor", "path-exists"))
+GIT_RULES = frozenset(("base-head", "coverage-scope", "coverage-test-skipped", "anchor", "path-exists"))
 
 CONTRACT = "rigger.reviewer/1"
 STATUSES = ("DONE", "PARTIAL", "BLOCKED", "NEEDS_CONTEXT")
@@ -71,11 +72,12 @@ class Refused(ValueError):
 
 
 class _Context:
-    def __init__(self, text, repo, base, head):
+    def __init__(self, text, repo, base, head, session=None):
         self.text = text
         self.repo = repo
         self.base = base
         self.head = head
+        self.session = session
         self.obj = None  # the reviewer's parsed object
         self.base_id = None
         self.head_id = None
@@ -319,6 +321,38 @@ def rule_reviewer_coverage_scope(ctx):
     return None
 
 
+def _snapshot(session):
+    # type: (Optional[str]) -> Optional[dict]
+    """The session snapshot review_scope.py reads for the same `--session`; None without a session (an empty
+    or unsafe id names no snapshot file)."""
+    value = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    return snapshot.read_snapshot(Path(value) if value else Path.home() / ".claude", session)
+
+
+def rule_reviewer_coverage_test_skipped(ctx):
+    """D62: a skipped path that review_scope lists for review (a verdict starting `review`, with the same
+    `review.paths` entries) and that is a test file, the project config or a rules file it names
+    (`review_scope.always_reviewed`) is refused; the reply's reason is never read."""
+    skipped = [item["file"] for item in ctx.obj["coverage"]["skipped"]]
+    if not skipped:
+        return None
+    repo = _repo(ctx)
+    try:
+        trusted = review_scope.always_reviewed(repo, ctx.base_id, ctx.head_id)
+        checked = [path for path in skipped if review_scope.is_test_file(path) or path in trusted]
+        if not checked:
+            return None
+        rules = review_scope.path_rules(_snapshot(ctx.session), repo, ctx.base_id)
+        listed = dict(review_scope.scope(repo, ctx.base_id, ctx.head_id, rules))
+    except review_scope.ScopeError as exc:
+        return "review_scope: %s" % exc
+    for path in checked:
+        if listed[path].startswith(review_scope.REVIEW):
+            kind = "project config or rules file" if path in trusted else "test file"
+            return "skipped %s %s is listed as %r by review_scope" % (kind, path, listed[path])
+    return None
+
+
 def _show(repo, commit, path):
     """The bytes of `path` at `commit`, or None when the commit holds no file there."""
     try:  # `cat-file blob` refuses a folder
@@ -532,15 +566,15 @@ def _rule_function(slot, rule):
     return getattr(sys.modules[__name__], "rule_%s_%s" % (slot.replace("-", "_"), rule.replace("-", "_")))
 
 
-def check(slot, text, repo=None, base=None, head=None, shape_only=False):
-    # type: (str, str, Optional[Path], Optional[str], Optional[str], bool) -> Verdict
+def check(slot, text, repo=None, base=None, head=None, shape_only=False, session=None):
+    # type: (str, str, Optional[Path], Optional[str], Optional[str], bool, Optional[str]) -> Verdict
     """The verdict of `text` against `slot`'s contract; never raises."""
     try:
         if slot not in RULES:
             return Verdict(False, "slot", "no output contract for slot %r" % slot, None)
         if len(text) > TEXT_CAP:
             return Verdict(False, RULES[slot][0], "text over %d characters" % TEXT_CAP, None)
-        ctx = _Context(text, repo, base, head)
+        ctx = _Context(text, repo, base, head, session)
         for rule in RULES[slot]:
             if shape_only and rule in GIT_RULES:
                 continue
@@ -553,11 +587,12 @@ def check(slot, text, repo=None, base=None, head=None, shape_only=False):
         return Verdict(False, "internal", "%s: %s" % (type(exc).__name__, exc), None)
 
 
-USAGE = "usage: slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--shape-only]"
+USAGE = "usage: slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--session ID] [--shape-only]"
 
 
 def _parse(argv):
-    """(slot, file, repo, base, head, shape_only), or None; each option takes the next token verbatim."""
+    """(slot, file, repo, base, head, shape_only, session), or None; each option takes the next token verbatim.
+    `--session` defaults to CLAUDE_CODE_SESSION_ID, as review_scope.py's does."""
     if len(argv) < 2 or argv[0].startswith("-") or argv[1].startswith("-"):
         return None
     values = {}  # type: dict
@@ -569,13 +604,13 @@ def _parse(argv):
             shape_only = True
             index += 1
             continue
-        if name not in ("--repo", "--base", "--head") or name in values or index + 1 >= len(argv):
+        if name not in ("--repo", "--base", "--head", "--session") or name in values or index + 1 >= len(argv):
             return None
         values[name] = argv[index + 1]
         index += 2
     repo = values.get("--repo")
     return argv[0], argv[1], Path(repo) if repo is not None else None, values.get("--base"), \
-        values.get("--head"), shape_only
+        values.get("--head"), shape_only, values.get("--session", os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
 
 
 def _emit(text):
@@ -595,14 +630,14 @@ def main(argv=None):
         if parsed is None:
             _emit("slot-check: refused: usage: %s\n" % USAGE)
             return 2
-        slot, name, repo, base, head, shape_only = parsed
+        slot, name, repo, base, head, shape_only, session = parsed
         try:
             with open(name, "rb") as handle:
                 data = handle.read(TEXT_CAP * 4 + 1)
         except OSError as exc:
             _emit("slot-check: refused: usage: cannot read %s: %s\n" % (name, _one_line(str(exc))))
             return 2
-        verdict = check(slot, data.decode("utf-8", "replace"), repo, base, head, shape_only)
+        verdict = check(slot, data.decode("utf-8", "replace"), repo, base, head, shape_only, session)
         if not verdict.ok:
             _emit("slot-check: refused: %s: %s\n" % (verdict.rule, _one_line(verdict.reason)))
             return 2

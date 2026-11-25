@@ -53,7 +53,9 @@ slot in `tests.contract` of its `rigger-module.json`. Each folder holds `pass*` 
 and one `fail-<rule id>*` file for every rule of that slot's contract
 (`plugins/rigger-core/tools/slot-check/slot_check.py` `RULES`), each failing on that rule alone.
 `tests/test_module_contracts.py` runs every fixture through `slot_check.py`, and fails when a rule
-has no `fail-` file.
+has no `fail-` file. The `reviewer` fixtures live in the review module,
+`plugins/rigger-review/tests/contract/reviewer/`; a new `slot_check.py reviewer` rule gets its
+`fail-` file there.
 
 ## The gate
 

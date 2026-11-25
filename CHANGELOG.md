@@ -3,6 +3,141 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
+## [Unreleased]
+
+### Migration
+
+- Update every Rigger plugin in one go, as for 0.5.0, and install the two new modules, one plugin
+  per call (`claude plugin install` installs only the first plugin it is given, exits 0 and says
+  nothing about the rest):
+
+  ```text
+  claude plugin install rigger-review@rigger
+  claude plugin install rigger-testing@rigger
+  claude plugin update rigger-core@rigger
+  ```
+
+  Then run `/rigger-core:doctor`. Both modules declare `dependencies: ["rigger-core"]`, so an install
+  adds or re-enables rigger-core, but it leaves an installed rigger-core at its old version: the
+  update line is what brings it up to date.
+- **Without the modules**, every session start, `/clear` and compaction prints one line per module:
+  `rigger: slot reviewer is empty: install rigger-review (claude plugin install rigger-review@rigger)`
+  and `rigger: slot testing is empty: install rigger-testing (claude plugin install rigger-testing@rigger); the commit-time weak-test guard is off`.
+  Doctor shows `slot reviewer` and `slot testing` as `MISSING` with the same command as the FIX.
+  A personal or project slot entry that still names `rigger-core:reviewer` or `rigger-core:testing`
+  now falls back with `rigger: slot <slot> from <file> ignored: …; the slot is empty`, followed by
+  `; install <plugin> (<command>)`: point it at `rigger-review:reviewer` or
+  `rigger-testing:testing`, or remove it.
+- **Version skew:** the new testing module next to an old rigger-core runs the weak-test guard twice
+  (both plugins register it). At startup the old rigger-core prints
+  `rigger: hook runs 2 times (…): from plugin rigger-core@rigger, plugin rigger-testing@rigger; disable one of the plugins`.
+  Update rigger-core instead of disabling either plugin; the line then goes away.
+- **An external reviewer command** (a `reviewer` slot of kind `command`) reads `{scope}` lines whose
+  verdict may now be `review: binary added` or `review: rules file newly named`: treat every verdict
+  that starts with `review` as a path to review. A `review: rules file newly named` path is a rules
+  file the head's `.claude/rigger.json` names and the base's does not; it is listed even when the diff
+  leaves it unchanged, so `git diff` gives no hunk for it: read the whole file. A `review` path may be one the diff deletes: `.claude/rigger.json` and the rules files
+  it names are reviewed even when deleted. Its reply is refused under the new rule
+  `coverage-test-skipped` when `coverage.skipped` holds a test file, `.claude/rigger.json` or a rules
+  file it names that `review_scope.py` lists for review; the contract id stays `rigger.reviewer/1`.
+
+### Changed
+
+- **Command slots run with `PYTHONSAFEPATH=1`, and `PYTHONPATH` cut like `PATH`.** A slot command
+  started as `python -m <tool>` or `python -c` no longer imports a module a repository plants at its
+  root (Python 3.11+), through the working directory or an inherited `PYTHONPATH` entry: empty, `.`,
+  relative and in-repository entries are dropped, and the variable is removed when none is left.
+  `PYTHONUSERBASE` and `PYTHONPYCACHEPREFIX` are removed when relative or inside the repository or
+  the working directory, so a Python child runs no `usercustomize` and loads no cached bytecode from
+  there. A
+  script's own folder is off `sys.path` too: a reviewer script that imports a sibling module adds its
+  folder to `sys.path` itself. Known limits: `-E` written in the slot's argv makes Python ignore
+  `PYTHONSAFEPATH` (`-I` keeps the working directory off `sys.path` by itself); Python before 3.11 and
+  other interpreters that resolve modules from the working directory can still load the repository's
+  code; on Windows the DLL search of the command's process can still read the working directory.
+- **A module plugin now checks for a rigger-core that holds `rules/skills.md`.** An 0.5.0 core next
+  to newer modules lost the Skill triggers table without a notice; it now gets the "rigger-core is
+  older than" line.
+- **A slot dropped by its own `requires` no longer satisfies another slot's `slot:` requirement.**
+- **The reviewer and the testing skill moved out of rigger-core.** The `reviewer` slot defaults to
+  `rigger-review:reviewer` and the `testing` slot to `rigger-testing:testing`. The reviewer agent and
+  its contract fixtures come with the review module; the `testing` skill, the commit-time weak-test
+  guard (its two `PreToolUse` handlers on `Bash(*commit*)` and `PowerShell(*commit*)`, unchanged)
+  and the `testing-skill-loads` eval with its control come with the testing module. rigger-core no
+  longer ships either.
+- **An empty `reviewer` or `testing` slot at its default names the install command** at `startup`,
+  `clear` and `compact`, and doctor reports it as `MISSING` (see Migration). Every other level-1
+  default whose plugin is not enabled stays silent, as before.
+- **`review_scope.py` gives skip reasons.** First match wins: `review` for `.claude/rigger.json`
+  and every rules file it names at base or at head, whatever a skip says; `skip: deleted`; a
+  `review.paths` skip, `skip: <reason> (review.paths)`; a file named like a test (`test_*`,
+  `test-*`, `*_test.*`, `*.test.*`, `*.tests.*`, `*.spec.*`, `*_spec.*`, `*Test.*`, `*Tests.*`,
+  case-sensitive) is `review`; `skip: binary` when the first 8,000 bytes hold a NUL byte at head and
+  at base; `review: binary added` when only the head holds one (a binary file the diff adds or
+  creates is reviewed); a file under a test folder (`test`, `tests`, `__tests__`, `spec`, or a
+  folder ending in `.Test` or `.Tests`, in any case) is `review`; `skip: lockfile`,
+  `skip: vendored` (under `vendor`, `node_modules`, `third_party` or `third-party`) and
+  `skip: generated` (`@generated`, `DO NOT EDIT` or `auto-generated` in the first 5 lines, or
+  `*.min.js` and `*.min.css`) only for a path that was a regular file at base; everything else
+  `review`. A skip the reviewed diff itself would create never applies. A rules file the head config
+  names and the base config does not is listed as `review: rules file newly named` even when the diff
+  leaves it unchanged.
+- **`review.paths` in config takes effect** and is no longer listed as `config-inactive`. Each entry
+  maps a glob (`**`, `*` and `?` by path segment, case-sensitive) to a rules file, or to
+  `{"rules": <file>, "skip": <reason>}`; at most 50 entries per file, a glob and a reason at most 200
+  characters, a bad entry dropped with one notice. Personal and company entries come from the
+  session's snapshot; project entries, and the rules files they name, are read from
+  `.claude/rigger.json` at the reviewed diff's base, never from the working tree.
+  `review_scope.py --base REV [--head REV] [--repo DIR] [--session ID] [--rules-out DIR]` prints,
+  after the path lines, `# review.paths: …` notices (`none (no snapshot)` without a session snapshot;
+  `project entries read at base; <file> changed in this diff`), then one
+  `# rules <glob> <file> (level <n>)` line per entry that matched a path to review. A project rules
+  file is written to `--rules-out` (`(not written: no --rules-out)` without it). `--session`
+  defaults to `CLAUDE_CODE_SESSION_ID`.
+- **`slot_check.py reviewer` refuses a skipped test file** (`coverage-test-skipped`): a test file,
+  `.claude/rigger.json` or a rules file it names, in `coverage.skipped`, whose `review_scope.py`
+  verdict starts with `review`. It takes
+  `--session ID` (default `CLAUDE_CODE_SESSION_ID`) to read the same personal and company
+  `review.paths` entries; without a session, a test file only those entries skip is refused.
+  `slot_run.py` checks a command reviewer's output without a session. A command reviewer's
+  `{scope}` carries no `review.paths` result (no named skip and no rules file), and since its output
+  is checked without a session, a test file that only a personal or company entry skips is refused.
+- **A Risk-full change gets a second fresh review round** after the first review's fix round
+  (`orchestrating-subagents`, `/rigger-core:coordinate`). The second reviewer gets the first
+  review's findings with their outcomes and the fix diff and looks only for what the first missed;
+  its Critical and Important findings go through a fix round and a re-review, never a third fresh
+  round. A finding is marked `disputed` only with a quoted `file:line` that proves it wrong. With the
+  `reviewer` slot empty, the review is blocked and reported as `BLOCKED` with the install line from
+  the session notice, or the `slot reviewer` line `/rigger-core:doctor` prints when there is none; it is never skipped or given to an agent outside the slot.
+- **The background lessons batch reads the rendered rules**, as `curate-lessons` does: it runs
+  rigger-core's `assemble.py --render` from the `installPath` in `installed_plugins.json` (30 s,
+  1,000,000 bytes) and falls back to raw text with one `rendered rules: unavailable (<reason>)` log
+  line.
+- **`slot_run.py` refuses a program it finds under the repository or the working directory by file
+  identity** too, not only by spelling, so another spelling of the same folder (an admin share, a
+  case twin) is caught.
+
+### Added
+
+- **`python -I scripts/gate.py --changed-modules [--base REV]`** is the gate of a change whose every
+  path lies in module folders: the changed modules' tests, their dependents' and the tests that read
+  them, here and under WSL from one changed-file list the host writes (`run_tests.py
+  --changed-from FILE`, which runs no git). `status.txt` records `mode: full` or
+  `mode: changed-modules …`; `gate.py --verify` prints `gate result matches: tree <id> (full)` or
+  `(changed-modules: <names>)`, and refuses a changed-modules status with
+  `verify: changed-modules gate, but <path> is shared; run the full gate`. A release and a change with
+  a shared path take the full gate; CI is unchanged.
+- **`tests/read_by.json`** names the modules each test file reads besides its own, and
+  `tests/test_read_by.py` fails on a read the map does not declare.
+- **`scripts/hook_latency.py [--runs N] [--json FILE]`** times every hook handler the way Claude Code
+  starts it (Git Bash `bash.exe -c` on Windows, `/bin/sh -c` elsewhere) against that shell's floor.
+- **Review module (`rigger-review`):** the `review` skill (the procedure the agent loads first: run
+  `review_scope.py`, read the rules files its `# rules` lines name, load up to three checklists) and
+  `checklists/` for Python, TypeScript and JavaScript, PHP and shell.
+
+Phase 3b moves rigger-windows' test tools (the test-evidence shadow gates, gate-lab and safe-edit)
+into the testing module; until then they stay in rigger-windows, unchanged.
+
 ## [0.6.0] - 2026-11-24
 
 ### Migration

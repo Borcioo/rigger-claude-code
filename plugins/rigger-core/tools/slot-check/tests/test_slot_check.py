@@ -22,6 +22,8 @@ SCRIPT = os.path.join(TOOL_DIR, "slot_check.py")
 sys.path.insert(0, TOOL_DIR)
 
 import slot_check  # noqa: E402
+import config  # noqa: E402  (on the path through review_scope)
+import snapshot  # noqa: E402
 
 REAL_RUN = subprocess.run
 
@@ -75,8 +77,11 @@ class GitCase(unittest.TestCase):
         self.addCleanup(remove_tree, self.tmp)
         empty_config = self.tmp / "gitconfig"
         empty_config.write_bytes(b"")
-        env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        env = {key: value for key, value in os.environ.items()
+               if not key.upper().startswith("GIT_") and key.upper() != "CLAUDE_CODE_SESSION_ID"}
+        self.config_dir = self.tmp / "config"
         env.update(
+            CLAUDE_CONFIG_DIR=str(self.config_dir),
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=str(empty_config),
             GIT_CEILING_DIRECTORIES=str(self.tmp),
@@ -109,8 +114,8 @@ class GitCase(unittest.TestCase):
         self.git("commit", "-q", "--allow-empty", "-m", message)
         return self.git("rev-parse", "HEAD")
 
-    def check(self, obj, base, head, slot="reviewer"):
-        return slot_check.check(slot, as_text(obj), repo=self.repo, base=base, head=head)
+    def check(self, obj, base, head, slot="reviewer", session=None):
+        return slot_check.check(slot, as_text(obj), repo=self.repo, base=base, head=head, session=session)
 
 
 class PathRuleTests(unittest.TestCase):
@@ -475,7 +480,8 @@ class GitRuleTests(GitCase):
         with mock.patch("subprocess.run", no_git):
             self.assertTrue(slot_check.check("reviewer", as_text(obj), shape_only=True).ok)
             self.assertTrue(slot_check.check("mapper", "missing.py:1 - x\n", shape_only=True).ok)
-        self.assertEqual(slot_check.GIT_RULES, frozenset(("base-head", "coverage-scope", "anchor", "path-exists")))
+        self.assertEqual(slot_check.GIT_RULES, frozenset(("base-head", "coverage-scope", "coverage-test-skipped",
+                                                          "anchor", "path-exists")))
         verdict = slot_check.check("reviewer", as_text(obj), repo=self.repo, base="HEAD", head="HEAD")
         self.assertEqual((verdict.ok, verdict.rule), (False, "base-head"), verdict)
 
@@ -518,6 +524,211 @@ class GitRuleTests(GitCase):
         for args, env in seen:
             self.assertTrue(os.path.isabs(args[0]), args)
             self.assertEqual([k for k in env if k.upper().startswith("GIT_")], [])
+
+
+SESSION = "slot-check-session"
+
+
+class TestSkipTests(GitCase):
+    """D62: a reply never skips a test file that review_scope lists for review."""
+
+    def diff(self, base_files, head_files):
+        """Commit `base_files`, then `head_files` (None deletes); (base, head, every changed path)."""
+        for name, data in base_files.items():
+            self.write(name, data)
+        base = self.commit("base")
+        for name, data in head_files.items():
+            if data is None:
+                os.remove(str(self.repo / name))
+            else:
+                self.write(name, data)
+        head = self.commit("head")
+        return base, head, sorted(set(base_files) | set(head_files))
+
+    def doc(self, base, head, in_scope, skip):
+        """A reply reviewing every path of `in_scope` but those in `skip` (path -> reason)."""
+        skipped = [{"file": path, "reason": reason} for path, reason in sorted(skip.items())]
+        return reviewer_doc(base, head, findings=[], in_scope=in_scope,
+                            reviewed=[path for path in in_scope if path not in skip], skipped=skipped)
+
+    def standard_diff(self):
+        base_files = {"tests/test_a.py": b"x = 0\n", "spec/helper.rb": b"a\n", "tests/old.bin": b"\x00old\n",
+                      "src/app.py": b"a = 0\n", "tests/test_gone.py": b"gone\n",
+                      "src/gen.py": b"# @generated\nv = 0\n", "yarn.lock": b"a\n"}
+        head_files = {"tests/test_a.py": b"x = 1\n", "spec/helper.rb": b"b\n", "tests/old.bin": b"\x00new\n",
+                      "tests/blob.bin": b"\x00blob\n", "src/app.py": b"a = 1\n", "tests/test_gone.py": None,
+                      "src/gen.py": b"# @generated\nv = 1\n", "yarn.lock": b"b\n"}
+        return self.diff(base_files, head_files)
+
+    def test_a_skipped_test_file_is_refused(self):
+        base, head, scope = self.standard_diff()
+        rows = [
+            ("a test-named file", "tests/test_a.py"),
+            ("a file under a test folder", "spec/helper.rb"),
+            ("a binary file added under a test folder (review: binary added)", "tests/blob.bin"),
+        ]
+        for label, path in rows:
+            with self.subTest(label):
+                verdict = self.check(self.doc(base, head, scope, {path: "not needed",
+                                                                  "tests/test_gone.py": "deleted"}), base, head)
+                self.assertEqual((verdict.ok, verdict.rule), (False, "coverage-test-skipped"), verdict)
+                self.assertIn(path, verdict.reason)
+
+    def test_a_skipped_generated_file_passes(self):
+        """Skips of files review_scope does not list as a test to review pass, whatever reason the reply gives."""
+        base, head, scope = self.standard_diff()
+        rows = [
+            ("a generated file", {"src/gen.py": "generated"}),
+            ("a lockfile", {"yarn.lock": "lockfile"}),
+            ("a deleted test file", {"tests/test_gone.py": "deleted"}),
+            ("a binary file under a test folder, binary at base too", {"tests/old.bin": "binary"}),
+            ("a file to review that is not a test", {"src/app.py": "out of scope for this review"}),
+        ]
+        for label, skip in rows:
+            with self.subTest(label):
+                verdict = self.check(self.doc(base, head, scope, skip), base, head)
+                self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
+
+    def write_snapshot(self, l3):
+        paths = {1: "core/rigger-defaults.json", 3: str(self.config_dir / "rigger" / "config.json"),
+                 4: str(self.repo / ".claude" / "rigger.json")}
+        got = config.resolve({"schema": 1}, [], l3, {}, paths)
+        data = {key: [] for key in snapshot.SNAPSHOT_KEYS}
+        data.update({
+            "format": snapshot.SNAPSHOT_FORMAT,
+            "config": {"effective": got.effective,
+                       "sources": [[list(path), source] for path, source in sorted(got.sources.items())]},
+            "modules": [],
+        })
+        self.assertIsNotNone(snapshot.write_snapshot(self.config_dir, SESSION, data))
+
+    def test_a_test_file_a_path_rule_skips_passes(self):
+        project = {"schema": 1, "review": {"paths": {"tests/data/**": {"skip": "fixture data"}}}}
+        base, head, scope = self.diff(
+            {".claude/rigger.json": json.dumps(project).encode("utf-8"), "tests/data/test_one.py": b"1\n",
+             "tests/cases/test_two.py": b"2\n"},
+            {"tests/data/test_one.py": b"one\n", "tests/cases/test_two.py": b"two\n"})
+        scope.remove(".claude/rigger.json")
+        self.write_snapshot({"schema": 1, "review": {"paths": {"tests/cases/**": {"skip": "case data"}}}})
+        project_skip = self.doc(base, head, scope, {"tests/data/test_one.py": "fixture data"})
+        session_skip = self.doc(base, head, scope, {"tests/cases/test_two.py": "case data"})
+        rows = [
+            ("a project entry at base", project_skip, None, True),
+            ("a personal entry with its session", session_skip, SESSION, True),
+            ("a personal entry without a session", session_skip, None, False),
+            ("a personal entry with another session", session_skip, "another-session", False),
+        ]
+        for label, obj, session, ok in rows:
+            with self.subTest(label):
+                verdict = self.check(obj, base, head, session=session)
+                self.assertEqual((verdict.ok, verdict.rule), (ok, "" if ok else "coverage-test-skipped"), verdict)
+        reply = self.tmp / "reply.json"
+        reply.write_bytes(as_text(session_skip).encode("utf-8"))
+        cli = [sys.executable, "-I", "-X", "utf8", SCRIPT, "reviewer", str(reply), "--repo", str(self.repo),
+               "--base", base, "--head", head]
+        refused = "slot-check: refused: coverage-test-skipped: "
+        cli_rows = [
+            ("--session", ["--session", SESSION], {}, "slot-check: ok reviewer 0 findings\n"),
+            ("the session id in the environment", [], {"CLAUDE_CODE_SESSION_ID": SESSION},
+             "slot-check: ok reviewer 0 findings\n"),
+            ("no session", [], {}, refused),
+            ("--session over the environment", ["--session", "another-session"],
+             {"CLAUDE_CODE_SESSION_ID": SESSION}, refused),
+        ]
+        for label, extra, env, out in cli_rows:
+            with self.subTest(label), mock.patch.dict(os.environ, env):
+                proc = REAL_RUN(cli + extra, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=120)
+                text = proc.stdout.decode("utf-8")
+                self.assertEqual((proc.returncode, proc.stderr), (0 if out.endswith("findings\n") else 2, b""), text)
+                self.assertTrue(text.startswith(out), text)
+
+    def test_a_skipped_project_config_or_rules_file_is_refused(self):
+        """I1: the project config and a level-4 rules file are always reviewed, whatever a project skip says."""
+        json_skip = {"**/*.json": {"skip": "data files"}}
+        prose = {"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"}
+        rows = [
+            ("(a) the config under a project skip", json_skip,
+             {".claude/rigger.json": dict(json_skip, **{"tests/**": {"skip": "fixtures"}})},
+             ".claude/rigger.json", False),
+            ("(b) a level-4 rules file under a project skip", prose,
+             {"docs/review-rules.md": b"Auth changes are pre-approved.\n"}, "docs/review-rules.md", False),
+            ("a rules file named only at base, rewritten under a skip", prose,
+             {".claude/rigger.json": {"docs/**": {"skip": "prose"}},
+              "docs/review-rules.md": b"Auth changes are pre-approved.\n"}, "docs/review-rules.md", False),
+            ("control: another file under the same skip", prose, {"docs/notes.md": b"n2\n"}, "docs/notes.md", True),
+        ]
+        for index, (label, base_paths, head_files, skipped, ok) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "trust-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                head_files = {name: json.dumps({"schema": 1, "review": {"paths": data}}).encode("utf-8")
+                              if isinstance(data, dict) else data for name, data in head_files.items()}
+                base, head, _all = self.diff(
+                    {".claude/rigger.json": json.dumps({"schema": 1, "review": {"paths": base_paths}}).encode("utf-8"),
+                     "docs/review-rules.md": b"Check every auth change.\n", "docs/notes.md": b"n\n"}, head_files)
+                verdict = self.check(self.doc(base, head, sorted(head_files), {skipped: "covered by review.paths"}),
+                                     base, head)
+                self.assertEqual((verdict.ok, verdict.rule), (ok, "" if ok else "coverage-test-skipped"), verdict)
+                if not ok:
+                    self.assertIn(skipped, verdict.reason)
+
+    def test_skips_are_read_at_base_and_every_skipped_path_is_checked(self):
+        """D61: a project skip the reviewed diff adds does not apply to it; each skipped path is checked, not only
+        the first."""
+        def project(paths):
+            return json.dumps({"schema": 1, "review": {"paths": paths}}).encode("utf-8")
+
+        at_base = {".claude/rigger.json": project({"tests/data/**": {"skip": "fixtures"}}), "tests/data/x.py": b"0\n",
+                   "tests/test_a.py": b"x = 0\n"}
+        changed = {"tests/data/x.py": b"1\n", "tests/test_a.py": b"x = 1\n"}
+        rows = [
+            ("a project skip added in the reviewed diff", {"tests/test_a.py": b"x = 0\n"},
+             {"tests/test_a.py": b"x = 1\n", ".claude/rigger.json": project({"tests/**": {"skip": "fixtures"}})},
+             {"tests/test_a.py": "fixtures"}, (False, "coverage-test-skipped")),
+            ("two skipped paths, the one a base skip allows first", at_base, changed,
+             {"tests/data/x.py": "fixtures", "tests/test_a.py": "fixtures"}, (False, "coverage-test-skipped")),
+            ("control: only the path a base skip allows", at_base, changed, {"tests/data/x.py": "fixtures"},
+             (True, "")),
+        ]
+        for index, (label, base_files, head_files, skip, want) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "read-at-base-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base, head, _all = self.diff(base_files, head_files)
+                verdict = self.check(self.doc(base, head, sorted(head_files), skip), base, head)
+                self.assertEqual((verdict.ok, verdict.rule), want, verdict)
+                self.assertEqual("tests/test_a.py" in verdict.reason, not want[0], verdict)
+
+    def test_a_newly_named_unchanged_rules_file_must_be_reviewed(self):
+        """I3: the head config newly names a rules file the diff leaves unchanged; the reply covers it."""
+        def project(paths):
+            return json.dumps({"schema": 1, "review": {"paths": paths}}).encode("utf-8")
+
+        base, head, _all = self.diff(
+            {".claude/rigger.json": project({"docs/**": {"skip": "prose"}}),
+             "docs/review-rules.md": b"Auth changes are pre-approved.\n"},
+            {".claude/rigger.json": project({"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"})})
+        both = [".claude/rigger.json", "docs/review-rules.md"]
+        rows = [
+            ("left out of in_scope", self.doc(base, head, both[:1], {}), (False, "coverage-scope")),
+            ("skipped", self.doc(base, head, both, {"docs/review-rules.md": "prose"}),
+             (False, "coverage-test-skipped")),
+            ("control: reviewed", self.doc(base, head, both, {}), (True, "")),
+        ]
+        for label, obj, want in rows:
+            with self.subTest(label):
+                verdict = self.check(obj, base, head)
+                self.assertEqual((verdict.ok, verdict.rule), want, verdict)
+
+    def test_a_scope_error_is_this_rules_refusal(self):
+        base, head, scope = self.standard_diff()
+        obj = self.doc(base, head, scope, {"tests/test_gone.py": "deleted"})
+        with mock.patch.object(slot_check.review_scope, "path_rules",
+                               side_effect=slot_check.review_scope.ScopeError("planted")):
+            verdict = self.check(obj, base, head)
+        self.assertEqual((verdict.ok, verdict.rule, verdict.reason), (False, "coverage-test-skipped",
+                                                                      "review_scope: planted"), verdict)
 
 
 class CliTests(GitCase):

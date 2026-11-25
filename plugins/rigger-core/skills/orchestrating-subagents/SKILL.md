@@ -11,7 +11,8 @@ description: >-
 
 Overrides superpowers' subagent-driven-development and dispatching-parallel-agents where they
 differ: implementation agents may run in parallel in separate worktrees; a fresh implementation
-agent after the first fix round; one review per plan, plus a per-task review for security, data, money and shared infrastructure; a silent
+agent after the first fix round; one review per plan, plus a per-task review for security, data, money and shared infrastructure; a
+Risk-full change also gets a second fresh reviewer after the first review's fix round; a silent
 agent is checked after 20 minutes.
 
 Words used below. **Risk** is the mark a brief gives its change, `full` or `low`, as the tests
@@ -152,6 +153,17 @@ failure on the stronger model goes to the user with the diagnosis.
   slot that check it in the code; it is fixed when both confirm, and on a split the orchestrator
   decides from their evidence.
 - A re-review gets the fix diff, the findings it answers and the author's red-run output, and re-runs only the red runs (mutations) on changed lines, against every test file that covers them, never every red run of the change; it reviews the whole change again only when the fix touches files the first review did not see, or on a Risk-full change.
+- The second round's agent of the `reviewer` slot gets the first review's findings with their
+  outcomes and the fix diff, and is asked only for what the first did not find; its Critical and
+  Important findings go through a fix round and a re-review, never a third fresh round.
+- A finding is marked `disputed` only with a quoted `file:line` that proves it wrong, and one about
+  concurrency, bounds, behaviour or compatibility, authorisation, money or data goes to a fresh
+  reviewer first.
+- With the `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install
+  line from the session notice, or the `slot reviewer` line `/rigger-core:doctor` prints when there
+  is none; never skip the review or give it to an agent outside the slot.
+  Inside an approved plan it is a stop: block that part, merge nothing of it and report it with
+  that line.
 - The orchestrator records each finding's outcome in the state file under `## Findings`, one line
   each: `<finding> · <severity> · <outcome>`, the outcome being fixed, disputed, intentional or
   pre-existing-deferred.

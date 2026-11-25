@@ -39,9 +39,12 @@ import assemble  # noqa: E402
 from discover import root_text  # noqa: E402
 from stub_api import USAGE, QuietServer, StubApi  # noqa: E402
 
-ALL = ("rigger-core", "rigger-lessons", "rigger-panel", "rigger-rules", "rigger-talk", "rigger-windows",
-       "rigger-wp")
+ALL = ("rigger-core", "rigger-lessons", "rigger-panel", "rigger-review", "rigger-rules", "rigger-talk",
+       "rigger-testing", "rigger-windows", "rigger-wp")
 LEFT_OUT = "rigger-wp"
+MODULES = ("rigger-core", "rigger-review", "rigger-testing")
+TESTING_TRIGGER = "writing code or tests, reviewing tests, a spike, port or rehearsal"
+INSTALL_NOTICE = " is empty: install "
 # D24/I1: each of these runs its own core_check.sh <name> at a startup SessionStart.
 CHECKED = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
 NOT_LOADED = "Rigger rules not loaded"
@@ -265,9 +268,9 @@ class StubSessionTests(unittest.TestCase):
         self.assertEqual(repeated, [], "two sections share a first line; it cannot mark one of them")
         return markers, modules
 
-    def session(self, names):
-        """Run one session with every plugin loaded and `names` as the module roots; return the request
-        that carries the probe word, as lines, and the init event's plugin names."""
+    def session(self, names, plugins=ALL):
+        """Run one session with `plugins` loaded (default every plugin) and `names` as the module roots; return
+        the request that carries the probe word, as lines, and the init event's plugin names."""
         probe = "probe-" + uuid.uuid4().hex
         env = child_env(os.environ,
                         CLAUDE_CONFIG_DIR=str(self.tmp / "cfg"),
@@ -279,7 +282,7 @@ class StubSessionTests(unittest.TestCase):
                         USERPROFILE=str(self.tmp))
         command = [self.claude, "-p", probe, "--model", "haiku", "--output-format", "stream-json", "--verbose",
                    "--settings", str(self.settings), "--debug-file", str(self.tmp / "debug.log")]
-        for plugin in ALL:
+        for plugin in plugins:
             command += ["--plugin-dir", str(PLUGINS / plugin)]
         with StubApi() as api:
             env["ANTHROPIC_BASE_URL"] = api.url
@@ -300,7 +303,7 @@ class StubSessionTests(unittest.TestCase):
     def test_every_section_reaches_the_first_request(self):
         markers, _ = self.rendered(ALL)
         lines, plugins = self.session(ALL)
-        # The CLI adds built-in plugins of its own; all 7 of ours must be among them.
+        # The CLI adds built-in plugins of its own; all 9 of ours must be among them.
         self.assertEqual(sorted(set(ALL) - set(plugins or [])), [], "init event plugins")
         # Each plugin's own hooks.json loaded and ran its check: the init list alone shows a plugin whose
         # hooks.json is broken. The plugin name argument tells the five copies apart.
@@ -327,10 +330,29 @@ class StubSessionTests(unittest.TestCase):
         self.assertEqual({sid: n for sid, n in ((sid, self.count(lines, m)) for sid, m in kept.items()) if n != 1},
                          {})
 
+    def test_new_modules_fill_their_slots(self):
+        # D57: with both modules loaded and named as roots, the two slots take their level-1 defaults.
+        lines, plugins = self.session(MODULES, plugins=MODULES)
+        self.assertEqual(sorted(set(MODULES) - set(plugins or [])), [], "init event plugins")
+        self.assertIn("| reviewer | agent | rigger-review:reviewer | by-rule | default |", slots_lines(lines))
+        self.assertIn("| testing | skill | rigger-testing:testing | — | default |", slots_lines(lines))
+        self.assertIn("| %s | `rigger-testing:testing` |" % TESTING_TRIGGER, lines)
+        self.assertEqual([line for line in notices(lines) if INSTALL_NOTICE in line], [])
+
+    def test_without_them_the_session_names_the_install_commands(self):
+        # D57: a --plugin-dir core names the public marketplace; the testing line says the guard is off.
+        lines, _ = self.session(("rigger-core",), plugins=("rigger-core",))
+        self.assertEqual([line for line in notices(lines) if INSTALL_NOTICE in line],
+                         ["rigger: slot reviewer is empty: install rigger-review "
+                          "(claude plugin install rigger-review@rigger)",
+                          "rigger: slot testing is empty: install rigger-testing "
+                          "(claude plugin install rigger-testing@rigger); the commit-time weak-test guard is off"])
+
 
 @unittest.skipIf(os.environ.get("HARNESS_NO_CLAUDE") == "1", "HARNESS_NO_CLAUDE=1: claude -p not run")
 class SlotSessionTests(unittest.TestCase):
-    """rigger-core alone, in a cwd that is a two-commit repository; the reviewer slot set to a command."""
+    """rigger-core and the review module (whose agent is the reviewer default), in a cwd that is a two-commit
+    repository; the reviewer slot set to a command."""
 
     def setUp(self):
         self.claude = shutil.which("claude")
@@ -386,10 +408,11 @@ class SlotSessionTests(unittest.TestCase):
                         CLAUDE_CODE_PLUGIN_CACHE_DIR=str(self.tmp / "plugin-cache"),
                         HARNESS_LESSONS_INBOX=str(self.tmp / "lessons-inbox.md"),
                         ANTHROPIC_API_KEY="stub-key",
-                        RIGGER_MODULE_DIRS=module_dirs(["rigger-core"]),
+                        RIGGER_MODULE_DIRS=module_dirs(["rigger-core", "rigger-review"]),
                         HOME=str(self.tmp))  # USERPROFILE stays: Store Python derives sys.executable from it
         command = [self.claude, "-p", probe, "--model", "haiku", "--output-format", "stream-json", "--verbose",
-                   "--settings", str(self.settings), "--allowedTools", "Bash", "--plugin-dir", str(CORE)]
+                   "--settings", str(self.settings), "--allowedTools", "Bash", "--plugin-dir", str(CORE),
+                   "--plugin-dir", str(PLUGINS / "rigger-review")]
         server = QuietServer(("127.0.0.1", 0), SlotHandler)
         server.requests, server.probe, server.base = [], probe, self.base if run_line else None
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -449,7 +472,7 @@ class SlotSessionTests(unittest.TestCase):
         # D33: dropped with the notice naming the person's config; the level-1 agent fills the slot.
         self.assertIn("rigger: .claude/rigger.json may not set a command for slot reviewer; add it to "
                       "trust.project_commands in %s to allow it" % self.personal, notices(lines))
-        self.assertIn("| reviewer | agent | rigger-core:reviewer | by-rule | default |", slots_lines(lines))
+        self.assertIn("| reviewer | agent | rigger-review:reviewer | by-rule | default |", slots_lines(lines))
         self.assertEqual([line for line in lines if SLOT_LINE.search(line)], [], "a command line with no command")
 
         self.write_json(self.personal, {"trust": {"project_commands": ["reviewer"]}})

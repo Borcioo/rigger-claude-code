@@ -4,11 +4,14 @@ python -I -X utf8 test_review_scope.py
 """
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,20 +20,39 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL_DIR = os.path.dirname(HERE)
 SCRIPT = os.path.join(TOOL_DIR, "review_scope.py")
 sys.path.insert(0, TOOL_DIR)
+sys.path.insert(1, os.path.join(os.path.dirname(TOOL_DIR), "assemble"))
 
+import config  # noqa: E402
 import review_scope  # noqa: E402
+import snapshot  # noqa: E402
 
 REAL_RUN = subprocess.run
+REAL_POPEN = subprocess.Popen
 UNICODE_NAME = "zażółć ą.py"
 EXPECTED = [
     ("a.py", "review"),
     ("b.py", "skip: deleted"),
-    ("c.bin", "review"),
+    ("c.bin", "review: binary added"),
     ("d.py", "skip: deleted"),
     ("e.py", "review"),
     ("tests/test_x.py", "review"),
     (UNICODE_NAME, "review"),
 ]
+
+
+class RecordingPipe:
+    """A Popen stdin that keeps a copy of every byte written to it."""
+
+    def __init__(self, pipe, sink):
+        self.pipe = pipe
+        self.sink = sink
+
+    def write(self, data):
+        self.sink.append(bytes(data))
+        return self.pipe.write(data)
+
+    def __getattr__(self, name):
+        return getattr(self.pipe, name)
 
 
 def remove_tree(path):
@@ -49,8 +71,11 @@ class GitCase(unittest.TestCase):
         self.addCleanup(remove_tree, self.tmp)
         empty_config = self.tmp / "gitconfig"
         empty_config.write_bytes(b"")
-        env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+        env = {key: value for key, value in os.environ.items()
+               if not key.upper().startswith("GIT_") and key.upper() != "CLAUDE_CODE_SESSION_ID"}
+        self.config_dir = self.tmp / "config"
         env.update(
+            CLAUDE_CONFIG_DIR=str(self.config_dir),
             GIT_CONFIG_NOSYSTEM="1",
             GIT_CONFIG_GLOBAL=str(empty_config),
             GIT_CEILING_DIRECTORIES=str(self.tmp),
@@ -112,14 +137,26 @@ class GitCase(unittest.TestCase):
         return code, buffer.getvalue().decode("utf-8")
 
     @contextlib.contextmanager
-    def git_calls(self):
+    def git_calls(self, batch_input=None):
+        """Every git start, through run or Popen, as (argv, env); `batch_input` collects what reaches a Popen's stdin."""
         calls = []
 
         def spy(argv, *args, **kwargs):
             calls.append((list(argv), kwargs.get("env")))
             return REAL_RUN(argv, *args, **kwargs)
 
-        with mock.patch.object(review_scope.subprocess, "run", spy):
+        def spy_popen(argv, *args, **kwargs):
+            # subprocess.run starts a Popen too, with no stdin pipe: that start is already recorded by `spy`.
+            if kwargs.get("stdin") is not subprocess.PIPE:
+                return REAL_POPEN(argv, *args, **kwargs)
+            calls.append((list(argv), kwargs.get("env")))
+            proc = REAL_POPEN(argv, *args, **kwargs)
+            if batch_input is not None:
+                proc.stdin = RecordingPipe(proc.stdin, batch_input)
+            return proc
+
+        with mock.patch.object(review_scope.subprocess, "run", spy), \
+                mock.patch.object(review_scope.subprocess, "Popen", spy_popen):
             yield calls
 
     @contextlib.contextmanager
@@ -127,8 +164,21 @@ class GitCase(unittest.TestCase):
         def refuse(argv, *args, **kwargs):
             raise AssertionError("git was started: %r" % (argv,))
 
-        with mock.patch.object(review_scope.subprocess, "run", refuse):
+        with mock.patch.object(review_scope.subprocess, "run", refuse), \
+                mock.patch.object(review_scope.subprocess, "Popen", refuse):
             yield
+
+    def files(self, files, message="commit"):
+        """Write (bytes) or delete (None) each file, then commit; the new commit id."""
+        for name, data in files.items():
+            if data is None:
+                (self.repo / name).unlink()
+            else:
+                self.write(name, data)
+        return self.commit(message)
+
+    def verdicts(self, base, head, rules=()):
+        return dict(review_scope.scope(self.repo, base, head, rules))
 
 
 class ScopeTests(GitCase):
@@ -445,6 +495,21 @@ class ProgramLookupTests(GitCase):
                     with working_directory(cwd):
                         self.same(review_scope.find_program("tool", repo, (EXE,)), self.tool)
 
+    def test_an_entry_spelled_inside_through_a_link_that_leads_outside_is_not_searched(self):
+        """The repository or the working directory can point its link elsewhere at any time: an entry spelled
+        inside either is refused by its spelling, though its real path and every folder above it are outside."""
+        self.program(self.repo / "bin", "tool")
+        rows = [
+            ("a link in the repository", self.link(self.repo / "out-link", self.good)),
+            ("a link in the working directory", self.link(self.elsewhere / "out-link", self.good)),
+        ]
+        for label, entry in rows:
+            with self.subTest(row=label):
+                self.same(os.path.realpath(str(entry)), os.path.realpath(str(self.good)))
+                self.assertIs(review_scope.searchable(str(entry), self.repo, str(self.elsewhere)), False)
+        # Not over-excluded: the folder the links lead to, spelled as itself, is still searched.
+        self.assertIs(review_scope.searchable(str(self.good), self.repo, str(self.elsewhere)), True)
+
     @unittest.skipUnless(os.name == "nt", "the extended and device prefixes are Windows spellings")
     def test_a_prefixed_entry_is_read_without_its_prefix(self):
         """A prefixed entry outside both is still searched; one the prefix cannot be removed from is not."""
@@ -626,6 +691,781 @@ class PathRefusalTests(GitCase):
                 self.commit("remove")
 
 
+MARKED = b"# @generated by a tool\nx = 1\n"
+NUL_TEXT = b"PNG\x00\x01binary\n"
+LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "composer.lock",
+             "Cargo.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "Gemfile.lock", "go.sum")
+
+
+def rule(glob, rules=None, skip=None, level=4, source="L4:test"):
+    return review_scope.PathRule(glob, rules, skip, level, source)
+
+
+class SkipReasonTests(GitCase):
+    """D60: each skip reason, the "existed at base" clauses, the test-file rule and the binary prefix."""
+
+    def test_each_reason_on_a_path_that_existed_at_base(self):
+        base_files = {name: b"lock 0\n" for name in LOCKFILES}
+        base_files.update({
+            "sub/yarn.lock": b"lock 0\n",
+            "vendor/lib.js": b"v = 1\n",
+            "node_modules/p/index.js": b"n = 1\n",
+            "third_party/x.c": b"int x;\n",
+            "third-party/y.c": b"int y;\n",
+            "src/vendor/z.go": b"package z\n",
+            "gen_a.py": MARKED,
+            "gen_b.go": b"// Code from a tool. DO NOT EDIT.\npackage b\n",
+            "gen_c.ts": b"/* auto-generated */\nlet c = 1\n",
+            "gen_line5.py": b"\n\n\n\n# @generated\n",
+            "late_marker.py": b"\n\n\n\n\n# @generated\n",
+            "app.min.js": b"var a=1;\n",
+            "app.min.css": b"a{}\n",
+            "logo.png": NUL_TEXT,
+            "late_nul.dat": b"a" * 8000 + b"\x00\n",
+            "plain.py": b"p = 1\n",
+            "vendored.txt": b"no vendor segment\n",
+            "tools/vendor": b"#!/bin/sh\n",
+        })
+        base = self.files(base_files, "base")
+        head_files = {name: data + b"y\n" for name, data in base_files.items()}
+        head = self.files(head_files, "head")
+        expected = {
+            "vendor/lib.js": "skip: vendored",
+            "node_modules/p/index.js": "skip: vendored",
+            "third_party/x.c": "skip: vendored",
+            "third-party/y.c": "skip: vendored",
+            "src/vendor/z.go": "skip: vendored",
+            "gen_a.py": "skip: generated",
+            "gen_b.go": "skip: generated",
+            "gen_c.ts": "skip: generated",
+            "gen_line5.py": "skip: generated",
+            "late_marker.py": "review",
+            "app.min.js": "skip: generated",
+            "app.min.css": "skip: generated",
+            "logo.png": "skip: binary",
+            "late_nul.dat": "review",
+            "plain.py": "review",
+            "vendored.txt": "review",
+            "tools/vendor": "review",
+            "sub/yarn.lock": "skip: lockfile",
+        }
+        expected.update({name: "skip: lockfile" for name in LOCKFILES})
+        got = self.verdicts(base, head)
+        for path, verdict in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(got.get(path), verdict)
+        self.assertEqual(set(got), set(expected))
+
+    def test_a_skip_the_diff_creates_is_reviewed(self):
+        for name, data in {"plain.py": b"p = 1\n", "unmarked.py": MARKED, "mod.js": b"var m = 1;\n",
+                           "vendor/old.js": b"o = 1\n"}.items():
+            self.write(name, data)
+        self.git("add", "-A")
+        links = ("vendor/lib.js", "y.min.js", "Cargo.lock")  # links at base, regular files at head
+        target = self.tmp / "link-target.txt"
+        target.write_bytes(b"../elsewhere.js")
+        link = self.git("hash-object", "-w", str(target))
+        for name in links:
+            self.git("update-index", "--add", "--cacheinfo", "120000,%s,%s" % (link, name))
+        self.git("commit", "-q", "-m", "base")
+        base = self.git("rev-parse", "HEAD")
+        self.git("rm", "-q", "--cached", "--", *links)  # without core.symlinks, `git add` keeps a link's mode
+        head = self.files({
+            "vendor/lib.js": b"run = 1\n",
+            "y.min.js": b"var y=1;\n",
+            "Cargo.lock": b"lock 1\n",
+            "src/yarn.lock": b"require('child_process')\n",
+            "plain.py": b"# @generated\np = 1\n",
+            "unmarked.py": b"x = 1\n",
+            "new_marked.py": MARKED,
+            "lib/vendor/new.js": b"n = 1\n",
+            "vendor/added.js": b"a = 1\n",
+            "x.min.js": b"var x=1;\n",
+            "blob.bin": NUL_TEXT,
+            "mod.js": b"var m = 1;\x00\n",
+        }, "head")
+        for name in links:
+            with self.subTest(fixture=name):
+                self.assertTrue(self.git("ls-tree", base, "--", name).startswith("120000 "))
+                self.assertTrue(self.git("ls-tree", head, "--", name).startswith("100644 "))
+        expected = {
+            "vendor/lib.js": "review",
+            "y.min.js": "review",
+            "Cargo.lock": "review",
+            "src/yarn.lock": "review",
+            "plain.py": "review",
+            "unmarked.py": "review",
+            "new_marked.py": "review",
+            "lib/vendor/new.js": "review",
+            "vendor/added.js": "review",
+            "x.min.js": "review",
+            "blob.bin": "review: binary added",
+            "mod.js": "review: binary added",
+        }
+        got = self.verdicts(base, head)
+        for path, verdict in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(got.get(path), verdict)
+
+    def test_test_files_are_never_skipped_without_a_path_rule(self):
+        files = {
+            "vendor/pkg/test_x.py": b"def test_x():\n    pass\n",
+            "tests/fixtures/package-lock.json": b"{}\n",
+            "src/__tests__/gen.js": b"// @generated\n",
+            "spec/app.min.js": b"var a=1;\n",
+            "vendor/a.test.js": b"t = 1\n",
+            "node_modules/m/foo_test.go": b"package m\n",
+            "gen/x.spec.ts": b"// DO NOT EDIT\n",
+            "test/data.py": MARKED,
+        }
+        base = self.files(files, "base")
+        head = self.files({name: data + b"y\n" for name, data in files.items()}, "head")
+        got = self.verdicts(base, head)
+        for path in files:
+            with self.subTest(path=path):
+                self.assertEqual(got[path], "review")
+        named = self.verdicts(base, head, [rule("vendor/pkg/test_*.py", skip="a vendored copy"),
+                                           rule("gen/**", rules="r.md")])
+        self.assertEqual(named["vendor/pkg/test_x.py"], "skip: a vendored copy (review.paths)")
+        self.assertEqual(named["gen/x.spec.ts"], "review")
+        self.assertEqual(named["vendor/a.test.js"], "review")
+
+    def test_a_path_rule_skip_gives_its_reason(self):
+        base = self.files({"docs/a.md": b"a\n", "src/b.py": b"b\n"}, "base")
+        head = self.files({"docs/a.md": b"a2\n", "src/b.py": b"b2\n"}, "head")
+        rules = [rule("docs/**", skip="prose", level=3), rule("docs/*.md", skip="project prose", level=4)]
+        got = self.verdicts(base, head, rules)
+        self.assertEqual(got, {"docs/a.md": "skip: project prose (review.paths)", "src/b.py": "review"})
+
+    def test_a_binary_fixture_under_tests_is_skipped(self):
+        base = self.files({"tests/fixtures/logo.png": NUL_TEXT, "tests/test_x.py": b"x = '\x00'\n"}, "base")
+        head = self.files({"tests/fixtures/logo.png": NUL_TEXT + b"2", "tests/test_x.py": b"x = '\x00'\ny = 1\n"},
+                          "head")
+        self.assertEqual(self.verdicts(base, head),
+                         {"tests/fixtures/logo.png": "skip: binary", "tests/test_x.py": "review"})
+
+    def test_binary_detection_reads_a_bounded_prefix(self):
+        big = b"0123456789\x00" + b"x" * (20 * 1024 * 1024)
+        base = self.files({"big.dat": big}, "base")
+        head = self.files({"big.dat": big + b"y"}, "head")
+        seen = []
+        real_read = review_scope._Blobs.read
+
+        def counting(blobs, oid, cap):
+            size, kept = real_read(blobs, oid, cap)
+            seen.append((size, len(kept), cap))
+            return size, kept
+
+        with mock.patch.object(review_scope._Blobs, "read", counting):
+            got = self.verdicts(base, head)
+        self.assertEqual(got, {"big.dat": "skip: binary"})
+        self.assertEqual(sorted(seen), [(len(big), 8000, 8000), (len(big) + 1, 8000, 8000)])
+
+    def test_is_test_file_table(self):
+        rows = [
+            ("test_x.py", True), ("a/test_x.py", True), ("x_test.go", True), ("x.test.js", True),
+            ("x.spec.ts", True), ("test/a.txt", True), ("tests/a/b.bin", True), ("src/__tests__/a.js", True),
+            ("spec/a.rb", True), ("latest.py", False), ("contest.py", False), ("testing/a.py", False),
+            ("tests_x/a.py", False), ("a/tests", False), ("Test_x.py", False), ("xtest.py", False),
+            ("src/protest_x.py", False),
+            # M2: a test folder in any case, a .NET test project, and the spec, tests, test- and Tests names
+            ("Tests/a.swift", True), ("SPEC/a.rb", True), ("App.Tests/a.cs", True), ("App.Test/a.cs", True),
+            ("lib/login_spec.rb", True), ("src/login.tests.ts", True), ("src/test-login.js", True),
+            ("src/LoginTests.swift", True), ("src/LoginTest.java", True),
+            ("Tests/AppTests/LoginTests.swift", True), ("App.Tests/LoginTests.cs", True), ("src/latest.js", False),
+            ("src/Contest.py", False), ("src/attest-x.js", False), ("App.Testing/a.cs", False),
+            ("src/Tests", False), ("src/spec_x.rb", False),
+        ]
+        for path, expected in rows:
+            with self.subTest(path=path):
+                self.assertIs(review_scope.is_test_file(path), expected)
+
+
+class BatchReaderTests(GitCase):
+    """The `git cat-file --batch` reader refuses every answer it does not expect, and has its own time bound."""
+
+    def fake_batch(self, script):
+        """Popen of the reader starts `script` (Python) in place of git."""
+        def start(argv, *args, **kwargs):
+            if kwargs.get("stdin") is not subprocess.PIPE:
+                return REAL_POPEN(argv, *args, **kwargs)
+            return REAL_POPEN([sys.executable, "-I", "-c", script], *args, **kwargs)
+
+        return mock.patch.object(review_scope.subprocess, "Popen", start)
+
+    def test_unexpected_answers_refuse(self):
+        self.write("a.py", b"a = 1\n")
+        self.commit("one")
+        oid = self.git("rev-parse", "HEAD:a.py")
+        other = "0" * 40
+        reply = "import sys\nsys.stdin.readline()\nsys.stdout.buffer.write(%r)\nsys.stdout.flush()\n"
+        rows = [
+            ("missing", reply % ("%s missing\n" % oid).encode("ascii"), "printed an unexpected header"),
+            ("a tree", reply % ("%s tree 3\nabc\n" % oid).encode("ascii"), "printed an unexpected header"),
+            ("another id", reply % ("%s blob 3\nabc\n" % other).encode("ascii"), "printed an unexpected header"),
+            ("no size", reply % ("%s blob x\nabc\n" % oid).encode("ascii"), "printed an unexpected header"),
+            ("four fields", reply % ("%s blob 3 4\nabc\n" % oid).encode("ascii"), "printed an unexpected header"),
+            ("short blob", reply % ("%s blob 10\nabc" % oid).encode("ascii"), "stopped inside a blob"),
+            ("no line end", reply % ("%s blob 3\nabcX" % oid).encode("ascii"), "printed no line end after a blob"),
+        ]
+        for label, script, reason in rows:
+            with self.subTest(label), self.fake_batch(script):
+                with self.assertRaises(review_scope.ScopeError) as caught:
+                    with review_scope._Blobs(self.repo) as blobs:
+                        blobs.read(oid, 10)
+                self.assertIn(reason, str(caught.exception))
+        with review_scope._Blobs(self.repo) as blobs:
+            self.assertEqual(blobs.read(oid, 3), (6, b"a ="))
+            with self.assertRaises(review_scope.ScopeError) as caught:
+                blobs.read("HEAD:a.py", 10)
+        self.assertIn("not an object id", str(caught.exception))
+
+    def test_a_reader_that_never_answers_is_stopped(self):
+        self.write("a.py", b"a = 1\n")
+        self.commit("one")
+        oid = self.git("rev-parse", "HEAD:a.py")
+        started = time.monotonic()
+        with self.fake_batch("import time\ntime.sleep(20)\n"), mock.patch.object(review_scope, "GIT_TIMEOUT", 1):
+            with self.assertRaises(review_scope.ScopeError) as caught:
+                with review_scope._Blobs(self.repo) as blobs:
+                    blobs.read(oid, 10)
+        self.assertIn("git cat-file took over 1 s", str(caught.exception))
+        self.assertLess(time.monotonic() - started, 10)
+
+    def test_a_git_failure_or_an_unexpected_tree_refuses(self):
+        base, head = self.two_commits()
+
+        def fake_tree(result):
+            def run(argv, *args, **kwargs):
+                if "ls-tree" not in argv:
+                    return REAL_RUN(argv, *args, **kwargs)
+                code, stdout = result
+                return subprocess.CompletedProcess(argv, code, stdout, b"")
+
+            return mock.patch.object(review_scope.subprocess, "run", run)
+
+        rows = [
+            ((128, b""), "git ls-tree failed with exit 128"),
+            ((0, b"100644 blob " + b"0" * 40 + b"\ta.py\0"), "git ls-tree printed an unexpected entry"),
+            ((0, b"100644 blob " + b"0" * 40 + b" 6\0"), "git ls-tree printed an unexpected entry"),
+        ]
+        for result, reason in rows:
+            with self.subTest(reason=reason), fake_tree(result):
+                with self.assertRaises(review_scope.ScopeError) as caught:
+                    review_scope.scope(self.repo, base, head)
+                self.assertIn(reason, str(caught.exception))
+
+
+class GlobTests(unittest.TestCase):
+    def test_glob_match_table(self):
+        rows = [
+            ("**/*.py", "a.py", True), ("**/*.py", "a/b/c.py", True), ("src/**/x.py", "src/x.py", True),
+            ("src/**/x.py", "src/a/b/x.py", True), ("src/**", "src/a/b.py", True), ("**", "a/b", True),
+            ("*.py", "a/b.py", False), ("a/*/c", "a/b/c", True), ("a/*/c", "a/b/d/c", False),
+            ("a?c", "abc", True), ("a?c", "a/c", False), ("a?c", "ac", False), ("*.PY", "a.py", False),
+            ("A.py", "a.py", False), ("*.min.js", "app.min.js", True), ("[ab].py", "a.py", False),
+            ("[ab].py", "[ab].py", True), ("a*b*c", "aXbYc", True), ("a*b", "ab", True), ("a*b", "abc", False),
+            ("src/**/x.py", "lib/x.py", False), ("docs/*.md", "docs/a.md", True),
+        ]
+        for pattern, path, expected in rows:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertIs(review_scope.glob_match(pattern, path), expected)
+
+    def run_bounded(self, pattern, path):
+        result = []
+        worker = threading.Thread(target=lambda: result.append(review_scope.glob_match(pattern, path)), daemon=True)
+        started = time.monotonic()
+        worker.start()
+        worker.join(5)
+        self.assertFalse(worker.is_alive(), "glob_match still running after 5 s: %r" % pattern[:40])
+        self.assertLess(time.monotonic() - started, 1.0)
+        return result[0]
+
+    def test_glob_match_is_bounded(self):
+        segments = "/".join(["a"] * 40)
+        self.assertFalse(self.run_bounded("**/" * 40 + "x", segments + "/y"))
+        self.assertTrue(self.run_bounded("**/" * 40 + "x", segments + "/x"))
+        self.assertFalse(self.run_bounded("*a" * 40 + "b", "a" * 200))
+        self.assertTrue(self.run_bounded("*a" * 40 + "b", "a" * 200 + "b"))
+
+
+SESSION = "review-scope-session"
+
+
+class PathRuleCase(GitCase):
+    def project(self, paths, **extra):
+        body = {"schema": 1, "review": {"paths": paths}}
+        body.update(extra)
+        return json.dumps(body).encode("utf-8")
+
+    def write_snapshot(self, l2=(), l3=None, l4=None, modules=(), effective=None):
+        paths = {1: "core/rigger-defaults.json", 3: str(self.config_dir / "rigger" / "config.json"),
+                 4: str(self.repo / ".claude" / "rigger.json")}
+        got = config.resolve({"schema": 1}, list(l2), l3 or {}, l4 or {}, paths)
+        data = {key: [] for key in snapshot.SNAPSHOT_KEYS}
+        data.update({
+            "format": snapshot.SNAPSHOT_FORMAT,
+            "config": {"effective": effective if effective is not None else got.effective,
+                       "sources": [[list(path), source] for path, source in sorted(got.sources.items())]},
+            "modules": [{"name": name, "root": Path(root).as_posix() if os.name == "nt" else str(root)}
+                        for name, root in modules],
+        })
+        self.assertIsNotNone(snapshot.write_snapshot(self.config_dir, SESSION, data))
+        return snapshot.read_snapshot(self.config_dir, SESSION)
+
+    def run_cli(self, *args):
+        code, text = self.cli(*args)
+        self.assertEqual(code, 0, text)
+        return text.split("\n")
+
+    def same_file(self, a, b):
+        self.assertEqual(os.path.normcase(os.path.abspath(a)), os.path.normcase(os.path.abspath(str(b))))
+
+
+class ProjectRulesTests(PathRuleCase):
+    """D61: level 4 is read at base, by object id, and handed out as files."""
+
+    def base_and_out(self, head_files, paths=None):
+        paths = paths or {"src/**": {"rules": "docs/rules.md"}}
+        base = self.files({".claude/rigger.json": self.project(paths), "docs/rules.md": b"base rules\n",
+                           "src/a.py": b"a = 1\n"}, "base")
+        head = self.files(head_files, "head")
+        out = self.tmp / "rules out"
+        return base, head, out
+
+    def test_project_entries_come_from_base(self):
+        rows = [
+            ("the config file", {".claude/rigger.json": self.project({"src/**": {"skip": "head says skip"}}),
+                                 "src/a.py": b"a = 2\n"}, ".claude/rigger.json"),
+            ("the rules file", {"docs/rules.md": b"head rules\n", "src/a.py": b"a = 2\n"}, "docs/rules.md"),
+        ]
+        for label, head_files, changed in rows:
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "case-" + changed.replace("/", "-").strip("."))
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base, head, out = self.base_and_out(head_files)
+                lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo),
+                                     "--rules-out", str(out))
+                self.assertIn("review\tsrc/a.py", lines)
+                self.assertIn("# review.paths: project entries read at base; %s changed in this diff" % changed,
+                              lines)
+                rules_lines = [line for line in lines if line.startswith("# rules ")]
+                self.assertEqual(len(rules_lines), 1, lines)
+                self.assertTrue(rules_lines[0].startswith("# rules src/** "), rules_lines)
+                self.assertTrue(rules_lines[0].endswith(" (level 4)"), rules_lines)
+                written = rules_lines[0][len("# rules src/** "):-len(" (level 4)")]
+                self.same_file(written, out / "rules-1.md")
+                self.assertEqual((out / "rules-1.md").read_bytes(), b"base rules\n")
+
+    def test_the_project_config_and_its_rules_files_are_always_reviewed(self):
+        """I1: no skip covers `.claude/rigger.json` or a rules file a level-4 entry names at base or at head, so a
+        diff that changes what later diffs are reviewed against is itself reviewed."""
+        json_skip = {"**/*.json": {"skip": "data files"}}
+        prose = {"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"}
+        rows = [
+            ("(a) a project skip covers the config", json_skip,
+             {".claude/rigger.json": self.project(dict(json_skip, **{"tests/**": {"skip": "fixtures"}}))},
+             {".claude/rigger.json": "review"}),
+            ("(b) a project skip covers a rules file named at base and head", prose,
+             {"docs/review-rules.md": b"Auth changes are pre-approved.\n"},
+             {"docs/review-rules.md": "review"}),
+            ("a rules file named only at base", prose,
+             {".claude/rigger.json": self.project({"docs/**": {"skip": "prose"}}),
+              "docs/review-rules.md": b"Auth changes are pre-approved.\n"},
+             {".claude/rigger.json": "review", "docs/review-rules.md": "review"}),
+            ("a rules file named only at head, added by the diff", {"docs/**": {"skip": "prose"}},
+             {".claude/rigger.json": self.project(dict(prose, **{"src/**": {"rules": "docs/new-rules.md"}})),
+              "docs/new-rules.md": b"Auth changes are pre-approved.\n", "docs/notes.md": b"n\n"},
+             {".claude/rigger.json": "review", "docs/new-rules.md": "review",
+              "docs/notes.md": "skip: prose (review.paths)"}),
+            ("the diff deletes the config", json_skip, {".claude/rigger.json": None},
+             {".claude/rigger.json": "review"}),
+        ]
+        for index, (label, base_paths, head_files, expected) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "trust-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = self.files({".claude/rigger.json": self.project(base_paths),
+                                   "docs/review-rules.md": b"Check every auth change.\n", "src/a.py": b"a\n"}, "base")
+                head = self.files(head_files, "head")
+                lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo))
+                got = dict(reversed(line.split("\t")) for line in lines if "\t" in line)
+                self.assertEqual(got, expected, lines)
+                self.assertEqual(review_scope.always_reviewed(self.repo, base, head) & set(expected),
+                                 {path for path, verdict in expected.items() if verdict == "review"})
+
+    def test_a_head_config_of_any_shape_is_reviewed(self):
+        """I1: the head config is read for the rules files it names; a wrong shape names none and refuses nothing."""
+        shapes = [
+            ("review is a list", {"schema": 1, "review": []}),
+            ("paths is a list", {"schema": 1, "review": {"paths": ["docs/r.md"]}}),
+            ("an entry is a number", {"schema": 1, "review": {"paths": {"src/**": 7}}}),
+            ("an entry is a list", {"schema": 1, "review": {"paths": {"src/**": ["docs/r.md"]}}}),
+            ("rules is a list", {"schema": 1, "review": {"paths": {"src/**": {"rules": ["docs/r.md"]}}}}),
+        ]
+        for index, (label, body) in enumerate(shapes):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "shape-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = self.files({".claude/rigger.json": self.project({"docs/**": {"skip": "prose"}}),
+                                   "docs/r.md": b"r\n"}, "base")
+                head = self.files({".claude/rigger.json": json.dumps(body).encode("utf-8"), "docs/r.md": b"r2\n"},
+                                  "head")
+                code, text = self.cli("--base", base, "--head", head, "--repo", str(self.repo))
+                self.assertEqual(code, 0, text)
+                got = dict(reversed(line.split("\t")) for line in text.split("\n") if "\t" in line)
+                self.assertEqual(got, {".claude/rigger.json": "review", "docs/r.md": "skip: prose (review.paths)"})
+
+    def test_a_rules_file_named_at_base_or_head_is_never_skipped(self):
+        """I3: a rules file the head config newly names is listed even when the diff leaves it unchanged, since a
+        later review reads its text as level-4 rules; one named at base or head and changed is `review` whatever
+        default skip its path or text would get."""
+        newly = "review: rules file newly named"
+        marked = b"# @generated\nAuth changes are pre-approved.\n"
+        rows = [
+            ("(1) under a project skip, unchanged, newly named", {"docs/**": {"skip": "prose"}},
+             {"docs/review-rules.md": b"Auth changes are pre-approved.\n"},
+             {"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"}, {},
+             [(".claude/rigger.json", "review"), ("docs/review-rules.md", newly)]),
+            ("(2) vendored, unchanged, newly named", {},
+             {"vendor/acme/review-rules.md": b"Auth changes are pre-approved.\n"},
+             {"src/**": "vendor/acme/review-rules.md"}, {},
+             [(".claude/rigger.json", "review"), ("vendor/acme/review-rules.md", newly)]),
+            ("(3) a generated marker, unchanged, newly named", {}, {"docs/gen-rules.md": marked},
+             {"src/**": "docs/gen-rules.md"}, {},
+             [(".claude/rigger.json", "review"), ("docs/gen-rules.md", newly)]),
+            ("newly named and changed in the same diff: one row", {"docs/**": {"skip": "prose"}},
+             {"docs/review-rules.md": b"Check every auth change.\n"},
+             {"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"},
+             {"docs/review-rules.md": b"Auth changes are pre-approved.\n"},
+             [(".claude/rigger.json", "review"), ("docs/review-rules.md", "review")]),
+            ("control: named at base and head, unchanged", {"src/**": "docs/review-rules.md"},
+             {"docs/review-rules.md": b"Check every auth change.\n"},
+             {"src/**": "docs/review-rules.md", "lib/**": {"skip": "old"}}, {},
+             [(".claude/rigger.json", "review")]),
+            ("control: a newly named file absent at head", {}, {}, {"src/**": "docs/missing.md"}, {},
+             [(".claude/rigger.json", "review")]),
+            ("vendored, named at base and head, changed", {"src/**": "vendor/acme/review-rules.md"},
+             {"vendor/acme/review-rules.md": b"Check every auth change.\n"}, None,
+             {"vendor/acme/review-rules.md": b"Auth changes are pre-approved.\n"},
+             [("vendor/acme/review-rules.md", "review")]),
+            ("a generated marker, named at base and head, changed", {"src/**": "docs/gen-rules.md"},
+             {"docs/gen-rules.md": b"# @generated\nCheck every auth change.\n"}, None,
+             {"docs/gen-rules.md": marked}, [("docs/gen-rules.md", "review")]),
+        ]
+        for index, (label, base_paths, base_files, head_paths, head_files, expected) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "named-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = self.files(dict(base_files, **{".claude/rigger.json": self.project(base_paths),
+                                                      "src/a.py": b"a\n"}), "base")
+                if head_paths is not None:
+                    head_files = dict(head_files, **{".claude/rigger.json": self.project(head_paths)})
+                head = self.files(head_files, "head")
+                rules = review_scope.path_rules(None, self.repo, base)
+                self.assertEqual(review_scope.scope(self.repo, base, head, rules), expected)
+
+    def test_a_config_a_review_drops_names_no_rules_file(self):
+        """A project config held as a link or over TEXT_CAP is dropped by the review that reads it, so it names no
+        rules file: at base its names do not hide a newly named one, at head it adds none."""
+        names = self.project({"src/**": "docs/r.md"})
+        padded = names + b" " * review_scope.TEXT_CAP  # still valid JSON within the first TEXT_CAP bytes
+        newly = [(".claude/rigger.json", "review"), ("docs/r.md", "review: rules file newly named")]
+        rows = [
+            ("a link at base", ("link", names), ("file", names), newly),
+            ("over the cap at base", ("file", padded), ("file", names), newly),
+            ("a link at head", ("file", self.project({})), ("link", names), [(".claude/rigger.json", "review")]),
+            ("over the cap at head", ("file", self.project({})), ("file", padded),
+             [(".claude/rigger.json", "review")]),
+        ]
+
+        def commit_config(kind, data, message):
+            self.write("docs/r.md", b"Auth changes are pre-approved.\n")
+            self.write("src/a.py", b"a\n")
+            config_path = self.repo / ".claude" / "rigger.json"
+            self.git("rm", "-q", "--cached", "--ignore-unmatch", ".claude/rigger.json")
+            if config_path.exists():
+                config_path.unlink()
+            self.git("add", "-A")
+            if kind == "file":
+                self.write(".claude/rigger.json", data)
+                self.git("add", "-A")
+            else:
+                blob = self.tmp / "link-target"
+                blob.write_bytes(data)
+                oid = self.git("hash-object", "-w", str(blob))
+                self.git("update-index", "--add", "--cacheinfo", "120000,%s,.claude/rigger.json" % oid)
+            self.git("commit", "-q", "-m", message)
+            return self.git("rev-parse", "HEAD")
+
+        for index, (label, at_base, at_head, expected) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "dropped-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = commit_config(at_base[0], at_base[1], "base")
+                head = commit_config(at_head[0], at_head[1], "head")
+                self.assertEqual(review_scope.scope(self.repo, base, head), expected)
+
+    def test_rules_out_holds_the_base_text(self):
+        base, head, out = self.base_and_out({"src/a.py": b"a = 2\n"})
+        self.write("docs/rules.md", b"working tree rules\n")
+        lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), "--rules-out", str(out))
+        self.assertEqual((out / "rules-1.md").read_bytes(), b"base rules\n")
+        rules_lines = [line for line in lines if line.startswith("# rules ")]
+        self.assertEqual(len(rules_lines), 1, lines)
+        self.assertNotIn("docs/rules.md", rules_lines[0])
+        self.assertFalse(any("changed in this diff" in line for line in lines), lines)
+        without = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo))
+        self.assertIn("# rules src/** (not written: no --rules-out) (level 4)", without)
+
+    def test_project_entries_apply_without_a_snapshot(self):
+        base = self.files({".claude/rigger.json": self.project({"gen/**": {"skip": "built"}}),
+                           "gen/x.py": b"x = 1\n"}, "base")
+        head = self.files({"gen/x.py": b"x = 2\n"}, "head")
+        for extra in ((), ("--session", "no-such-session")):
+            with self.subTest(extra=extra):
+                lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), *extra)
+                self.assertIn("skip: built (review.paths)\tgen/x.py", lines)
+                self.assertIn("# review.paths: none (no snapshot)", lines)
+                self.assertIn("# review-scope: files 1, review 0, skipped 1", lines)
+
+    def test_rules_lines_name_matched_entries_only(self):
+        paths = {"src/**": "docs/rules.md", "docs/*.txt": "docs/rules.md",
+                 "gen/**": {"rules": "docs/rules.md", "skip": "built"}}
+        base = self.files({".claude/rigger.json": self.project(paths), "docs/rules.md": b"r\n",
+                           "src/a.py": b"a\n", "gen/g.py": b"g\n", "docs/unchanged.txt": b"u\n"}, "base")
+        head = self.files({"src/a.py": b"a2\n", "gen/g.py": b"g2\n"}, "head")
+        out = self.tmp / "out"
+        lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), "--rules-out", str(out))
+        rules_lines = [line for line in lines if line.startswith("# rules ")]
+        self.assertEqual([line.split(" ")[2] for line in rules_lines], ["src/**"], lines)
+        self.assertEqual(sorted(os.listdir(str(out))), ["rules-1.md"])
+
+    def test_level_four_rules_file_outside_the_repository_is_dropped(self):
+        (self.tmp / "outside.md").write_bytes(b"outside\n")
+        paths = {"a/**": "../outside.md", "b/**": "docs/../../outside.md", "c/**": (self.tmp / "outside.md").as_posix(),
+                 "d/**": "docs\\rules.md", "e/**": "./docs/rules.md", "f/**": "docs//rules.md"}
+        base = self.files({".claude/rigger.json": self.project(paths), "docs/rules.md": b"r\n",
+                           "a/x.py": b"1\n", "b/x.py": b"1\n", "c/x.py": b"1\n", "d/x.py": b"1\n", "e/x.py": b"1\n",
+                           "f/x.py": b"1\n"}, "base")
+        head = self.files({name: b"2\n" for name in ("a/x.py", "b/x.py", "c/x.py", "d/x.py", "e/x.py", "f/x.py")})
+        notices = []
+        self.assertEqual(review_scope.path_rules(None, self.repo, base, notices), [])
+        for glob in paths:
+            reason = "outside the repository" if glob[0] in "abc" else "not a plain repository path"
+            with self.subTest(glob=glob):
+                self.assertIn("project entry %s dropped: rules file %s" % (glob, reason), notices)
+        lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), "--rules-out",
+                             str(self.tmp / "out"))
+        self.assertEqual([line for line in lines if line.startswith("# rules ")], [])
+
+    def test_level_four_rules_file_must_be_tracked_at_base(self):
+        hostile = "docs/$(x); y.md"
+        self.write(".claude/rigger.json", self.project({"a/**": "docs/untracked.md", "b/**": hostile,
+                                                        "c/**": "docs/link.md", "d/**": "docs/big.md"}))
+        self.write(hostile, b"hostile rules\n")
+        self.write("docs/big.md", b"x" * (review_scope.TEXT_CAP + 1))
+        for name in ("a/x.py", "b/x.py", "c/x.py", "d/x.py"):
+            self.write(name, b"1\n")
+        self.git("add", "-A")
+        target = self.repo / "link-target.txt"
+        target.write_bytes(b"docs/rules.md")
+        link = self.git("hash-object", "-w", str(target))
+        target.unlink()
+        self.git("update-index", "--add", "--cacheinfo", "120000,%s,docs/link.md" % link)
+        self.git("commit", "-q", "-m", "base")
+        base = self.git("rev-parse", "HEAD")
+        self.write("docs/untracked.md", b"untracked rules\n")
+        for name in ("a/x.py", "b/x.py", "c/x.py", "d/x.py"):
+            self.write(name, b"2\n")
+            self.git("add", name)
+        self.git("commit", "-q", "-m", "head")
+        head = self.git("rev-parse", "HEAD")
+        out = self.tmp / "out"
+        notices = []
+        kept = review_scope.path_rules(None, self.repo, base, notices)
+        self.assertEqual([item.glob for item in kept], ["b/**"])
+        self.assertIn("project entry a/** dropped: rules file not tracked at base", notices)
+        batch = []
+        with self.git_calls(batch_input=batch) as calls:
+            lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), "--rules-out", str(out))
+        self.assertIn("# review.paths: project entry a/** dropped: rules file not tracked at base", lines)
+        self.assertIn("# review.paths: project entry c/** dropped: rules file not a regular file at base", lines)
+        self.assertIn("# review.paths: project entry d/** dropped: rules file over %d bytes" % review_scope.TEXT_CAP,
+                      lines)
+        rules_lines = [line for line in lines if line.startswith("# rules ")]
+        self.assertEqual(len(rules_lines), 1, lines)
+        self.assertTrue(rules_lines[0].startswith("# rules b/** "), rules_lines)
+        self.assertEqual((out / "rules-1.md").read_bytes(), b"hostile rules\n")
+        self.assertTrue(calls)
+        for argv, _env in calls:
+            with self.subTest(argv=argv[1:]):
+                for element in argv:
+                    self.assertNotIn("$(x)", element)
+                    self.assertNotIn("untracked", element)
+                    self.assertNotIn("rules.md", element)
+                if "ls-tree" in argv:
+                    self.assertEqual(argv[-1], "--")
+        fed = b"".join(batch).split(b"\n")
+        self.assertEqual(fed[-1], b"")
+        self.assertTrue(fed[:-1])
+        for line in fed[:-1]:
+            with self.subTest(line=line):
+                self.assertRegex(line.decode("ascii", "replace"), r"\A[0-9a-f]{40}([0-9a-f]{24})?\Z")
+
+    def test_level_four_entries_are_validated(self):
+        rows = [
+            ("a bad entry", self.project({"a/**": {}, "b/**": {"skip": "kept"}}),
+             "config base:.claude/rigger.json review.paths a/** ignored: needs rules or skip", {"b/x.py"}),
+            ("a line break in a reason", self.project({"b/**": {"skip": "x\nreview\tb/x.py"}}),
+             "review.paths b/** ignored: skip holds a line break or control character", set()),
+            ("not JSON", b"{nope", "not valid JSON", set()),
+            ("schema 2", b'{"schema": 2, "review": {"paths": {"b/**": {"skip": "s"}}}}', "schema 2", set()),
+            ("over the cap", self.project({"b/**": {"skip": "s"}}, pad="x" * review_scope.TEXT_CAP),
+             "over %d bytes" % review_scope.TEXT_CAP, set()),
+        ]
+        for index, (label, body, notice, skipped) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "case-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = self.files({".claude/rigger.json": body, "a/x.py": b"1\n", "b/x.py": b"1\n"}, "base")
+                head = self.files({"a/x.py": b"2\n", "b/x.py": b"2\n"}, "head")
+                lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo))
+                self.assertTrue(any(line.startswith("# review.paths: ") and notice in line for line in lines), lines)
+                got = {line.split("\t")[1] for line in lines if line.startswith("skip: ")}
+                self.assertEqual(got, skipped)
+
+    def test_a_project_config_that_is_a_link_is_dropped(self):
+        self.write("real.json", self.project({"a/**": {"skip": "s"}}))
+        self.write("a/x.py", b"1\n")
+        self.git("add", "-A")
+        target = self.tmp / "target.txt"
+        target.write_bytes(b"../real.json")
+        link = self.git("hash-object", "-w", str(target))
+        self.git("update-index", "--add", "--cacheinfo", "120000,%s,.claude/rigger.json" % link)
+        self.git("commit", "-q", "-m", "base")
+        base = self.git("rev-parse", "HEAD")
+        notices = []
+        self.assertEqual(review_scope.path_rules(None, self.repo, base, notices), [])
+        self.assertEqual(notices, ["project config .claude/rigger.json dropped: not a regular file at base"])
+
+    def test_rules_out_that_cannot_be_written_refuses(self):
+        base, head, _out = self.base_and_out({"src/a.py": b"a = 2\n"})
+        blocker = self.tmp / "a file"
+        blocker.write_bytes(b"")
+        code, text = self.cli("--base", base, "--head", head, "--repo", str(self.repo), "--rules-out", str(blocker))
+        self.assertEqual(code, 2)
+        self.assertTrue(text.startswith("review-scope: refused: rules could not be written to "), text)
+
+    def test_validate_level_is_what_checks_level_four(self):
+        base = self.files({".claude/rigger.json": self.project({"b/**": {"skip": "s"}}), "b/x.py": b"1\n"}, "base")
+        with mock.patch.object(config, "validate_level", return_value=({}, ["rigger: config w refused"])) as check:
+            notices = []
+            self.assertEqual(review_scope.path_rules(None, self.repo, base, notices), [])
+        self.assertEqual(check.call_args[0][1], 4)
+        self.assertIn("config w refused", notices)
+
+
+class SnapshotRulesTests(PathRuleCase):
+    """D61: levels 2 and 3 from the session snapshot, an entry's level from its highest leaf."""
+
+    def two(self, names):
+        base = self.files({name: b"1\n" for name in names}, "base")
+        head = self.files({name: b"2\n" for name in names}, "head")
+        return base, head
+
+    def test_an_entry_with_a_level_four_leaf_counts_as_level_four(self):
+        (self.config_dir / "rigger").mkdir(parents=True)
+        (self.config_dir / "rigger" / "r.md").write_bytes(b"r\n")
+        l3 = {"schema": 1, "review": {"paths": {"a/**": {"rules": "r.md"}, "b/**": {"skip": "personal skip"}}}}
+        l4 = {"schema": 1, "review": {"paths": {"a/**": {"skip": "session folder skip"},
+                                                "c/**": {"skip": "from the snapshot"}}}}
+        data = self.write_snapshot(l3=l3, l4=l4)
+        base, head = self.two(("a/x.py", "b/x.py", "c/x.py"))
+        rules = review_scope.path_rules(data, self.repo, base)
+        self.assertEqual([(item.glob, item.skip, item.level) for item in rules], [("b/**", "personal skip", 3)])
+        self.assertEqual(self.verdicts(base, head, rules),
+                         {"a/x.py": "review", "b/x.py": "skip: personal skip (review.paths)", "c/x.py": "review"})
+
+    def test_no_snapshot_applies_no_personal_or_company_rule(self):
+        (self.config_dir / "rigger").mkdir(parents=True)
+        (self.config_dir / "rigger" / "config.json").write_bytes(self.project({"a/**": {"skip": "personal"}}))
+        self.write_snapshot(l3={"schema": 1, "review": {"paths": {"a/**": {"skip": "personal"}}}})
+        base, head = self.two(("a/x.py",))
+        self.assertEqual(review_scope.path_rules(None, self.repo, base), [])
+        for extra in ((), ("--session", "another-session")):
+            with self.subTest(extra=extra):
+                lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), *extra)
+                self.assertIn("review\ta/x.py", lines)
+                self.assertIn("# review.paths: none (no snapshot)", lines)
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": SESSION}):
+            lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo))
+        self.assertIn("skip: personal (review.paths)\ta/x.py", lines)
+
+    def test_snapshot_entries_resolve_per_level(self):
+        module = self.tmp / "mods" / "company-a"
+        (module / "rules").mkdir(parents=True)
+        (module / "rules" / "c.md").write_bytes(b"c\n")
+        (self.tmp / "mods" / "outside.md").write_bytes(b"o\n")
+        (self.config_dir / "rigger").mkdir(parents=True)
+        (self.config_dir / "rigger" / "p.md").write_bytes(b"p\n")
+        l2 = [("company-a", {"review": {"paths": {"src/**": "rules/c.md", "out/**": "../outside.md"}}})]
+        l3 = {"schema": 1, "review": {"paths": {"lib/**": "p.md", "gone/**": "missing.md"}}}
+        self.write_snapshot(l2=l2, l3=l3, modules=[("company-a", module)])
+        base, head = self.two(("src/a.py", "lib/b.py", "out/c.py", "gone/d.py"))
+        lines = self.run_cli("--base", base, "--head", head, "--repo", str(self.repo), "--session", SESSION)
+        rules_lines = {line.split(" ")[2]: line for line in lines if line.startswith("# rules ")}
+        self.assertEqual(set(rules_lines), {"src/**", "lib/**"}, lines)
+        self.assertTrue(rules_lines["src/**"].endswith(" (level 2)"))
+        self.same_file(rules_lines["src/**"][len("# rules src/** "):-len(" (level 2)")], module / "rules" / "c.md")
+        self.assertTrue(rules_lines["lib/**"].endswith(" (level 3)"))
+        self.same_file(rules_lines["lib/**"][len("# rules lib/** "):-len(" (level 3)")],
+                       self.config_dir / "rigger" / "p.md")
+        self.assertIn("# review.paths: company entry out/** dropped: rules file outside the module", lines)
+        self.assertIn("# review.paths: personal entry gone/** dropped: rules file not found", lines)
+
+    def test_a_rules_file_resolves_by_the_level_that_set_it(self):
+        module = self.tmp / "mods" / "company-a"
+        (module / "rules").mkdir(parents=True)
+        (module / "rules" / "c.md").write_bytes(b"c\n")
+        (self.config_dir / "rigger" / "rules").mkdir(parents=True)
+        (self.config_dir / "rigger" / "rules" / "c.md").write_bytes(b"personal c\n")
+        l2 = [("company-a", {"review": {"paths": {"mix/**": {"rules": "rules/c.md"}}}}),
+              ("company-b", {"review": {"paths": {"nomod/**": "rules/c.md"}}})]
+        l3 = {"schema": 1, "review": {"paths": {"mix/**": {"skip": "personal"}}}}
+        data = self.write_snapshot(l2=l2, l3=l3, modules=[("company-a", module)])
+        base, _head = self.two(("mix/a.py",))
+        notices = []
+        rules = review_scope.path_rules(data, self.repo, base, notices)
+        self.assertEqual([(item.glob, item.skip, item.level) for item in rules], [("mix/**", "personal", 3)])
+        self.same_file(rules[0].rules, module / "rules" / "c.md")
+        self.assertEqual(notices, ["company entry nomod/** dropped: module root unknown"])
+
+    def test_snapshot_entries_are_checked_again(self):
+        effective = {"review": {"paths": {"a/**": {}, "b/**": {"skip": "x\treview"}, "c/**": {"skip": "ok"},
+                                          "d/**": {"skip": "no source"}}}}
+        data = self.write_snapshot(l3={"schema": 1, "review": {"paths": {"a/**": {"skip": "s"}, "b/**": {"skip": "s"},
+                                                                         "c/**": {"skip": "s"}}}},
+                                   effective=effective)
+        base, _head = self.two(("a/x.py",))
+        notices = []
+        rules = review_scope.path_rules(data, self.repo, base, notices)
+        self.assertEqual([(item.glob, item.skip) for item in rules], [("c/**", "ok")])
+        self.assertEqual(len(notices), 3, notices)
+        self.assertIn("snapshot entry d/** dropped: its level is unknown", notices)
+
+    def test_a_level_four_entry_replaces_a_lower_one_for_its_glob(self):
+        l3 = {"schema": 1, "review": {"paths": {"src/**": {"skip": "personal"}, "lib/**": {"skip": "personal"}}}}
+        data = self.write_snapshot(l3=l3)
+        base = self.files({".claude/rigger.json": self.project({"src/**": "docs/r.md", "lib/**": None}),
+                           "docs/r.md": b"r\n", "src/a.py": b"1\n", "lib/b.py": b"1\n"}, "base")
+        head = self.files({"src/a.py": b"2\n", "lib/b.py": b"2\n"}, "head")
+        rules = review_scope.path_rules(data, self.repo, base)
+        self.assertEqual([(item.glob, item.rules, item.skip, item.level) for item in rules],
+                         [("src/**", "docs/r.md", None, 4)])
+        self.assertEqual(self.verdicts(base, head, rules), {"src/a.py": "review", "lib/b.py": "review"})
+
+
 class CliTests(GitCase):
     def test_cli_lines_and_summary(self):
         base, head = self.two_commits()
@@ -642,8 +1482,9 @@ class CliTests(GitCase):
         self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
         self.assertNotIn(b"\r", proc.stdout)
         lines = proc.stdout.decode("utf-8").split("\n")
-        expected = ["review\ta.py", "skip: deleted\tb.py", "review\tc.bin", "skip: deleted\td.py", "review\te.py",
-                    "review\ttests/test_x.py", "review\t" + UNICODE_NAME,
+        expected = ["review\ta.py", "skip: deleted\tb.py", "review: binary added\tc.bin", "skip: deleted\td.py",
+                    "review\te.py", "review\ttests/test_x.py", "review\t" + UNICODE_NAME,
+                    "# review.paths: none (no snapshot)",
                     "# review-scope: files 7, review 5, skipped 2", ""]
         self.assertEqual(lines, expected)
 

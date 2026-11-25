@@ -1,11 +1,11 @@
 {
   "schema": 1,
   "slots": {
-    "reviewer": { "kind": "agent", "target": "rigger-core:reviewer", "model": "by-rule" },
+    "reviewer": { "kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule" },
     "worker": { "kind": "agent", "target": "rigger-core:worker", "model": "by-rule" },
     "implementer": { "kind": "agent", "target": "rigger-core:implementer", "model": "pinned" },
     "mapper": { "kind": "agent", "target": "rigger-core:mapper", "model": "pinned" },
-    "testing": { "kind": "skill", "target": "rigger-core:testing" },
+    "testing": { "kind": "skill", "target": "rigger-testing:testing" },
     "shell-guard": { "kind": "hook", "target": "rigger-windows", "requires": ["os:windows"] },
     "lessons": { "kind": "hook", "target": "rigger-lessons" },
     "process": {

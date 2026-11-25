@@ -64,9 +64,11 @@ class Layout:
         write(self.core / "agents" / "implementer.md", "---\nname: implementer\nomitClaudeMd: true\n---\nx\n")
         write(self.core / "agents" / "mapper.md", "---\nname: mapper\nomitClaudeMd: true\n---\nx\n")
         write(self.core / "agents" / "worker.md", "---\nname: worker\n---\nx\n")
-        write(self.core / "agents" / "reviewer.md", "---\nname: reviewer\n---\nx\n")
-        for skill in ("git-workflow", "testing"):
-            write(self.core / "skills" / skill / "SKILL.md", "---\nname: %s\n---\n" % skill)
+        self.review = self.module("rigger-review", {})
+        write(self.review / "agents" / "reviewer.md", "---\nname: reviewer\n---\nx\n")
+        self.testing = self.module("rigger-testing", {})
+        write(self.testing / "skills" / "testing" / "SKILL.md", "---\nname: testing\n---\n")
+        write(self.core / "skills" / "git-workflow" / "SKILL.md", "---\nname: git-workflow\n---\n")
 
     def module(self, name, files, layer="general", triggers=(), subagents=None, user_config=None, listed=True):
         root = self.plugins / name
@@ -253,7 +255,7 @@ class PersonalTests(Base):
         self.layout.personal("mine.md", "## Mine\n\n{{slot:testing}} and {{reply_language}}\n")
         out = self.layout.render()
         self.assertIn(b"{{slot:testing}} and {{reply_language}}\n", out)
-        self.assertIn(b"run the tests with `rigger-core:testing`", out)  # control: module text is rendered
+        self.assertIn(b"run the tests with `rigger-testing:testing`", out)  # control: module text is rendered
 
     def test_personal_override_inherits_audience(self):
         self.layout.rules_module()
@@ -652,7 +654,7 @@ class SnapshotTests(Base):
 
 
 class FullLayoutTests(unittest.TestCase):
-    """All 7 repository modules plus a full rules.d."""
+    """All 9 repository modules plus a full rules.d."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -667,7 +669,7 @@ class FullLayoutTests(unittest.TestCase):
         shutil.rmtree(str(self.tmp), ignore_errors=True)
 
     def test_full_repo_layout_fits_with_full_rules_d(self):
-        self.assertEqual(len(self.layout.dirs), 6)
+        self.assertEqual(len(self.layout.dirs), 8)
         found = self.layout.assemble()
         self.assertEqual(found.notices, [])
         session = [self.layout.part(i) for i in range(1, 7)]
@@ -841,7 +843,7 @@ class SlotWiringTests(Base):
         found = self.layout.assemble()
         self.assertEqual(found.notices, [])
         text = self.text(found)
-        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-core:testing` |\n",
+        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-testing:testing` |\n",
                       text)
         self.assertNotIn(b"superpowers:", text)
         self.assertNotIn(b"new behaviour, a spec or a plan", text)  # its every entry is a superpowers skill
@@ -881,7 +883,7 @@ class SlotWiringTests(Base):
         text = self.text(found)
         self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `sp:my-testing` |\n", text)
         self.assertIn(b"run the tests with `sp:my-testing`\n", text)
-        self.assertNotIn(b"rigger-core:testing", text)
+        self.assertNotIn(b"rigger-testing:testing", text)
 
     def test_an_entry_that_fails_falls_back_in_the_row_the_cell_and_the_placeholder(self):
         # D34: the fallback, not the plain merge, is what every reader of a slot sees.
@@ -891,9 +893,9 @@ class SlotWiringTests(Base):
         self.assertEqual(found.notices, ["rigger: slot testing from %s ignored: plugin nope is not enabled; using default"
                                          % self.project_file()])
         text = self.text(found)
-        self.assertIn(b"run the tests with `rigger-core:testing`\n", text)
-        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-core:testing` |\n", text)
-        self.assertIn(b"| testing | skill | rigger-core:testing | \xe2\x80\x94 | default |\n",
+        self.assertIn(b"run the tests with `rigger-testing:testing`\n", text)
+        self.assertIn(b"| writing code or tests, reviewing tests, a spike, port or rehearsal | `rigger-testing:testing` |\n", text)
+        self.assertIn(b"| testing | skill | rigger-testing:testing | \xe2\x80\x94 | default |\n",
                       self.section_text(found, "slots.slots"))
         self.assertNotIn(b"nope:x", text)
 
@@ -905,8 +907,8 @@ class SlotWiringTests(Base):
         notice = ("rigger: .claude/rigger.json may not set a command for slot reviewer; add it to "
                   "trust.project_commands in %s to allow it\n" % self.config_file()).encode("utf-8")
         self.assertTrue(first.startswith(notice), first[:300])
-        self.assertIn(b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n", first)
-        self.assertIn(b"review with `rigger-core:reviewer`\n", first)
+        self.assertIn(b"| reviewer | agent | rigger-review:reviewer | by-rule | default |\n", first)
+        self.assertIn(b"review with `rigger-review:reviewer`\n", first)
         self.assertNotIn(b"runs the project's command", first)
         self.assertNotIn(b"Run a command slot", first)
 
@@ -984,6 +986,22 @@ class SlotWiringTests(Base):
         self.assertEqual(compacted.count(line), 1)
         self.assertNotIn(b"snapshot missing", compacted)
 
+    def test_default_slot_without_its_plugin_names_the_install_command(self):
+        # Review Focus 1: rigger-core updated, the review and testing modules not installed.
+        self.layout.dirs = [d for d in self.layout.dirs if d not in (str(self.layout.review), str(self.layout.testing))]
+        self.layout.rules_module()
+        lines = [b"rigger: slot reviewer is empty: install rigger-review (claude plugin install rigger-review@rigger)\n",
+                 b"rigger: slot testing is empty: install rigger-testing (claude plugin install rigger-testing@rigger); "
+                 b"the commit-time weak-test guard is off\n"]
+        for source in ("startup", "clear", "compact"):
+            with self.subTest(source=source):
+                stdin = self.layout.hook_input(session_id="ih1", source=source)
+                text = b"".join(self.layout.part(i, stdin=stdin) for i in range(1, 7))
+                for line in lines:
+                    self.assertEqual(text.count(line), 1, (source, line))
+                self.assertIn(b"| reviewer | \xe2\x80\x94 | \xe2\x80\x94 | \xe2\x80\x94 | default |\n", text)
+                self.assertNotIn(b"snapshot missing", text)  # compact printed the session's snapshot
+
     def test_format_one_snapshot_is_read_again(self):
         # Review Focus 8: a snapshot of release 0.5.0 (format 1) is read as missing, and replaced.
         self.layout.rules_module()
@@ -1010,7 +1028,7 @@ class SlotWiringTests(Base):
         self.assertEqual(data["slots"]["trusted"], ["process.tdd"])
         reviewer = [row for row in data["slots"]["rows"] if row["path"] == "reviewer"][0]
         self.assertEqual((reviewer["kind"], reviewer["target"], reviewer["source"]),
-                         ("agent", "rigger-core:reviewer", "default"))
+                         ("agent", "rigger-review:reviewer", "default"))
         import slots  # the reader slot_run.py uses gives back the assembly's own rows
         self.assertEqual(slots.from_snapshot(data["slots"]), (self.layout.assemble().slot_rows,
                                                               frozenset(["process.tdd"])))
@@ -1045,7 +1063,7 @@ class SlotWiringTests(Base):
         self.assertNotIn(marker.encode("ascii"), raw)
         data = json.loads(raw)
         self.assertEqual(data["config"]["effective"]["slots"]["reviewer"],
-                         {"kind": "agent", "target": "rigger-core:reviewer"})
+                         {"kind": "agent", "target": "rigger-review:reviewer"})
         self.assertEqual([(p, s) for p, s in data["config"]["sources"] if p[0] == "slots" and s.startswith("L4:")], [])
         # Control: once trusted, the same command is in effect and the snapshot holds it.
         write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["reviewer"]}})
@@ -1059,7 +1077,7 @@ class SlotWiringTests(Base):
         again = self.layout.part(1, stdin=self.compact("nc1"))
         self.assertTrue(again.startswith(b"rigger: snapshot missing; rules read again\n"), again[:80])
         self.assertIn(b"rigger: .claude/rigger.json may not set a command for slot reviewer;", again)
-        self.assertIn(b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n", again)
+        self.assertIn(b"| reviewer | agent | rigger-review:reviewer | by-rule | default |\n", again)
 
     def test_every_part_packs_the_same_text_with_slots(self):
         self.layout.rules_module()
@@ -1124,7 +1142,7 @@ class TableFitWiringTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.layout = Layout(self.tmp)
         self.layout.core = REPO_CORE
-        self.layout.dirs = [str(REPO / "plugins" / "rigger-rules")]
+        self.layout.dirs = [str(REPO / "plugins" / "rigger-rules"), str(REPO / "plugins" / "rigger-testing")]
         self.layout.plain_plugin("x")  # x enabled: D39 cannot drop the rows, only the fit can
 
     def tearDown(self):
@@ -1145,7 +1163,7 @@ class TableFitWiringTests(unittest.TestCase):
                 bodies = assemble.part_bodies(found, False)
                 holding = [body for body in bodies if b"## Skill triggers" in body]
                 self.assertEqual(len(holding), 1, [len(body) for body in bodies])
-                self.assertIn(b"| `rigger-core:testing` |", holding[0])
+                self.assertIn(b"| `rigger-testing:testing` |", holding[0])
                 joined = b"".join(bodies)
                 self.assertNotIn(b"rules left out over the hook cap", joined)
                 if shown is None:  # the precondition: these rows overflow a part, so the fit had to drop some
@@ -1163,7 +1181,7 @@ class TableFitWiringTests(unittest.TestCase):
         bodies = assemble.part_bodies(found, True)
         holding = [body for body in bodies if b"## Skill triggers" in body]
         self.assertEqual(len(holding), 1, [len(body) for body in bodies])
-        self.assertIn(b"| `rigger-core:testing` |", holding[0])
+        self.assertIn(b"| `rigger-testing:testing` |", holding[0])
         self.assertIn(b"rigger: left out ", holding[0])  # the precondition: the rows overflow once escaped
         self.assertNotIn(b"rules left out over the hook cap", b"".join(bodies))
 
@@ -1338,14 +1356,14 @@ class CheckTests(unittest.TestCase):
                 {"id": "mod-d.t", "before": "b", "load": ["slot:process.tdd", "slot:testing"]}])],
              "trigger mod-d.t loads process.tdd without testing before it"),
         ]
-        code, out, err = self.check(lay.core, good)
+        code, out, err = self.check(lay.core, lay.testing, good)
         self.assertEqual(code, 0, out + err)  # control: the base set, with one table and a filled slot, is clean
         self.assertTrue(out.decode("utf-8").splitlines()[-1].endswith("findings 0"))
         for name, plant, line in rows:
             with self.subTest(name):
                 extra = plant()
                 try:
-                    code, out, err = self.check(lay.core, good, *extra)
+                    code, out, err = self.check(lay.core, lay.testing, good, *extra)
                 finally:
                     defaults.write_bytes(clean)
                 lines = out.decode("utf-8").splitlines()
@@ -1415,7 +1433,7 @@ class CheckTests(unittest.TestCase):
         code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(REPO_CORE), RIGGER_MODULE_DIRS="")
         lines = out.decode("utf-8").splitlines()
         self.assertEqual(code, 0, out + err)
-        self.assertRegex(lines[-1], r"^# check: modules 7, rules files (1[89]|[2-9]\d), findings 0$")
+        self.assertRegex(lines[-1], r"^# check: modules 9, rules files (1[89]|[2-9]\d), findings 0$")
         self.assertIn("# external: superpowers", lines)
 
     def test_check_without_modules_in_a_cache_layout_says_it_saw_one_module(self):
@@ -1443,7 +1461,7 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 0)
         fields = out.decode("utf-8").splitlines()[0].split("\t")
         self.assertEqual(fields[:3], ["CHECK", "rules-assembly", "OK"])
-        self.assertRegex(fields[3], r"^modules 2, sections 6$")  # ## Slots is a section of rigger-core
+        self.assertRegex(fields[3], r"^modules 4, sections 6$")  # ## Slots is a section of rigger-core; rigger-review and rigger-testing have none
         self.assertEqual(len(fields), 5)
 
     def test_each_expects_row_gets_its_own_fix(self):

@@ -25,7 +25,7 @@ AGENT_TYPE = "rigger-core:worker"
 FIELDS = ["agent8", "agent_type", "contract", "has_summary", "ms", "sid8", "slot", "source", "status", "ts", "verdict"]
 TAIL = 256 * 1024
 WAIT = 2.5   # the script's own bound; a row written later than this is never written
-REVIEWER = "rigger-core:reviewer"
+REVIEWER = "rigger-review:reviewer"
 WORKER_REPORT = "STATUS: DONE\n\n## Summary\n- a\n- b\n- c\n\n## Details\nbody\n"
 SNAPSHOT_KEYS = ("format", "parts", "modules", "config", "sections", "rows", "slots", "notices")
 

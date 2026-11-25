@@ -19,7 +19,8 @@ DEFAULT_SLOTS = json.loads((CORE_ROOT / "rigger-defaults.json").read_bytes().dec
 L1 = "L1:rigger-defaults.json"
 L3_FILE = "cfg/rigger/config.json"
 L4_FILE = "repo/.claude/rigger.json"
-ENABLED = frozenset(("rigger-core", "rigger-windows", "rigger-lessons", "superpowers"))
+ENABLED = frozenset(("rigger-core", "rigger-review", "rigger-testing", "rigger-windows", "rigger-lessons",
+                     "superpowers"))
 COMMAND = ["reviewer-cli", "--out", "{out}"]
 EMPTY_SLOT = "the slot is empty"
 RLO = chr(0x202E)  # right-to-left override, category Cf
@@ -39,7 +40,9 @@ class SlotsTestCase(unittest.TestCase):
                                 skills=("testing",))
         self.windows = self.module("rigger-windows", fills="shell-guard", failure_mode="open")
         self.lessons = self.module("rigger-lessons", fills="lessons")
-        self.modules = [self.core, self.windows, self.lessons]
+        self.review = self.module("rigger-review", agents=("reviewer",), fills="reviewer")
+        self.testing = self.module("rigger-testing", skills=("testing",), fills="testing")
+        self.modules = [self.core, self.review, self.testing, self.windows, self.lessons]
 
     def module(self, name, agents=(), skills=(), fills=None, failure_mode=None):
         root = self.tmp / name
@@ -77,11 +80,11 @@ def level(slot_values, **other):
 class ResolutionTests(SlotsTestCase):
     def test_defaults_give_eleven_rows_on_windows_and_ten_elsewhere(self):
         expected = [
-            ("reviewer", "agent", "rigger-core:reviewer", "by-rule", (), None),
+            ("reviewer", "agent", "rigger-review:reviewer", "by-rule", (), None),
             ("worker", "agent", "rigger-core:worker", "by-rule", (), None),
             ("implementer", "agent", "rigger-core:implementer", "pinned", (), None),
             ("mapper", "agent", "rigger-core:mapper", "pinned", (), None),
-            ("testing", "skill", "rigger-core:testing", None, (), None),
+            ("testing", "skill", "rigger-testing:testing", None, (), None),
             ("shell-guard", "hook", "rigger-windows", None, ("rigger-windows",), "open"),
             ("lessons", "hook", "rigger-lessons", None, ("rigger-lessons",), None),
             ("process.brainstorm", "skill", "superpowers:brainstorming", None, (), None),
@@ -148,9 +151,11 @@ class ResolutionTests(SlotsTestCase):
     def test_level_one_default_broken_for_another_reason_says_so(self):
         core = self.module("core-copy", agents=("reviewer",))
         core.name = "rigger-core"
-        rows, _, _, notices = self.resolve(modules=[core, self.windows, self.lessons])
+        testing = self.module("testing-copy")
+        testing.name = "rigger-testing"
+        rows, _, _, notices = self.resolve(modules=[core, testing, self.windows, self.lessons])
         self.assertFalse(rows["testing"].filled)
-        self.assertIn("rigger: slot testing from rigger-defaults.json ignored: rigger-core has no skill testing; "
+        self.assertIn("rigger: slot testing from rigger-defaults.json ignored: rigger-testing has no skill testing; "
                       + EMPTY_SLOT, notices)
 
     def test_levels_without_slots_are_quiet(self):
@@ -235,12 +240,96 @@ class ResolutionTests(SlotsTestCase):
                 self.assertEqual("mapper" in order, kept)
                 self.assertEqual(notices, [])
 
+    def test_a_slot_dropped_by_its_own_requires_fills_no_other_slot(self):
+        # The default shell-guard row requires os:windows: elsewhere it is left out, so a slot that requires it is
+        # left out too, and so is one that requires that slot in turn.
+        l3 = level({"mapper": {"requires": ["slot:shell-guard"]}, "worker": {"requires": ["slot:mapper"]}})
+        for os_name, kept in (("windows", True), ("linux", False), ("macos", False)):
+            with self.subTest(os=os_name):
+                _, order, _, notices = self.resolve(l3=l3, os_name=os_name)
+                self.assertEqual(("shell-guard" in order, "mapper" in order, "worker" in order), (kept,) * 3)
+                self.assertEqual(notices, [])
+
+
+REVIEW_HINT = "install rigger-review (claude plugin install rigger-review@rigger)"
+TESTING_HINT = ("install rigger-testing (claude plugin install rigger-testing@rigger); "
+                "the commit-time weak-test guard is off")
+WITHOUT_MODULES = ENABLED - {"rigger-review", "rigger-testing"}
+
+
+class InstallHintTests(SlotsTestCase):
+    """D57: the reviewer and testing defaults name the install command when their plugin is not enabled."""
+
+    def plain_core(self):
+        core = self.module("core-plain", agents=("worker", "implementer", "mapper"))
+        core.name = "rigger-core"
+        return core
+
+    def test_level_one_defaults_give_one_install_line_each(self):
+        rows, _, _, notices = self.resolve(enabled=WITHOUT_MODULES, modules=[self.plain_core(), self.windows,
+                                                                             self.lessons])
+        self.assertEqual(notices, ["rigger: slot reviewer is empty: " + REVIEW_HINT,
+                                   "rigger: slot testing is empty: " + TESTING_HINT])
+        for path in ("reviewer", "testing"):
+            self.assertEqual((rows[path].filled, rows[path].target, rows[path].source), (False, None, "default"), path)
+
+    def test_testing_notice_says_the_commit_guard_is_off(self):
+        _, _, _, notices = self.resolve(enabled=ENABLED - {"rigger-testing"})
+        self.assertEqual(notices, ["rigger: slot testing is empty: install rigger-testing (claude plugin install "
+                                   "rigger-testing@rigger); the commit-time weak-test guard is off"])
+
+    def test_a_slot_set_above_level_one_keeps_its_own_notice(self):
+        # A model set at level 3 fails the same way: D34's line names the file and carries the hint, no second line.
+        _, _, _, notices = self.resolve(l3=level({"reviewer": {"model": "opus"}}), enabled=WITHOUT_MODULES)
+        self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: plugin rigger-review is not enabled; "
+                                   "the slot is empty; %s" % (L3_FILE, REVIEW_HINT),
+                                   "rigger: slot testing is empty: " + TESTING_HINT])
+        # A slot the person emptied on purpose, or filled from another plugin, gets no hint.
+        for value in (None, {"target": "superpowers:code-reviewer"}):
+            with self.subTest(value=value):
+                rows, _, _, notices = self.resolve(l3=level({"reviewer": value}), enabled=ENABLED - {"rigger-review"})
+                self.assertEqual(notices, [])
+                self.assertEqual(rows["reviewer"].filled, value is not None)
+        # A plugin named only above level 1 is never offered for install: the command names level 1's plugin.
+        l1_slots = copy.deepcopy(DEFAULT_SLOTS)
+        del l1_slots["reviewer"]
+        _, _, _, notices = self.resolve(l1=level(l1_slots), enabled=ENABLED - {"rigger-review"},
+                                        l3=level({"reviewer": {"kind": "agent", "target": "elsewhere:reviewer"}}))
+        self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: plugin elsewhere is not enabled; "
+                                   "the slot is empty" % L3_FILE])
+
+    def test_a_stale_override_falls_back_with_the_install_command(self):
+        # A personal file from before the move still names rigger-core's reviewer, which rigger-core no longer has.
+        _, _, _, notices = self.resolve(l3=level({"reviewer": {"target": "rigger-core:reviewer"}}),
+                                        enabled=ENABLED - {"rigger-review"},
+                                        modules=[self.plain_core(), self.testing, self.windows, self.lessons])
+        self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: rigger-core has no agent reviewer; "
+                                   "the slot is empty; %s" % (L3_FILE, REVIEW_HINT)])
+
+    def test_superpowers_slots_stay_quiet(self):
+        _, _, _, notices = self.resolve(enabled=ENABLED - {"superpowers"})
+        self.assertEqual(notices, [])
+        rows, _, _, notices = self.resolve(enabled=WITHOUT_MODULES - {"superpowers"})
+        self.assertEqual([n.split(" is empty")[0] for n in notices], ["rigger: slot reviewer", "rigger: slot testing"])
+        self.assertFalse(rows["process.tdd"].filled)  # control: the superpowers slots are empty too
+
+    def test_install_command_names_rigger_cores_marketplace(self):
+        core = self.plain_core()
+        for market, expected in (("rigger", "rigger"), ("my-market", "my-market"), ("inline", "rigger"),
+                                 (None, "rigger"), ("bad name;", "rigger")):
+            with self.subTest(market=market):
+                core.marketplace = market
+                _, _, _, notices = self.resolve(enabled=ENABLED - {"rigger-review"},
+                                                modules=[core, self.testing, self.windows, self.lessons])
+                self.assertEqual(notices, ["rigger: slot reviewer is empty: install rigger-review (claude plugin "
+                                           "install rigger-review@%s)" % expected])
+
 
 class TrustTests(SlotsTestCase):
     def test_l4_command_without_trust_is_dropped_with_the_line(self):
         rows, _, trusted, notices = self.resolve(l4=level({"reviewer": {"kind": "command", "target": COMMAND}}))
         row = rows["reviewer"]
-        self.assertEqual((row.kind, row.target, row.model, row.source), ("agent", "rigger-core:reviewer", "by-rule", "default"))
+        self.assertEqual((row.kind, row.target, row.model, row.source), ("agent", "rigger-review:reviewer", "by-rule", "default"))
         self.assertEqual(notices, [notice_l4_command("reviewer")])
         self.assertEqual(trusted, frozenset())
 
@@ -604,7 +693,7 @@ class TargetsAndSnapshotTests(SlotsTestCase):
             "reviewer": {"kind": "command"},
             "worker": {"kind": "agent", "target": "rigger-core:worker"},
             "implementer": {"kind": "agent", "target": "rigger-core:implementer"},
-            "testing": {"kind": "skill", "target": "rigger-core:testing"},
+            "testing": {"kind": "skill", "target": "rigger-testing:testing"},
             "shell-guard": {"kind": "hook"},
         })
         rows, order, _, _ = self.resolve()

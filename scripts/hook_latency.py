@@ -574,7 +574,7 @@ def case_lessons_start(ctx: Context, h: Handler) -> List[Variant]:
 
 
 def case_core_check(ctx: Context, h: Handler) -> List[Variant]:
-    # The current core holds part.sh, so the check runs its whole path and stays silent.
+    # The current core holds rules/skills.md, so the check runs its whole path and stays silent.
     return [Variant("match", ctx.stdin(h, {}), silent)]
 
 
@@ -655,7 +655,6 @@ CASES = {
     ("rigger-core", "part.sh"): case_part,
     ("rigger-core", "context_guard.py"): case_context_guard,
     ("rigger-core", "side_session_guard.py"): case_side_session_guard,
-    ("rigger-core", "weak_test_guard.py"): case_weak_test_guard,
     ("rigger-core", "env_check.py"): case_env_check,
     ("rigger-core", "report_shadow.py"): case_report_shadow,
     ("rigger-lessons", "lessons_start.py"): case_lessons_start,
@@ -665,6 +664,7 @@ CASES = {
     ("rigger-rules", "worktree_root.sh"): case_worktree_root,
     ("rigger-rules", "core_check.sh"): case_core_check,
     ("rigger-talk", "core_check.sh"): case_core_check,
+    ("rigger-testing", "weak_test_guard.py"): case_weak_test_guard,
     ("rigger-windows", "core_check.sh"): case_core_check,
     ("rigger-windows", "shell_guard.py"): case_shell_guard,
     ("rigger-windows", "stop_shadow.py"): case_stop_shadow,

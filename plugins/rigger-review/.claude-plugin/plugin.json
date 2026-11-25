@@ -1,0 +1,13 @@
+{
+  "name": "rigger-review",
+  "description": "The reviewer agent and the review skill: every changed file covered, per-language checklists, per-path review rules, and a closing JSON that rigger-core checks",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  },
+  "dependencies": [
+    "rigger-core"
+  ]
+}

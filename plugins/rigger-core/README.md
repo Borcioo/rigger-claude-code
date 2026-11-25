@@ -18,8 +18,11 @@ the others' rules are printed by this plugin.
 ## Agents
 
 `rigger-core:mapper` (finds code locations), `rigger-core:implementer` (one mapped change),
-`rigger-core:worker` (implementation from a brief), `rigger-core:reviewer` (review and
-verification, no edits).
+`rigger-core:worker` (implementation from a brief). The reviewer agent comes with the review
+module and the testing skill with the testing module: `claude plugin install rigger-review@rigger`
+and `claude plugin install rigger-testing@rigger`. Without one of them its slot stays empty, and
+every session start, clear and compaction prints `rigger: slot <path> is empty: install <plugin>
+(<command>)`.
 
 ## Commands
 
@@ -31,11 +34,13 @@ verification, no edits).
   with the module and section counts, or WARN with the first problem), one `rule-override` per
   `rules.d` section that replaces a Rigger one, one `expects` per plugin the project file expects
   that is not installed and enabled (FIX `claude plugin install <name>`), one `config-inactive`
-  per config key that is read but has no effect yet (`review`, `shell_guard`, `company`,
-  `leak_guard`), and these slot rows:
+  per config key that is read but has no effect yet (`shell_guard`, `company`, `leak_guard`), and
+  these slot rows:
   - `slot <path>`: OK with what fills it and from which level; WARN when two plugins fill a hook slot
     (FIX `claude plugin disable <name>`); MISSING when the filler your config expects is not enabled
-    (FIX `claude plugin install <name>`); INFO `empty: <reason>` for an empty slot.
+    (FIX `claude plugin install <name>`), and when the `reviewer` or `testing` default's plugin is
+    not enabled (FIX `claude plugin install <plugin>@<marketplace>`); INFO `empty: <reason>` for
+    another empty slot.
   - `slot-checker shell-guard`: the rule checker of the shell-guard filler, or INFO when it has none.
   - `slot-order <id>`: WARN for a config trigger row that loads `process.tdd` without `testing`
     before it.
@@ -76,7 +81,7 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   `rigger: rules left out over the hook cap: <ids>` at the end of the last part.
 - **rigger-core older than another Rigger plugin:** rigger-rules, rigger-windows, rigger-wp,
   rigger-lessons and rigger-talk each run `hooks/core_check.sh <name>` on `startup|clear|compact`. When that
-  plugin runs from its cache install and no installed rigger-core holds `tools/assemble/part.sh`, it
+  plugin runs from its cache install and no installed rigger-core holds `rules/skills.md`, it
   prints `Rigger rules not loaded for <name>: rigger-core is older than <name> (run claude plugin update rigger-core)`.
   A plugin from a directory marketplace is not checked.
 - **`RIGGER_MODULE_DIRS`:** plugin roots separated by the OS path separator (`;` on Windows, `:`
@@ -91,9 +96,11 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   key by key (`null` removes a key). `triggers` (rows of the Skill triggers table: `before`, `load`
   with 1 to 4 `plugin:skill` or `slot:<name>` entries, each at most 200 characters, and `section`,
   which is ignored), `slots`, `trust` (personal file only) and, in the project file, `expects` (a list
-  of plugin names) take effect. A config file or company module holds at most 50 trigger rows; the
-  rows after the 50th are ignored with one notice. `review`, `shell_guard`, `company` and `leak_guard`
-  are read and listed by doctor as `config-inactive`, with no effect yet.
+  of plugin names) take effect, and so does `review.paths` (a glob mapped to a rules file or to
+  `{"rules": <file>, "skip": <reason>}`, read by `review_scope.py`; project entries are read at the
+  reviewed diff's base). A config file or company module holds at most 50 trigger rows; the rows
+  after the 50th are ignored with one notice. `shell_guard`, `company` and `leak_guard` are read and
+  listed by doctor as `config-inactive`, with no effect yet.
 - **Skill triggers:** one table, `## Skill triggers` (`rules/skills.md`), for the session and for
   subagents: the rows of every module's manifest in module order, then the config rows. A `load`
   entry whose plugin is not enabled, or whose slot is empty, is dropped, and so is a row with no
@@ -114,7 +121,9 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   and two fillers give one notice line.
 - **Command slots:** the `reviewer` slot may be `{"kind": "command", "target": [<argv>]}`, with the
   placeholders `{base}`, `{head}`, `{scope}` (a file of `<verdict><TAB><path>` lines) and `{out}` (the
-  file the command writes its `rigger.reviewer/1` JSON to). `## Slots` then ends with one line for the
+  file the command writes its `rigger.reviewer/1` JSON to). `{scope}` carries no `review.paths` result
+  (no named skip and no rules file), and the output is checked without a session, so a test file that
+  only a personal or company entry skips is refused. `## Slots` then ends with one line for the
   Bash tool, `sh '<core root>/bin/py.sh' '<core root>/tools/slot-run/slot_run.py' <slot> --session <id> --base <base revision>`.
   The program, `target[0]`, is a bare name found on absolute `PATH` entries outside the repository
   and the working directory (an `.exe` or `.com` file on Windows) or an absolute path outside both; a
@@ -154,16 +163,41 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   program the command starts by bare name through the operating system's lookup is never one the
   repository holds (known limit: a lookup the command's own code does that searches the working
   directory first, as Python 3.11's `shutil.which` and npm's `which` do on Windows, can still find a
-  program in the repository root; trust only a command whose lookups you know). It stops the whole process tree past
+  program in the repository root; trust only a command whose lookups you know). The command also runs
+  with `PYTHONSAFEPATH=1` and its `PYTHONPATH` cut like `PATH` (empty, `.`, relative and in-repository
+  entries dropped, the variable removed when none is left), `PYTHONUSERBASE` and `PYTHONPYCACHEPREFIX`
+  removed when relative or inside the repository or the working directory (so a Python child runs no
+  `usercustomize` and loads no cached bytecode from there), so Python 3.11+ started with `-m` or `-c`
+  imports no module from the repository root through the working directory or an inherited
+  `PYTHONPATH` entry; a script's own folder is left off `sys.path` too, so a reviewer script that
+  imports a sibling module adds its folder to `sys.path` itself (known limits: `-E` written in the
+  command's argv makes Python ignore `PYTHONSAFEPATH` and import from the repository root again, while
+  `-I` keeps the working directory off `sys.path` by itself; Python before 3.11 and other interpreters
+  that resolve modules from the working directory can still load the repository's code; and on
+  Windows the DLL search of the command's process can still read the working directory). It stops the whole process tree past
   900 s or 1,000,000 bytes of console output, when a process the command started still holds the
   console 5 s after the command exits (`child process left running`), and after every run (known limit:
   on POSIX a process the command detaches with `setsid` leaves the tree and can outlive the run). It then
   checks the output file with `slot_check.py`. The last line is `slot-run: ok <slot> <n> findings` or
   `slot-run: refused: <reason>`; a refusal is a failed review, never "no findings".
-- `tools/slot-check/slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--shape-only]`:
+- `tools/slot-check/slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--session ID] [--shape-only]`:
   checks a reply against its slot's contract (`reviewer`, `worker`, `implementer`, `mapper`,
   `shell-guard`, `lessons`) and prints `slot-check: ok <slot>` or
   `slot-check: refused: <rule id>: <reason>`. A reviewer reply is the `rigger.reviewer/1` JSON object,
-  alone or in the reply's last fenced `json` block; unknown keys are ignored.
-- `tools/review-scope/review_scope.py --base REV [--head REV] [--repo DIR]`: the files a review
-  covers, one `<verdict><TAB><path>` line each (`review`, or `skip: deleted`).
+  alone or in the reply's last fenced `json` block; unknown keys are ignored. A reviewer reply that
+  skips a test file, `.claude/rigger.json` or a rules file it names, when `review_scope.py` lists it
+  for review, is refused (`coverage-test-skipped`);
+  `--session` (default `CLAUDE_CODE_SESSION_ID`) supplies the personal and company `review.paths`
+  entries, without which a test file only they skip is refused.
+- `tools/review-scope/review_scope.py --base REV [--head REV] [--repo DIR] [--session ID] [--rules-out DIR]`:
+  the files a review covers, one `<verdict><TAB><path>` line each: `review`, `review: binary added`,
+  `review: rules file newly named` (a rules file the head's `.claude/rigger.json` names and the base's
+  does not, listed even when the diff leaves it unchanged: it has no hunk, so read the whole file;
+  every verdict that starts with `review` is to review), or `skip: <reason>` (deleted, binary,
+  lockfile, vendored, generated, or a `review.paths` skip). A file named like a test is never skipped
+  unless `review.paths` names it; `.claude/rigger.json` and every rules file it names at base or at
+  head are always `review`, whatever a skip says. Then `# review.paths: …` notices, one
+  `# rules <glob> <file> (level <n>)` line per `review.paths` entry that matched a path to review (a
+  project rules file is read at base and written to `--rules-out`), and
+  `# review-scope: files <n>, review <r>, skipped <s>`. `--session` defaults to
+  `CLAUDE_CODE_SESSION_ID`.
