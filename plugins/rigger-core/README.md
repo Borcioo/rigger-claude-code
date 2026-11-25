@@ -34,8 +34,8 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
   with the module and section counts, or WARN with the first problem), one `rule-override` per
   `rules.d` section that replaces a Rigger one, one `expects` per plugin the project file expects
   that is not installed and enabled (FIX `claude plugin install <name>`), one `config-inactive`
-  per config key that is read but has no effect yet (`review`, `shell_guard`, `company`,
-  `leak_guard`), and these slot rows:
+  per config key that is read but has no effect yet (`shell_guard`, `company`, `leak_guard`), and
+  these slot rows:
   - `slot <path>`: OK with what fills it and from which level; WARN when two plugins fill a hook slot
     (FIX `claude plugin disable <name>`); MISSING when the filler your config expects is not enabled
     (FIX `claude plugin install <name>`), and when the `reviewer` or `testing` default's plugin is
@@ -96,9 +96,11 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   key by key (`null` removes a key). `triggers` (rows of the Skill triggers table: `before`, `load`
   with 1 to 4 `plugin:skill` or `slot:<name>` entries, each at most 200 characters, and `section`,
   which is ignored), `slots`, `trust` (personal file only) and, in the project file, `expects` (a list
-  of plugin names) take effect. A config file or company module holds at most 50 trigger rows; the
-  rows after the 50th are ignored with one notice. `review`, `shell_guard`, `company` and `leak_guard`
-  are read and listed by doctor as `config-inactive`, with no effect yet.
+  of plugin names) take effect, and so does `review.paths` (a glob mapped to a rules file or to
+  `{"rules": <file>, "skip": <reason>}`, read by `review_scope.py`; project entries are read at the
+  reviewed diff's base). A config file or company module holds at most 50 trigger rows; the rows
+  after the 50th are ignored with one notice. `shell_guard`, `company` and `leak_guard` are read and
+  listed by doctor as `config-inactive`, with no effect yet.
 - **Skill triggers:** one table, `## Skill triggers` (`rules/skills.md`), for the session and for
   subagents: the rows of every module's manifest in module order, then the config rows. A `load`
   entry whose plugin is not enabled, or whose slot is empty, is dropped, and so is a row with no
@@ -165,10 +167,20 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   on POSIX a process the command detaches with `setsid` leaves the tree and can outlive the run). It then
   checks the output file with `slot_check.py`. The last line is `slot-run: ok <slot> <n> findings` or
   `slot-run: refused: <reason>`; a refusal is a failed review, never "no findings".
-- `tools/slot-check/slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--shape-only]`:
+- `tools/slot-check/slot_check.py <slot> <file> [--repo DIR] [--base REV] [--head REV] [--session ID] [--shape-only]`:
   checks a reply against its slot's contract (`reviewer`, `worker`, `implementer`, `mapper`,
   `shell-guard`, `lessons`) and prints `slot-check: ok <slot>` or
   `slot-check: refused: <rule id>: <reason>`. A reviewer reply is the `rigger.reviewer/1` JSON object,
-  alone or in the reply's last fenced `json` block; unknown keys are ignored.
-- `tools/review-scope/review_scope.py --base REV [--head REV] [--repo DIR]`: the files a review
-  covers, one `<verdict><TAB><path>` line each (`review`, or `skip: deleted`).
+  alone or in the reply's last fenced `json` block; unknown keys are ignored. A reviewer reply that
+  skips a test file `review_scope.py` lists for review is refused (`coverage-test-skipped`);
+  `--session` (default `CLAUDE_CODE_SESSION_ID`) supplies the personal and company `review.paths`
+  entries, without which a test file only they skip is refused.
+- `tools/review-scope/review_scope.py --base REV [--head REV] [--repo DIR] [--session ID] [--rules-out DIR]`:
+  the files a review covers, one `<verdict><TAB><path>` line each: `review`, `review: binary added`
+  (every verdict that starts with `review` is to review), or `skip: <reason>` (deleted, binary,
+  lockfile, vendored, generated, or a `review.paths` skip). A file named like a test is never skipped
+  unless `review.paths` names it. Then `# review.paths: …` notices, one
+  `# rules <glob> <file> (level <n>)` line per `review.paths` entry that matched a path to review (a
+  project rules file is read at base and written to `--rules-out`), and
+  `# review-scope: files <n>, review <r>, skipped <s>`. `--session` defaults to
+  `CLAUDE_CODE_SESSION_ID`.

@@ -318,7 +318,7 @@ Claude Code's project-scope `enabledPlugins` in `.claude/settings.json`.
 | `company` | module name | 4 | marks the project as that company's: lessons from it carry client context (§11.3) |
 | `leak_guard.denylist` | path | 3 | the person's own denylist file, outside any repository |
 | `trust.project_commands` | list of slot names | 3 | slots whose `kind: command` a project file may set (§7.4) |
-| `review.paths` | object `{glob: rules file}` | 1–4 | per-path review rules for rigger-review (phase 3) |
+| `review.paths` | object `{glob: rules file}` or `{glob: {rules, skip}}` (at least one key) | 1–4 | per-path review rules and named skips for rigger-review (phase 3). A rules file resolves against the module root (level 2), the personal config file's folder (level 3) or the repository root (level 4). Project entries and their rules files are read at the reviewed diff's base by `review_scope.py`, which hands the rules over as files (`--rules-out`) |
 | `shell_guard.shellwise_path` | path | 3 | the shellwise binary for `rigger-shellwise` when it is not on PATH (phase 3); a project file cannot set it, for the reason in §7.4 |
 
 Unknown keys print one notice line naming the file and key, and are ignored. A value of the wrong
@@ -353,7 +353,11 @@ merge(base, over):
 5. Validate slots (§10): a slot whose effective entry fails validation falls back to the highest
    lower level whose entry validates, with one notice line. If none validates, the slot is empty
    and the line says so. A level-1 default whose plugin is not enabled leaves its slot empty with
-   no notice (doctor lists it as INFO); a fallback from a level above 1 keeps its one notice. A
+   no notice (doctor lists it as INFO), except for `reviewer` and `testing`: their slot gets
+   `rigger: slot <path> is empty: install <plugin> (claude plugin install <plugin>@<marketplace>)`
+   (for `testing` followed by `; the commit-time weak-test guard is off`) and a doctor `MISSING`
+   row. A fallback from a level above 1 keeps its one notice; when it lands on such a default whose
+   plugin is not enabled, the notice ends with `; install <plugin> (<command>)`. A
    `null` for one slot empties it, except a hook slot, which stays filled by its plugins' hooks. A
    `null` for `slots` or for the `process` group above level 1 is ignored with a notice.
 6. Record, for every leaf key, the level and file it came from (the panel shows this).
@@ -758,7 +762,8 @@ the PowerShell tool finds no `sh` to run it.
 - **How it runs:** the argv comes from the session's snapshot only (a missing snapshot, one of
   another format and an untrusted project command are refused), placeholders are filled, and it
   runs with no shell, its cwd set to the repo root. `{scope}` names a file of
-  `<verdict><TAB><path>` lines from `review_scope.py`.
+  `<verdict><TAB><path>` lines from `review_scope.py`. A verdict may read `review: binary added`;
+  every verdict that starts with `review` is a path to review.
 - **The program:** found by the tool's own lookup, never the operating system's: a bare name on the
   absolute `PATH` entries outside the repository and the working directory (`.exe` and `.com` on
   Windows), or an absolute path; the result must lie outside both. A `.cmd` or `.bat` file is
@@ -782,7 +787,7 @@ the PowerShell tool finds no `sh` to run it.
 | `worker` | `rigger-core:worker`, `by-rule` | agent | First line `STATUS: DONE\|PARTIAL\|BLOCKED\|NEEDS_CONTEXT`, then `## Summary` with 3–5 bullets, then the brief's format (`worker.md:11-12`). |
 | `implementer` | `rigger-core:implementer`, `pinned` | agent | `STATUS`, `FILES`, `ROOT CAUSE`, `GATE`, `RED RUNS`, optional `QUESTION`; with BLOCKED or NEEDS_CONTEXT also `CALL`, `OUTPUT`, `ALTERNATIVE` (`implementer.md:33-43`). |
 | `mapper` | `rigger-core:mapper`, `pinned` | agent | Only lines `path:START[-END] - text` (at most 12 words) or one `NOT FOUND: <terms>` (`mapper.md:14,18`). Each path exists at the reviewed commit. |
-| `testing` | `rigger-core:testing` → `rigger-TESTING:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware; `--check` and a doctor `slot-order` row report a row that breaks it). From phase 3, the filling module ships the commit-time test guards; until then they live in rigger-core. |
+| `testing` | `rigger-core:testing` → `rigger-TESTING:testing` | skill | The skill exists in an enabled plugin. Every trigger row that loads `process.tdd` loads `testing` first (today `TestingSkillTriggerTests`, `test_plugin_rules.py:290`, made slot-aware; `--check` and a doctor `slot-order` row report a row that breaks it). From phase 3, the default filler ships the commit-time weak-test guard: `tests/test_module_contracts.py` checks that its `hooks.json` has a `PreToolUse` handler on `Bash` with `if` exactly `Bash(*commit*)` and one on `PowerShell` with `if` exactly `PowerShell(*commit*)`, each running `weak_test_guard.py`. A filler chosen in config is not checked for it. |
 | `shell-guard` | `rigger-windows` → `rigger-shellwise` | hook | (a) A PreToolUse hook on `Bash` and `PowerShell`. It prints nothing to allow, may add a non-blocking note or warning the agent reads while the command runs (shellwise `warn`), or prints one JSON deny whose reason names a rule id in square brackets (`[<rule id>]`; rigger-windows' reason starts `shell-guard [<rule>]: `) and a fix. It always exits 0 (`tests/test_repo.py:336`), because an exit 2 from a crash blocks the tools needed to fix it (`CLAUDE.md:32`). (b) The filler declares `"failure_mode": "open"` or `"closed"` in its manifest: whether a command is allowed or denied when the guard cannot finish its analysis. Core prints the declared mode in the `## Slots` row and doctor reports it. A filler without the key is reported as `failure mode: undeclared`; fillers that declare both modes read `failure mode: closed (fillers disagree)`. rigger-windows declares `open`, and `rigger-shellwise` declares `closed` (shellwise answers `danger` when analysis cannot finish). (c) From phase 3: median added latency on a command that matches no rule is under 50 ms on each OS, measured as `rigger-lessons/rules/lessons.md:46-51` asks of any process guard. (d) **Optional:** a rule checker, a Python module with `RULES` and `rule_guard_problem` as `lessons_lint.py --rule-checker` loads it (`lessons_lint.py:217-241`), named by `provides.shell-guard.rule_checker` in the filler's manifest. rigger-windows' default passes it with today's `lessons_guard.py`. A filler without one passes the contract. Each `live:<rule>` lesson is then reported `no checker` by doctor and curation, and is never dropped. |
 | `process.brainstorm`, `.plans`, `.tdd`, `.debug` | superpowers skills | skill | The skill exists in an enabled plugin. An empty role drops its trigger entries and its `{{slot:…}}` sentences in module rules text (§9.2); no shipped rules sentence names one. |
 | `lessons` | `rigger-lessons` | hook | (a) A `SessionStart` line naming the inbox path and its open count (the panel reads the inbox, `rigger-panel/README.md:23`). (b) Inbox entries pass `inbox_lint.py`. (c) Its curation skill reads lesson targets from the snapshot (§11). |
@@ -838,6 +843,10 @@ without rigger-review installed is checked against the same list. rigger-review 
 it does not own it. Its behaviour is in §13, phase 3.
 - A skipped file has no reason.
 - `shortcuts` is empty and `shortcuts_check` is empty.
+- `coverage.skipped` holds a test file whose `review_scope.py` verdict starts with `review`
+  (`coverage-test-skipped`, from phase 3). `slot_check.py --session <id>` (default
+  `CLAUDE_CODE_SESSION_ID`) reads the same `review.paths` entries as `review_scope.py`. The rule
+  checks existing keys more strictly, so the contract id stays `rigger.reviewer/1`.
 
 An agent reviewer ends its reply with this JSON in one fenced block, after the Markdown report the
 brief asks for. A command reviewer writes it to `{out}`.
@@ -926,8 +935,15 @@ offers each matching company target and nothing public.
   and `plugins/rigger-rules/tests/test_plugin_rules.py`.
 - **Gate or not:** until phase 3 the mode is a local pre-check, not the gate for a change inside one
   module: some test files read another module's files without a dependency between the two, so it
-  can pass where the gate fails. A pull request and a release need the full gate.
-  `select_tests.py` stays the engine of `--fix-round`.
+  can pass where the gate fails. From phase 3, `tests/read_by.json` names those reads (a
+  `tests/test_*.py` file it does not list reads every module; `tests/test_read_by.py` fails on an
+  undeclared read), the mode also runs every test that reads a changed module, and
+  `gate.py --changed-modules [--base REV]` is the local gate for a change whose every path is a
+  module path. The host computes the changed-file list once and hands it to each leg; the WSL leg
+  runs `run_tests.py --changed-from <file>` and never calls git. The status records the mode, and
+  `gate.py --verify` names it and refuses a changed-modules status for a change with a shared path.
+  A release takes the full gate; CI is unchanged. `select_tests.py` stays the engine of
+  `--fix-round`.
 - **Test setup:** a test that starts `claude` with `--plugin-dir` also sets `RIGGER_MODULE_DIRS`
   to the same roots, joined with `os.pathsep`, next to the isolated `CLAUDE_CONFIG_DIR` and the
   stub's `ANTHROPIC_BASE_URL` (`CLAUDE.md:9,41`). `scripts/eval_stage.py` sets it for every eval
@@ -1089,7 +1105,17 @@ estimate; this section first said 12 h, 800 and 1,100).
     (by path list), lockfile, or deleted. It reads git with
     `git -c core.quotepath=off diff --no-ext-diff --no-textconv --no-color --name-status -z`, so a
     repository's diff driver or textconv cannot run code or hide changes. It never skips a test
-    file unless `review.paths` names it with a reason.
+    file unless `review.paths` names it with a reason. First match wins: `skip: deleted`; a
+    `review.paths` skip; a file named `test_*`, `*_test.*`, `*.test.*` or `*.spec.*` is `review`;
+    `skip: binary` when the first 8,000 bytes of the head blob and of the base blob hold a NUL byte,
+    `review: binary added` when only the head blob does; a file under a `test`, `tests`,
+    `__tests__` or `spec` folder is `review`; `skip: lockfile` (`package-lock.json`,
+    `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `composer.lock`,
+    `Cargo.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `go.sum`);
+    `skip: vendored` (a `vendor`, `node_modules`, `third_party` or `third-party` segment) and
+    `skip: generated` (`@generated`, `DO NOT EDIT` or `auto-generated` in the first 5 lines, or
+    `*.min.js` and `*.min.css`) only for a path that existed at base, its marker too; everything
+    else `review`. A skip the reviewed diff itself would create never applies.
   - **Per-path review rules:** `review.paths` in config maps globs to rules files that the skill
     loads only for matching files.
   - **Per-language checklists:** `checklists/<language>.md` (Python, TypeScript, PHP, shell to
@@ -1097,8 +1123,12 @@ estimate; this section first said 12 h, 800 and 1,100).
   - **Coverage and anchors:** the coverage check and quote anchors are `slot_check.py reviewer`
     with `review_scope.py` as the source of `in_scope`.
 - **`rigger-testing`** (`fills: testing`): today's `rigger-core:testing` skill, the weak-test guard
-  and its hooks (`rigger-core/hooks/hooks.json:76-87`), and the test-evidence shadow gates from
-  rigger-windows (below).
+  and its hooks (`rigger-core/hooks/hooks.json:91-102` before the move), and the test-evidence
+  shadow gates from rigger-windows (below). Phase 3a moves only rigger-core's parts (the skill, the
+  guard with its two handlers, the `testing-skill-loads` eval); rigger-windows' test-evidence gates,
+  `tools/gate-lab/` and `tools/safe-edit/` move in 3b. An eval control moves with the case it
+  controls: `add-commit-push-chain`'s `no-testing-skill` grader becomes the testing module's
+  `git-question-no-testing` case.
 - **`rigger-platform`** (add-on, opt-in): the Windows and toolchain knowledge of rigger-windows
   that is not the shell guard. The name is the builder's call.
 - **`rigger-shellwise`** (`fills: shell-guard`): a thin Rigger plugin around the separately
@@ -1179,8 +1209,11 @@ The doctor's Windows requirement (`doctor.sh:489`) becomes "recommends `rigger-p
 **Migration:**
 
 - **Windows:**
-  1. `claude plugin install rigger-testing@rigger rigger-platform@rigger rigger-shellwise@rigger`
-     (and `rigger-review`).
+  1. One `claude plugin install <plugin>@rigger` call per plugin: `rigger-review`,
+     `rigger-testing`, `rigger-platform`, `rigger-shellwise` (a second plugin named in one call is
+     dropped without a word, with exit 0). Their `dependencies` install or re-enable rigger-core
+     but leave an installed one at its version, so also run
+     `claude plugin update rigger-core@rigger`. Phase 3a ships the first two.
   2. Install the shellwise binary as its README says. If you had added its hook to `settings.json`
      by hand, remove that entry: `harness_start.py` reports it as a handler that runs twice.
   3. `claude plugin disable rigger-windows@rigger`, then uninstall it.
@@ -1191,7 +1224,8 @@ The doctor's Windows requirement (`doctor.sh:489`) becomes "recommends `rigger-p
 - **Gates file:** a repository's `.claude/gates.json` keeps its format, and its rows move to
   rigger-testing's data folder (`CLAUDE_PLUGIN_DATA` changes with the plugin), so old rows stay
   where they were. Gate-lab takes `--data` for either folder.
-- **macOS:** install `rigger-testing` and `rigger-review` (doctor says so), and optionally
+- **macOS:** install `rigger-testing` and `rigger-review`, one call each, and update rigger-core
+  (doctor and the session's install lines say so), and optionally
   `rigger-shellwise` with the shellwise binary.
   The guard is new on macOS, a behaviour change listed in the release notes. Nothing to remove.
 
@@ -1372,14 +1406,19 @@ Each of these is marked **builder's call**:
 2. **Snapshot cleanup:** the snapshot's retention (14 days proposed) and whether cleanup runs at
    startup or in doctor.
 3. **Reviewer JSON in a reply:** how an agent reviewer's reply carries the JSON (one fenced block
-   at the end is proposed), and whether `slot_check` also accepts the Markdown form.
+   at the end is proposed), and whether `slot_check` also accepts the Markdown form. **Settled:**
+   the last fenced `json` block of the reply; no Markdown form.
 4. **Platform module name:** `rigger-platform` or another name for the module that inherits the
    Windows and toolchain skills.
 5. **safe-edit:** whether `safe-edit.ps1` is ported to Python in phase 3 or stays pwsh.
 6. **Generated-file detection:** the exact markers and path lists `review_scope.py` uses, beyond the
-   reasons listed.
+   reasons listed. **Settled:** the markers, lists and order in §13 phase 3, `review_scope.py`.
 7. **Panel writes:** whether the panel writes directly or asks the session, decided by S6.
-8. **Reviewer checklists:** the first set of per-language checklists and their order.
+8. **Reviewer checklists:** the first set of per-language checklists and their order. **Settled:**
+   `python.md` (`.py`), `typescript.md` (`.ts .tsx .js .jsx .mjs .cjs`), `php.md` (`.php`) and
+   `shell.md` (`.sh .bash`, and an extensionless file whose first line starts `#!` and names `sh` or
+   `bash`), at most 25 bullets each; the review skill loads at most 3, by how many paths to review
+   each matches, ties alphabetical.
 9. **Slug edge cases:** headings that are only a placeholder, or two headings in one file with the
    same slug. The latter is a duplicate and fails the check. The question is only how the message
    reads.
