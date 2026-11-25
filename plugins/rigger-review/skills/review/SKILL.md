@@ -19,7 +19,8 @@ names.
   `sh '<root>/bin/py.sh' '<root>/tools/review-scope/review_scope.py' --base <base> --head <head> --rules-out <scratch folder>`. The scratch folder is the one the brief gives; with none given,
   leave out `--rules-out` and say in the report that project rules files were not read.
 - Each line is `<verdict><TAB><path>`. Review every path whose verdict starts with `review`
-  (`review: binary added` included). A path marked `skip: <reason>` goes into `coverage.skipped`
+  (`review: binary added` included; `review: rules file newly named` is a rules file the diff
+  may not change: read it whole at head). A path marked `skip: <reason>` goes into `coverage.skipped`
   with that reason; skip nothing else. A test file is never skipped unless the tool marks it so.
 - Copy every `# review.paths:` line into the report: it says which config was read and whether
   the project's entries changed in this diff.
