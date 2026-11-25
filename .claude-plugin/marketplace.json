@@ -16,6 +16,11 @@
       "description": "Skills (git workflow, subagent orchestration, tooling, e2e speed, UI traps), agents, commands (doctor, setup, coordinate, environments) and context, compaction and side-session guards"
     },
     {
+      "name": "rigger-review",
+      "source": "./plugins/rigger-review",
+      "description": "The reviewer agent and the review skill: every changed file covered, per-language checklists, per-path review rules, and a closing JSON that rigger-core checks"
+    },
+    {
       "name": "rigger-rules",
       "source": "./plugins/rigger-rules",
       "description": "Working rules (verification, tests, scope, git) injected at session start and into subagents, plus your own rules.d folder"

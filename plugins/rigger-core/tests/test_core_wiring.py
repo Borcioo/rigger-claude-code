@@ -1,6 +1,6 @@
 """rigger-core checks that span files: the launcher on a real interpreter, the real hook commands, the
 state-file rule against compact_guard.py, the load rule of orchestrating-subagents and the finding
-labels its fix rounds share with the reviewer agent."""
+labels its fix rounds route on (the reviewer agent's half is in the review module's tests)."""
 
 import json
 import os
@@ -18,7 +18,6 @@ HOOKS = CORE / "hooks" / "hooks.json"
 INSTALL = CORE / "tools" / "context-guard" / "INSTALL.md"
 RULE = CORE / "rules" / "state-file.md"
 SKILL = CORE / "skills" / "orchestrating-subagents" / "SKILL.md"
-REVIEWER = CORE / "agents" / "reviewer.md"
 COMPACT_GUARD = CORE / "tools" / "context-guard" / "compact_guard.py"
 SID = "1234d76d-5612-4458-8c62-41bf0710415f"
 DROPPED_PREFIXES = ("CLAUDE_", "HARNESS_")
@@ -211,43 +210,16 @@ class LoadRuleTests(unittest.TestCase):
 
 class FindingLabelTests(unittest.TestCase):
     def test_the_fix_rounds_route_on_the_labels_the_reviewer_gives(self):
-        reviewer = " ".join(REVIEWER.read_text(encoding="utf-8").split())
         skill = SKILL.read_text(encoding="utf-8")
         self.assertIn("## Fix rounds and progress", skill)
         rounds = " ".join(skill.split("## Fix rounds and progress", 1)[1].split())
-        self.assertIn("give each finding a severity (Critical, Important, Minor)", reviewer)
-        self.assertIn("mark one the base commit already had `Pre-existing`, with its evidence", reviewer)
         self.assertIn("A `Pre-existing` finding with evidence never enters the author's fix round", rounds)
         self.assertIn("A Critical finding on a Risk-full change", rounds)
 
 
 class SlotWordingTests(unittest.TestCase):
-    """Phase 2 Task 16: the agent texts name slots or the Skill triggers table, and the reviewer's reply ends
-    with the `rigger.reviewer/1` JSON that `slot_check.py reviewer` reads (D41, D46, D49)."""
-
-    def test_the_reviewer_ends_with_the_contract_json(self):
-        reviewer = " ".join(REVIEWER.read_text(encoding="utf-8").split())
-        self.assertIn("End the reply with one fenced `json` block holding the `rigger.reviewer/1` object", reviewer)
-        self.assertIn("`tools/review-scope/review_scope.py --base <base> --head <head>`", reviewer)
-        self.assertIn("`git diff --no-renames --name-status <base>..<head>`", reviewer)
-        self.assertIn("A changed file that is neither reviewed nor skipped makes the status PARTIAL.", reviewer)
-        self.assertIn("`git --no-pager diff --no-ext-diff --no-textconv --no-color <base>..<head>`", reviewer)
-        self.assertIn("under a `Behaviour changes` heading of the report", reviewer)
-        self.assertIn("(procedure in the testing skill the Skill triggers table names)", reviewer)
-        self.assertIn("opens with `SHORTCUTS: <n>`", reviewer)
-
-    def test_the_reviewer_json_example_meets_the_contract(self):
-        # Shape rules only: the example's base and head are placeholders, so the git rules cannot run on it.
-        text = REVIEWER.read_text(encoding="utf-8")
-        self.assertIn('`"contract": "rigger.reviewer/1"`', " ".join(text.split()))
-        saved = list(sys.path)
-        try:
-            sys.path.insert(0, str(CORE / "tools" / "slot-check"))
-            import slot_check
-        finally:
-            sys.path[:] = saved
-        verdict = slot_check.check("reviewer", text, shape_only=True)
-        self.assertEqual((verdict.ok, verdict.rule, verdict.reason, verdict.findings), (True, "", "", 1))
+    """Phase 2 Task 16: the agent texts name slots or the Skill triggers table (D41, D46, D49); the reviewer
+    agent's pins moved with it to the review module."""
 
     def test_dispatch_names_slots(self):
         skill = " ".join(SKILL.read_text(encoding="utf-8").split())
@@ -258,8 +230,7 @@ class SlotWordingTests(unittest.TestCase):
         self.assertIn("two fresh read-only agents of the `reviewer` slot", skill)
         self.assertIn("the `mapper` slot's agent (locations only)", skill)
         self.assertIn("where the `lessons` slot is filled", skill)
-        for text in (skill, " ".join(REVIEWER.read_text(encoding="utf-8").split()),
-                     " ".join((CORE / "agents" / "worker.md").read_text(encoding="utf-8").split())):
+        for text in (skill, " ".join((CORE / "agents" / "worker.md").read_text(encoding="utf-8").split())):
             self.assertNotIn("superpowers:", text)
 
 

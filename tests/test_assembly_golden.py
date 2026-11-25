@@ -29,7 +29,7 @@ import golden_baseline as gb  # noqa: E402
 WORK_PLUGINS = gb.ROOT / "plugins"
 MARKET = "rigger"
 WINDOWS_MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-windows",
-                   "rigger-panel")
+                   "rigger-panel", "rigger-review")
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
 SKIPPED_AGENTS = ("Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper")
@@ -52,6 +52,16 @@ OLD_INTRO = (b"- Load the skill before the first step of its kind; the `superpow
              b"  superpowers plugin is installed:\n")
 NEW_INTRO = b"- Load the skill before the first step of its kind:\n"
 WINDOWS_TABLE = "## Windows skills, loaded before the first step of their kind"
+
+
+def _review_row() -> bytes:
+    """The review module's one trigger row as the merged table prints it, read from its manifest."""
+    data = json.loads((WORK_PLUGINS / "rigger-review" / "rigger-module.json").read_bytes().decode("utf-8"))
+    (row,) = data["triggers"]
+    return ("| %s | %s |\n" % (row["before"], ", ".join("`%s`" % name for name in row["load"]))).encode("utf-8")
+
+
+REVIEW_ROW = _review_row()
 WP_OLD = "## WordPress skill, loaded before the first step of its kind"
 WP_NEW = "## WordPress site copies"
 PLANS = "## Plans: main session"
@@ -60,7 +70,7 @@ PLANS_OLD = (b"- A brief or full requirements never waive brainstorming or plann
 PLANS_NEW = (b"- A brief or full requirements never waive brainstorming or planning (load the brainstorm and\n"
              b"  plans skills the Skill triggers table names), the thinking pass (goal, reader,\n")
 SLOT_ROWS = [  # D36, written by hand: every slot at its default, superpowers enabled
-    b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n",
+    b"| reviewer | agent | rigger-review:reviewer | by-rule | default |\n",
     b"| worker | agent | rigger-core:worker | by-rule | default |\n",
     b"| implementer | agent | rigger-core:implementer | pinned | default |\n",
     b"| mapper | agent | rigger-core:mapper | pinned | default |\n",
@@ -120,6 +130,21 @@ def _merged_table(scenario, roots, pieces) -> bool:
     return True
 
 
+def _review_row_joins(scenario, roots, pieces) -> bool:
+    """The review module's trigger row follows rigger-core's own rows in the merged table (phase 3a D56)."""
+    at = _piece(pieces, "rigger-core", SKILLS)
+    if at is None or "rigger-review" not in scenario.modules():
+        return False
+    key, text = pieces["rigger-core"][at]
+    before, rows, after = split_table(text)
+    core = [i for i, row in enumerate(rows) if b"`rigger-core:" in row and b"`superpowers:" not in row]
+    if not core:
+        raise AssertionError("the merged table holds no rigger-core row: %r" % text[:300])
+    rows.insert(core[-1] + 1, REVIEW_ROW)
+    pieces["rigger-core"][at] = (key, before + TABLE_HEADER + b"".join(rows) + after)
+    return True
+
+
 def _windows_table_goes(scenario, roots, pieces) -> bool:
     at = _piece(pieces, "rigger-windows", WINDOWS_TABLE)
     if at is None:
@@ -171,6 +196,7 @@ def _plans_wording(scenario, roots, pieces) -> bool:
 # D40's fixed list, in the order it is applied; every entry must apply in at least one scenario.
 ALLOWED = [
     ("the rigger-rules table moves to rigger-core and merges the three tables", _merged_table),
+    ("the reviewer slot names the review module, whose trigger row joins the merged table", _review_row_joins),
     ("the rigger-windows table section goes", _windows_table_goes),
     ("the rigger-wp section keeps its sentence under a new heading", _wp_sentence),
     ("rigger-core gains ## Slots for the main session", _slots_section),
@@ -626,17 +652,17 @@ class GoldenTest(unittest.TestCase):
         self.assertEqual([name for name, _ in ALLOWED if name not in used], [])
 
     def test_merged_table_holds_every_row_of_the_three_tables(self):
-        """D40: the 13 rows of the frozen tables, as a multiset, then in D38's order."""
+        """D40: the 13 rows of the frozen tables and the review module's row, as a multiset, then in D38's order."""
         frozen = {}
         for module, name in (("rigger-rules", "skills.md"), ("rigger-windows", "windows-skills.md"),
                              ("rigger-wp", "wp-skills.md")):
             lines = (gb.FIXTURE / "plugins" / module / "rules" / name).read_bytes().splitlines(True)
             frozen[module] = [line for line in lines if line.startswith(b"| ") and line != b"| Before | Skill |\n"]
         self.assertEqual([len(frozen[m]) for m in ("rigger-rules", "rigger-windows", "rigger-wp")], [8, 3, 2])
-        every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"]
+        every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"] + [REVIEW_ROW]
         core = [row for row in frozen["rigger-rules"] if b"`superpowers:" not in row]
         self.assertEqual(len(core), 5)
-        ordered = (core + frozen["rigger-windows"] + frozen["rigger-wp"]
+        ordered = (core + [REVIEW_ROW] + frozen["rigger-windows"] + frozen["rigger-wp"]
                    + [row for row in frozen["rigger-rules"] if b"`superpowers:" in row])
         for scenario in (SCENARIOS[0], next(s for s in SCENARIOS if s.agent == "general-purpose")):
             with self.subTest(scenario.id):

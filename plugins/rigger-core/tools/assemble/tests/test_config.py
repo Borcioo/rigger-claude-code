@@ -17,7 +17,7 @@ CORE_ROOT = HERE.parents[2]
 
 # Spec section 7.5, level 1, with the three trigger rows of the plan's Task 10.
 SPEC_SLOTS = {
-    "reviewer": {"kind": "agent", "target": "rigger-core:reviewer", "model": "by-rule"},
+    "reviewer": {"kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule"},
     "worker": {"kind": "agent", "target": "rigger-core:worker", "model": "by-rule"},
     "implementer": {"kind": "agent", "target": "rigger-core:implementer", "model": "pinned"},
     "mapper": {"kind": "agent", "target": "rigger-core:mapper", "model": "pinned"},

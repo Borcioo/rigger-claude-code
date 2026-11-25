@@ -19,7 +19,7 @@ DEFAULT_SLOTS = json.loads((CORE_ROOT / "rigger-defaults.json").read_bytes().dec
 L1 = "L1:rigger-defaults.json"
 L3_FILE = "cfg/rigger/config.json"
 L4_FILE = "repo/.claude/rigger.json"
-ENABLED = frozenset(("rigger-core", "rigger-windows", "rigger-lessons", "superpowers"))
+ENABLED = frozenset(("rigger-core", "rigger-review", "rigger-windows", "rigger-lessons", "superpowers"))
 COMMAND = ["reviewer-cli", "--out", "{out}"]
 EMPTY_SLOT = "the slot is empty"
 RLO = chr(0x202E)  # right-to-left override, category Cf
@@ -39,7 +39,8 @@ class SlotsTestCase(unittest.TestCase):
                                 skills=("testing",))
         self.windows = self.module("rigger-windows", fills="shell-guard", failure_mode="open")
         self.lessons = self.module("rigger-lessons", fills="lessons")
-        self.modules = [self.core, self.windows, self.lessons]
+        self.review = self.module("rigger-review", agents=("reviewer",), fills="reviewer")
+        self.modules = [self.core, self.review, self.windows, self.lessons]
 
     def module(self, name, agents=(), skills=(), fills=None, failure_mode=None):
         root = self.tmp / name
@@ -77,7 +78,7 @@ def level(slot_values, **other):
 class ResolutionTests(SlotsTestCase):
     def test_defaults_give_eleven_rows_on_windows_and_ten_elsewhere(self):
         expected = [
-            ("reviewer", "agent", "rigger-core:reviewer", "by-rule", (), None),
+            ("reviewer", "agent", "rigger-review:reviewer", "by-rule", (), None),
             ("worker", "agent", "rigger-core:worker", "by-rule", (), None),
             ("implementer", "agent", "rigger-core:implementer", "pinned", (), None),
             ("mapper", "agent", "rigger-core:mapper", "pinned", (), None),
@@ -240,7 +241,7 @@ class TrustTests(SlotsTestCase):
     def test_l4_command_without_trust_is_dropped_with_the_line(self):
         rows, _, trusted, notices = self.resolve(l4=level({"reviewer": {"kind": "command", "target": COMMAND}}))
         row = rows["reviewer"]
-        self.assertEqual((row.kind, row.target, row.model, row.source), ("agent", "rigger-core:reviewer", "by-rule", "default"))
+        self.assertEqual((row.kind, row.target, row.model, row.source), ("agent", "rigger-review:reviewer", "by-rule", "default"))
         self.assertEqual(notices, [notice_l4_command("reviewer")])
         self.assertEqual(trusted, frozenset())
 

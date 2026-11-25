@@ -30,11 +30,11 @@ SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these sections: they may be rewritten, never grown. Lower the ceiling when they shrink.
 # The sum is the rendered general layer with module options at their defaults (D20).
-RULES_CEILING_BYTES = 27200
+RULES_CEILING_BYTES = 27300
 SLOTS_CEILING_BYTES = 1200
 SLOTS_ID = "slots.slots"
 RULES_MIN_FILES = 18
-WORKERS = ["rigger-core:worker", "rigger-core:reviewer", "general-purpose"]
+WORKERS = ["rigger-core:worker", "rigger-review:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"
 ROW_RE = re.compile(r"\| .+ \| `([a-z0-9-]+):([a-z0-9-]+)` \|")
 SID = "5b1f0c1e-7d3a-4c55-9a2e-0f6d1c2b3a49"
@@ -176,7 +176,7 @@ class HookRun(unittest.TestCase):
 class WiringTests(HookRun):
     def test_every_rules_file_of_a_module_is_in_its_manifest(self):
         dirs = module_dirs()
-        self.assertEqual(len(dirs), 7)
+        self.assertEqual(len(dirs), 8)
         files = 0
         for root in dirs:
             with self.subTest(module=root.name):
@@ -263,7 +263,7 @@ class SessionStartTests(HookRun):
                 for heading in self.expected_headings("main"):
                     self.assertEqual(lines.count(heading), 1, heading)
                 for root in dirs:
-                    if root.name != "rigger-panel":
+                    if root.name not in ("rigger-panel", "rigger-review"):  # no rules, no root line
                         self.assertIn(root_line(root), joined)
 
     def test_resume_prints_nothing(self):

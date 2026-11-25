@@ -61,6 +61,7 @@ class ManifestTests(unittest.TestCase):
             [
                 "rigger-lessons",
                 "rigger-core",
+                "rigger-review",
                 "rigger-rules",
                 "rigger-talk",
                 "rigger-wp",
@@ -102,14 +103,14 @@ class ManifestTests(unittest.TestCase):
             + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
             + sorted(ROOT.glob("plugins/*/rigger-module.json"))
         )
-        self.assertEqual(len(manifests), 15)
+        self.assertEqual(len(manifests), 17)
         for path in manifests:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertFalse(find_key(load_json(path), "version"))
 
     def test_every_plugin_has_a_valid_module_manifest(self):
         roots = sorted(path.parent.parent for path in ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
-        self.assertEqual(len(roots), 7)
+        self.assertEqual(len(roots), 8)
         for root in roots:
             with self.subTest(plugin=root.name):
                 module = manifest.load_manifest(root, "rigger", "installed")
@@ -118,8 +119,10 @@ class ManifestTests(unittest.TestCase):
 
     def test_slot_fields_of_each_manifest(self):
         guard = {"kind": "hook", "target": "rigger-windows", "rule_checker": "tools/shell-guard/lessons_guard.py"}
+        reviewer = {"kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule"}
         expected = {
-            "rigger-core": (None, None, {}, ["reviewer", "worker", "implementer", "mapper"]),
+            "rigger-core": (None, None, {}, ["worker", "implementer", "mapper"]),
+            "rigger-review": ("reviewer", None, {"reviewer": reviewer}, ["reviewer"]),
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
             "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
             "rigger-rules": (None, None, {}, []),

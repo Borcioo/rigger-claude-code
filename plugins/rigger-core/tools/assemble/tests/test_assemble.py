@@ -64,7 +64,8 @@ class Layout:
         write(self.core / "agents" / "implementer.md", "---\nname: implementer\nomitClaudeMd: true\n---\nx\n")
         write(self.core / "agents" / "mapper.md", "---\nname: mapper\nomitClaudeMd: true\n---\nx\n")
         write(self.core / "agents" / "worker.md", "---\nname: worker\n---\nx\n")
-        write(self.core / "agents" / "reviewer.md", "---\nname: reviewer\n---\nx\n")
+        self.review = self.module("rigger-review", {})
+        write(self.review / "agents" / "reviewer.md", "---\nname: reviewer\n---\nx\n")
         for skill in ("git-workflow", "testing"):
             write(self.core / "skills" / skill / "SKILL.md", "---\nname: %s\n---\n" % skill)
 
@@ -652,7 +653,7 @@ class SnapshotTests(Base):
 
 
 class FullLayoutTests(unittest.TestCase):
-    """All 7 repository modules plus a full rules.d."""
+    """All 8 repository modules plus a full rules.d."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -667,7 +668,7 @@ class FullLayoutTests(unittest.TestCase):
         shutil.rmtree(str(self.tmp), ignore_errors=True)
 
     def test_full_repo_layout_fits_with_full_rules_d(self):
-        self.assertEqual(len(self.layout.dirs), 6)
+        self.assertEqual(len(self.layout.dirs), 7)
         found = self.layout.assemble()
         self.assertEqual(found.notices, [])
         session = [self.layout.part(i) for i in range(1, 7)]
@@ -905,8 +906,8 @@ class SlotWiringTests(Base):
         notice = ("rigger: .claude/rigger.json may not set a command for slot reviewer; add it to "
                   "trust.project_commands in %s to allow it\n" % self.config_file()).encode("utf-8")
         self.assertTrue(first.startswith(notice), first[:300])
-        self.assertIn(b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n", first)
-        self.assertIn(b"review with `rigger-core:reviewer`\n", first)
+        self.assertIn(b"| reviewer | agent | rigger-review:reviewer | by-rule | default |\n", first)
+        self.assertIn(b"review with `rigger-review:reviewer`\n", first)
         self.assertNotIn(b"runs the project's command", first)
         self.assertNotIn(b"Run a command slot", first)
 
@@ -1010,7 +1011,7 @@ class SlotWiringTests(Base):
         self.assertEqual(data["slots"]["trusted"], ["process.tdd"])
         reviewer = [row for row in data["slots"]["rows"] if row["path"] == "reviewer"][0]
         self.assertEqual((reviewer["kind"], reviewer["target"], reviewer["source"]),
-                         ("agent", "rigger-core:reviewer", "default"))
+                         ("agent", "rigger-review:reviewer", "default"))
         import slots  # the reader slot_run.py uses gives back the assembly's own rows
         self.assertEqual(slots.from_snapshot(data["slots"]), (self.layout.assemble().slot_rows,
                                                               frozenset(["process.tdd"])))
@@ -1045,7 +1046,7 @@ class SlotWiringTests(Base):
         self.assertNotIn(marker.encode("ascii"), raw)
         data = json.loads(raw)
         self.assertEqual(data["config"]["effective"]["slots"]["reviewer"],
-                         {"kind": "agent", "target": "rigger-core:reviewer"})
+                         {"kind": "agent", "target": "rigger-review:reviewer"})
         self.assertEqual([(p, s) for p, s in data["config"]["sources"] if p[0] == "slots" and s.startswith("L4:")], [])
         # Control: once trusted, the same command is in effect and the snapshot holds it.
         write_json(self.config_file(), {"schema": 1, "trust": {"project_commands": ["reviewer"]}})
@@ -1059,7 +1060,7 @@ class SlotWiringTests(Base):
         again = self.layout.part(1, stdin=self.compact("nc1"))
         self.assertTrue(again.startswith(b"rigger: snapshot missing; rules read again\n"), again[:80])
         self.assertIn(b"rigger: .claude/rigger.json may not set a command for slot reviewer;", again)
-        self.assertIn(b"| reviewer | agent | rigger-core:reviewer | by-rule | default |\n", again)
+        self.assertIn(b"| reviewer | agent | rigger-review:reviewer | by-rule | default |\n", again)
 
     def test_every_part_packs_the_same_text_with_slots(self):
         self.layout.rules_module()
@@ -1415,7 +1416,7 @@ class CheckTests(unittest.TestCase):
         code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(REPO_CORE), RIGGER_MODULE_DIRS="")
         lines = out.decode("utf-8").splitlines()
         self.assertEqual(code, 0, out + err)
-        self.assertRegex(lines[-1], r"^# check: modules 7, rules files (1[89]|[2-9]\d), findings 0$")
+        self.assertRegex(lines[-1], r"^# check: modules 8, rules files (1[89]|[2-9]\d), findings 0$")
         self.assertIn("# external: superpowers", lines)
 
     def test_check_without_modules_in_a_cache_layout_says_it_saw_one_module(self):
@@ -1443,7 +1444,7 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 0)
         fields = out.decode("utf-8").splitlines()[0].split("\t")
         self.assertEqual(fields[:3], ["CHECK", "rules-assembly", "OK"])
-        self.assertRegex(fields[3], r"^modules 2, sections 6$")  # ## Slots is a section of rigger-core
+        self.assertRegex(fields[3], r"^modules 3, sections 6$")  # ## Slots is a section of rigger-core; rigger-review has none
         self.assertEqual(len(fields), 5)
 
     def test_each_expects_row_gets_its_own_fix(self):

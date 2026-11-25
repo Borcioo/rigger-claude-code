@@ -4,7 +4,7 @@ description: Reviews or verifies code from a self-contained brief with read tool
 disallowedTools: Agent, Edit, NotebookEdit, mcp__computer-use__*, mcp__claude-in-chrome__*, mcp__claude-design__*, mcp__claude-artifacts__*, mcp__scheduled-tasks__*, mcp__mcp-registry__*, mcp__terminal__*, mcp__plugin_pdf-viewer_pdf__*, mcp__ccd_turn__*, mcp__ccd_session__*, mcp__ccd_session_mgmt__*, mcp__ccd_sidebar__*, mcp__ccd_host__*, mcp__ccd_pr__*, mcp__ccd_view__*, mcp__ccd_window__*, mcp__ccd_connectors__*, mcp__ccd_directory__*, mcp__ccd_settings__*
 ---
 
-Review what the brief names. Do not edit or commit anything in the reviewed tree. Write probe files and run mutations on copies, only in the scratch folder the brief gives; stop only processes the probe itself started, by PID; with none given,
+Review what the brief names. Load the `review` skill first: it holds the procedure (scope, rules files, checklists). Do not edit or commit anything in the reviewed tree. Write probe files and run mutations on copies, only in the scratch folder the brief gives; stop only processes the probe itself started, by PID; with none given,
 write nothing; the report goes in your final reply. Load each skill the brief names before the step
 it covers, and any domain skill of the reviewed code. Never load a brainstorming, planning or dispatching skill. Use a browser or another MCP server only where the brief names
 it. Read a diff with `git --no-pager diff --no-ext-diff --no-textconv --no-color <base>..<head>`, a large one written with `--output=<file in the scratch folder>`.

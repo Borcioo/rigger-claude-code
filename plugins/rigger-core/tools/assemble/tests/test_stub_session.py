@@ -330,7 +330,8 @@ class StubSessionTests(unittest.TestCase):
 
 @unittest.skipIf(os.environ.get("HARNESS_NO_CLAUDE") == "1", "HARNESS_NO_CLAUDE=1: claude -p not run")
 class SlotSessionTests(unittest.TestCase):
-    """rigger-core alone, in a cwd that is a two-commit repository; the reviewer slot set to a command."""
+    """rigger-core and the review module (whose agent is the reviewer default), in a cwd that is a two-commit
+    repository; the reviewer slot set to a command."""
 
     def setUp(self):
         self.claude = shutil.which("claude")
@@ -386,10 +387,11 @@ class SlotSessionTests(unittest.TestCase):
                         CLAUDE_CODE_PLUGIN_CACHE_DIR=str(self.tmp / "plugin-cache"),
                         HARNESS_LESSONS_INBOX=str(self.tmp / "lessons-inbox.md"),
                         ANTHROPIC_API_KEY="stub-key",
-                        RIGGER_MODULE_DIRS=module_dirs(["rigger-core"]),
+                        RIGGER_MODULE_DIRS=module_dirs(["rigger-core", "rigger-review"]),
                         HOME=str(self.tmp))  # USERPROFILE stays: Store Python derives sys.executable from it
         command = [self.claude, "-p", probe, "--model", "haiku", "--output-format", "stream-json", "--verbose",
-                   "--settings", str(self.settings), "--allowedTools", "Bash", "--plugin-dir", str(CORE)]
+                   "--settings", str(self.settings), "--allowedTools", "Bash", "--plugin-dir", str(CORE),
+                   "--plugin-dir", str(PLUGINS / "rigger-review")]
         server = QuietServer(("127.0.0.1", 0), SlotHandler)
         server.requests, server.probe, server.base = [], probe, self.base if run_line else None
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -449,7 +451,7 @@ class SlotSessionTests(unittest.TestCase):
         # D33: dropped with the notice naming the person's config; the level-1 agent fills the slot.
         self.assertIn("rigger: .claude/rigger.json may not set a command for slot reviewer; add it to "
                       "trust.project_commands in %s to allow it" % self.personal, notices(lines))
-        self.assertIn("| reviewer | agent | rigger-core:reviewer | by-rule | default |", slots_lines(lines))
+        self.assertIn("| reviewer | agent | rigger-review:reviewer | by-rule | default |", slots_lines(lines))
         self.assertEqual([line for line in lines if SLOT_LINE.search(line)], [], "a command line with no command")
 
         self.write_json(self.personal, {"trust": {"project_commands": ["reviewer"]}})

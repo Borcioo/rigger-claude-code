@@ -313,8 +313,9 @@ class DoctorShTests(DoctorShCase):
     # -- rules assembly (assemble.py --doctor through a real interpreter) ------------------------
 
     def run_assembly(self, *dirs, kernel=None):
-        """doctor.sh with this test's own Python and RIGGER_MODULE_DIRS naming the repo's rigger-rules and `dirs`."""
-        roots = [str(REPO_PLUGINS / "rigger-rules")] + [str(d) for d in dirs]
+        """doctor.sh with this test's own Python and RIGGER_MODULE_DIRS naming the repo's rigger-rules, rigger-review
+        (the reviewer default) and `dirs`."""
+        roots = [str(REPO_PLUGINS / "rigger-rules"), str(REPO_PLUGINS / "rigger-review")] + [str(d) for d in dirs]
         kernel = kernel or ("MINGW64_NT-10.0-26100" if os.name == "nt" else "Linux")
         return self.run_doctor(kernel, path=self.real_python_path(), env={"RIGGER_MODULE_DIRS": os.pathsep.join(roots)})
 
@@ -324,7 +325,7 @@ class DoctorShTests(DoctorShCase):
     def test_clean_layout_gives_rules_assembly_ok(self):
         result = self.run_assembly()
         self.assertRow(result, "rules-assembly", "OK")
-        self.assertRegex(result.checks["rules-assembly"][1], r"^modules 2, sections [1-9]\d*$")
+        self.assertRegex(result.checks["rules-assembly"][1], r"^modules 3, sections [1-9]\d*$")
         self.assertEqual(self.rows(result, "config-inactive"), {})
         self.assertEqual(self.rows(result, "rule-override"), {})
         self.assertEqual(self.rows(result, "expects"), {})
@@ -417,7 +418,7 @@ class DoctorShTests(DoctorShCase):
         expected = set(self.SLOTS) if os.name == "nt" else set(self.SLOTS) - {"shell-guard"}  # requires os:windows
         self.assertEqual(set(self.rows(result, "slot ")), {"slot " + path for path in expected})
         how = "assemble.py --doctor"
-        self.assertEqual(result.checks["slot reviewer"], ("OK", "rigger-core:reviewer (default)", how))
+        self.assertEqual(result.checks["slot reviewer"], ("OK", "rigger-review:reviewer (default)", how))
         self.assertEqual(result.checks["slot testing"], ("OK", "rigger-core:testing (default)", how))
         self.assertEqual(result.checks["slot process.tdd"], ("INFO", "empty: plugin superpowers is not enabled", how))
         self.assertEqual(result.checks["slot lessons"], ("INFO", "empty: plugin rigger-lessons is not enabled", how))
@@ -547,7 +548,7 @@ class DoctorShTests(DoctorShCase):
                                         "mapper": {"kind": "command", "target": [forged + "\t", "{out}"]}}})
         result = self.run_assembly()
         self.assertRow(result, "slot worker", "OK", "rigger-core:worker (default)")
-        self.assertRow(result, "slot reviewer", "OK", "rigger-core:reviewer (default)")
+        self.assertRow(result, "slot reviewer", "OK", "rigger-review:reviewer (default)")
         self.assertNotIn("forged", result.stdout)
 
     def test_real_assembler_run_writes_no_bytecode(self):
