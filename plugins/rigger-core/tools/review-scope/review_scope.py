@@ -357,10 +357,16 @@ def _diff(repo, base_id, head_id):
             path = fields[index + 1].decode("utf-8")
         except UnicodeDecodeError:
             raise ScopeError("path is not UTF-8: %r" % fields[index + 1])
-        if "\t" in path or "\n" in path or "\r" in path:
-            raise ScopeError("path holds a tab or a line break: %r" % path)
+        _check_line_path(path)
         changes.append((path, status))
     return changes
+
+
+def _check_line_path(path):
+    # type: (str) -> None
+    """Refuse a path that would break the one-line `<verdict><TAB><path>` output."""
+    if "\t" in path or "\n" in path or "\r" in path:
+        raise ScopeError("path holds a tab or a line break: %r" % path)
 
 
 def _segment_match(pattern, text):
@@ -544,7 +550,10 @@ def scope(repo, base, head, rules=()):
         changed = set(path for path, _status in changes)
         newly = (_named_rules_files(blobs, head_tree.get(PROJECT_CONFIG))
                  - _named_rules_files(blobs, base_tree.get(PROJECT_CONFIG)))
-        rows += [(name, _newly_named(head_tree[name])) for name in newly if name not in changed and name in head_tree]
+        listed = sorted(name for name in newly if name not in changed and name in head_tree)
+        for name in listed:
+            _check_line_path(name)
+        rows += [(name, _newly_named(head_tree[name])) for name in listed]
     return sorted(rows)
 
 
