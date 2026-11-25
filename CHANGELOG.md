@@ -100,7 +100,7 @@ format. Releases are tagged `v<version>`.
   its Critical and Important findings go through a fix round and a re-review, never a third fresh
   round. A finding is marked `disputed` only with a quoted `file:line` that proves it wrong. With the
   `reviewer` slot empty, the review is blocked and reported as `BLOCKED` with the install line from
-  the session notice; it is never skipped or given to an agent outside the slot.
+  the session notice, or the slot's own notice when there is none; it is never skipped or given to an agent outside the slot.
 - **The background lessons batch reads the rendered rules**, as `curate-lessons` does: it runs
   rigger-core's `assemble.py --render` from the `installPath` in `installed_plugins.json` (30 s,
   1,000,000 bytes) and falls back to raw text with one `rendered rules: unavailable (<reason>)` log

@@ -262,7 +262,8 @@ class SecondReviewRoundTests(unittest.TestCase):
             with self.subTest(file=name):
                 sentence = sentence_with(text, start)
                 self.assertEqual(sentence, "With the `reviewer` slot empty, the review is blocked: report it as "
-                                           "`BLOCKED` with the install line from the session notice; never skip "
+                                           "`BLOCKED` with the install line from the session notice, or the "
+                                           "slot's own notice when there is none; never skip "
                                            "the review or give it to an agent outside the slot.")
 
     def test_an_empty_reviewer_slot_inside_a_plan_is_a_stop(self):

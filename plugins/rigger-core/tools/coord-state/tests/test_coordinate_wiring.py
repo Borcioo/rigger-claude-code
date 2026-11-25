@@ -138,7 +138,7 @@ class CoordinateWiring(unittest.TestCase):
     def test_an_empty_reviewer_slot_stops_the_plan_as_goal_unreachable(self):
         step_four = " ".join(COORDINATE[COORDINATE.index("\n4. "):COORDINATE.index("\n5. ")].split())
         self.assertIn("With the `reviewer` slot empty, the review is blocked: report it as `BLOCKED` with the install "
-                      "line from the session notice; never skip the review or give it to an agent outside the slot. "
+                      "line from the session notice, or the slot's own notice when there is none; never skip the review or give it to an agent outside the slot. "
                       "That part stays `built`; set `stop: goal-unreachable` and ask the user to run that "
                       "install line (step 6).", step_four)
 
