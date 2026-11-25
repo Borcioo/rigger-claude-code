@@ -33,7 +33,7 @@ has exited but a process it started still holds the console after EXIT_GRACE sec
 (known limit: on POSIX a process that left the process group with setsid can outlive the run). The console text kept
 (at most CONSOLE_CAP bytes) is `console.txt` next to the output file. `{base}` and `{head}` are the commit
 ids, `{out}` the output file and `{scope}` a file of `<verdict><TAB><path>` lines from
-`review_scope.scope()`, all in a fresh folder in the temp directory that is kept for the caller.
+`review_scope.scope()` with the session's `review.paths` rules, all in a fresh folder in the temp directory that is kept for the caller.
 
 The last line is `slot-run: ok <slot> <n> findings` (exit 0) or `slot-run: refused: <reason>` (exit 2); once
 the folder exists, the line before it is `slot-run: output <output file>`.
@@ -409,7 +409,7 @@ def _row(slot: str, session: str):
         raise Refusal("slot %s is %s; dispatch its target instead" % (slot, row.kind))
     if row.source == "project" and slot not in trusted:
         raise Refusal("the project's command for %s is not trusted" % slot)
-    return row
+    return row, data
 
 
 def _check_output(slot: str, out_path: str, root: Path, base_id: str, head_id: str) -> int:
@@ -430,13 +430,14 @@ def _main(argv: List[str], emit) -> int:
     if parsed is None:
         raise Refusal(USAGE)
     slot, session, base, head, repo_arg = parsed
-    row = _row(slot, session)
+    row, session_data = _row(slot, session)
     root = _repository_root(repo_arg if repo_arg is not None else os.getcwd())
     program = resolve_program(row.target[0], root)
     try:
         base_id = review_scope.resolve_commit(root, base)
         head_id = review_scope.resolve_commit(root, head)
-        rows = review_scope.scope(root, base_id, head_id)
+        rules = review_scope.path_rules(session_data, root, base_id)
+        rows = review_scope.scope(root, base_id, head_id, rules)
     except review_scope.ScopeError as exc:
         raise Refusal(str(exc))
     if not rows:
