@@ -3,7 +3,7 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
-## [Unreleased]
+## [0.7.0] - 2026-11-25
 
 ### Migration
 
