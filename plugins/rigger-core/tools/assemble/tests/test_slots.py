@@ -19,7 +19,8 @@ DEFAULT_SLOTS = json.loads((CORE_ROOT / "rigger-defaults.json").read_bytes().dec
 L1 = "L1:rigger-defaults.json"
 L3_FILE = "cfg/rigger/config.json"
 L4_FILE = "repo/.claude/rigger.json"
-ENABLED = frozenset(("rigger-core", "rigger-review", "rigger-windows", "rigger-lessons", "superpowers"))
+ENABLED = frozenset(("rigger-core", "rigger-review", "rigger-testing", "rigger-windows", "rigger-lessons",
+                     "superpowers"))
 COMMAND = ["reviewer-cli", "--out", "{out}"]
 EMPTY_SLOT = "the slot is empty"
 RLO = chr(0x202E)  # right-to-left override, category Cf
@@ -40,7 +41,8 @@ class SlotsTestCase(unittest.TestCase):
         self.windows = self.module("rigger-windows", fills="shell-guard", failure_mode="open")
         self.lessons = self.module("rigger-lessons", fills="lessons")
         self.review = self.module("rigger-review", agents=("reviewer",), fills="reviewer")
-        self.modules = [self.core, self.review, self.windows, self.lessons]
+        self.testing = self.module("rigger-testing", skills=("testing",), fills="testing")
+        self.modules = [self.core, self.review, self.testing, self.windows, self.lessons]
 
     def module(self, name, agents=(), skills=(), fills=None, failure_mode=None):
         root = self.tmp / name
@@ -82,7 +84,7 @@ class ResolutionTests(SlotsTestCase):
             ("worker", "agent", "rigger-core:worker", "by-rule", (), None),
             ("implementer", "agent", "rigger-core:implementer", "pinned", (), None),
             ("mapper", "agent", "rigger-core:mapper", "pinned", (), None),
-            ("testing", "skill", "rigger-core:testing", None, (), None),
+            ("testing", "skill", "rigger-testing:testing", None, (), None),
             ("shell-guard", "hook", "rigger-windows", None, ("rigger-windows",), "open"),
             ("lessons", "hook", "rigger-lessons", None, ("rigger-lessons",), None),
             ("process.brainstorm", "skill", "superpowers:brainstorming", None, (), None),
@@ -149,9 +151,11 @@ class ResolutionTests(SlotsTestCase):
     def test_level_one_default_broken_for_another_reason_says_so(self):
         core = self.module("core-copy", agents=("reviewer",))
         core.name = "rigger-core"
-        rows, _, _, notices = self.resolve(modules=[core, self.windows, self.lessons])
+        testing = self.module("testing-copy")
+        testing.name = "rigger-testing"
+        rows, _, _, notices = self.resolve(modules=[core, testing, self.windows, self.lessons])
         self.assertFalse(rows["testing"].filled)
-        self.assertIn("rigger: slot testing from rigger-defaults.json ignored: rigger-core has no skill testing; "
+        self.assertIn("rigger: slot testing from rigger-defaults.json ignored: rigger-testing has no skill testing; "
                       + EMPTY_SLOT, notices)
 
     def test_levels_without_slots_are_quiet(self):
@@ -605,7 +609,7 @@ class TargetsAndSnapshotTests(SlotsTestCase):
             "reviewer": {"kind": "command"},
             "worker": {"kind": "agent", "target": "rigger-core:worker"},
             "implementer": {"kind": "agent", "target": "rigger-core:implementer"},
-            "testing": {"kind": "skill", "target": "rigger-core:testing"},
+            "testing": {"kind": "skill", "target": "rigger-testing:testing"},
             "shell-guard": {"kind": "hook"},
         })
         rows, order, _, _ = self.resolve()

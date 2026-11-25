@@ -218,7 +218,7 @@ SECTION = (b"## Skill triggers\n\n- Load the skill before the first step of its 
            b"{{triggers:skills.skill-triggers}}\n")
 ROOT = "/opt/claude-config/plugins/cache/rigger/rigger-core/0.5.0"  # an installed root of typical length
 PROJECT = "/work/cloned-repo/.claude/rigger.json"
-CORE_ROW = "`rigger-core:testing`"
+CORE_ROW = "`rigger-testing:testing`"  # the testing slot's level-1 default
 LEFT_OUT = re.compile(r"^rigger: left out (\d+) of the trigger rows from (.+): the Skill triggers table must fit in "
                       r"one hook part$", re.M)
 
@@ -252,7 +252,8 @@ class FitTests(unittest.TestCase):
 
     # Every module row stays visible (superpowers enabled), and the project rows' plugin `x` is enabled,
     # so only the size check can remove a row.
-    ENABLED = frozenset({"rigger-core", "rigger-rules", "rigger-windows", "rigger-wp", "superpowers", "x"})
+    ENABLED = frozenset({"rigger-core", "rigger-rules", "rigger-testing", "rigger-windows", "rigger-wp", "superpowers",
+                         "x"})
 
     def test_probe_scenarios_keep_the_table_in_a_part(self):
         scenarios = [("10 rows at the caps", at_caps(10)), ("50 moderate rows", moderate(50)),

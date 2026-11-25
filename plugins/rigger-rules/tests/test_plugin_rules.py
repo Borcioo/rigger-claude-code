@@ -35,7 +35,7 @@ SLOTS_CEILING_BYTES = 1200
 SLOTS_ID = "slots.slots"
 RULES_MIN_FILES = 18
 WORKERS = ["rigger-core:worker", "rigger-review:reviewer", "general-purpose"]
-TESTING_SKILL = PLUGINS / "rigger-core" / "skills" / "testing" / "SKILL.md"
+TESTING_SKILL = PLUGINS / "rigger-testing" / "skills" / "testing" / "SKILL.md"
 ROW_RE = re.compile(r"\| .+ \| `([a-z0-9-]+):([a-z0-9-]+)` \|")
 SID = "5b1f0c1e-7d3a-4c55-9a2e-0f6d1c2b3a49"
 FILL = 8400  # one fill section per part: two never share the 9,000-byte cap
@@ -176,7 +176,7 @@ class HookRun(unittest.TestCase):
 class WiringTests(HookRun):
     def test_every_rules_file_of_a_module_is_in_its_manifest(self):
         dirs = module_dirs()
-        self.assertEqual(len(dirs), 8)
+        self.assertEqual(len(dirs), 9)
         files = 0
         for root in dirs:
             with self.subTest(module=root.name):
@@ -263,7 +263,7 @@ class SessionStartTests(HookRun):
                 for heading in self.expected_headings("main"):
                     self.assertEqual(lines.count(heading), 1, heading)
                 for root in dirs:
-                    if root.name not in ("rigger-panel", "rigger-review"):  # no rules, no root line
+                    if root.name not in ("rigger-panel", "rigger-review", "rigger-testing"):  # no rules, no root line
                         self.assertIn(root_line(root), joined)
 
     def test_resume_prints_nothing(self):
@@ -318,10 +318,10 @@ class SkillTableTests(unittest.TestCase):
                 matches = [ROW_RE.fullmatch(row) for row in self.table_rows(audience)]
                 self.assertNotIn(None, matches)
                 listed = sorted((match.group(1), match.group(2)) for match in matches)
-                for plugin in ("rigger-core", "rigger-windows", "rigger-wp"):
+                for plugin in ("rigger-core", "rigger-testing", "rigger-windows", "rigger-wp"):
                     skills = sorted(path.parent.name for path in (PLUGINS / plugin / "skills").glob("*/SKILL.md"))
                     self.assertGreater(len(skills), 0)
-                    # Without superpowers, the testing slot's row reads `rigger-core:testing` alone (D39).
+                    # Without superpowers, the testing slot's row reads `rigger-testing:testing` alone (D39).
                     self.assertEqual(sorted(skill for owner, skill in listed if owner == plugin), skills, plugin)
 
     def test_exactly_one_rules_file_holds_a_table_placeholder(self):
@@ -442,7 +442,7 @@ class TestingSkillTriggerTests(unittest.TestCase):
         text = Assembled(RIGGER_MODULE_DIRS=dirs).text("rigger-core", "skills.md").decode("utf-8")
         cells = [line.split("|")[-2] for line in text.splitlines()
                  if line.startswith("|") and "superpowers:test-driven-development" in line]
-        self.assertEqual(cells, [" `rigger-core:testing`, then `superpowers:test-driven-development` "])
+        self.assertEqual(cells, [" `rigger-testing:testing`, then `superpowers:test-driven-development` "])
         worker = " ".join((PLUGINS / "rigger-core" / "agents" / "worker.md").read_text(encoding="utf-8").split())
         self.assertIn("Load the skills the Skill triggers table names for writing code or tests and for a bug or "
                       "failing test, each before that step.", worker)

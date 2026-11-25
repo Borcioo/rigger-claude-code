@@ -26,7 +26,7 @@ import run_tests  # noqa: E402
 import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
-PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-windows")
+PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows")
 PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
 # Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
 PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk")
@@ -62,6 +62,7 @@ class ManifestTests(unittest.TestCase):
                 "rigger-lessons",
                 "rigger-core",
                 "rigger-review",
+                "rigger-testing",
                 "rigger-rules",
                 "rigger-talk",
                 "rigger-wp",
@@ -103,14 +104,14 @@ class ManifestTests(unittest.TestCase):
             + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
             + sorted(ROOT.glob("plugins/*/rigger-module.json"))
         )
-        self.assertEqual(len(manifests), 17)
+        self.assertEqual(len(manifests), 19)
         for path in manifests:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertFalse(find_key(load_json(path), "version"))
 
     def test_every_plugin_has_a_valid_module_manifest(self):
         roots = sorted(path.parent.parent for path in ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
-        self.assertEqual(len(roots), 8)
+        self.assertEqual(len(roots), 9)
         for root in roots:
             with self.subTest(plugin=root.name):
                 module = manifest.load_manifest(root, "rigger", "installed")
@@ -120,9 +121,11 @@ class ManifestTests(unittest.TestCase):
     def test_slot_fields_of_each_manifest(self):
         guard = {"kind": "hook", "target": "rigger-windows", "rule_checker": "tools/shell-guard/lessons_guard.py"}
         reviewer = {"kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule"}
+        testing = {"kind": "skill", "target": "rigger-testing:testing"}
         expected = {
             "rigger-core": (None, None, {}, ["worker", "implementer", "mapper"]),
             "rigger-review": ("reviewer", None, {"reviewer": reviewer}, ["reviewer"]),
+            "rigger-testing": ("testing", None, {"testing": testing}, []),
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
             "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
             "rigger-rules": (None, None, {}, []),
@@ -400,8 +403,9 @@ class HookFileTests(unittest.TestCase):
 
     def test_core_pre_tool_use_handlers_allow_twenty_seconds(self):
         """At 10 s a busy Windows machine timed out and the action went unchecked."""
-        path = ROOT / "plugins" / "rigger-core" / "hooks" / "hooks.json"
-        found = [handler for event, _group, handler in hook_handlers(path) if event == "PreToolUse"]
+        found = [handler for plugin in ("rigger-core", "rigger-testing")
+                 for event, _group, handler in hook_handlers(ROOT / "plugins" / plugin / "hooks" / "hooks.json")
+                 if event == "PreToolUse"]
         self.assertEqual(len(found), 4)
         for handler in found:
             self.assertEqual(handler["timeout"], 20)
