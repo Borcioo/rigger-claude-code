@@ -49,8 +49,8 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
 - `/rigger-core:harness-setup`: runs doctor, then writes the Compact Instructions section into your
   user `CLAUDE.md` and, if you opt in, the `autoCompactWindow` setting. It
   asks before each change and changes nothing else.
-- `/rigger-core:coordinate [plan]`: runs an approved plan with each independent part in its own
-  session. Needs the Claude desktop app (its session tools) and the superpowers plugin; elsewhere it
+- `/rigger-core:coordinate [plan]`: runs an approved plan with each lane (a chain of parts on one
+  model) in its own side session, plus standby sessions for later parts. Needs the Claude desktop app (its session tools) and the superpowers plugin; elsewhere it
   falls back to background subagents.
 - `/rigger-core:environments`: fills `.claude/environments.json` from what the repo says, for the
   rigger-panel Environments pane.

@@ -45,5 +45,6 @@ call prefix from step 1 of the command; `<config dir>` is `CLAUDE_CONFIG_DIR`, e
   this one: after compaction or a restart, compare the kept lines with `claude agents --json --all` and close
   any orphan, a session no part still needs.
 - **Not here:** `list_sessions`, `list_events`, `quiet` lines, `wrap_up` buttons and the refused-start
-  paragraphs: a terminal start is never refused for the turn that asks for it. Where a step says to give a
+  paragraphs, and no standby sessions: a terminal start is never refused for the turn that asks for it, so
+  start each session when its stage is due (an idle standby would read as `done` in `wait`). Where a step says to give a
   session's link, give its name and `claude attach <id>`.
