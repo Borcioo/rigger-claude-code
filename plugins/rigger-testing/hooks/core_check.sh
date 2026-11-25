@@ -16,8 +16,8 @@
 # marketplace runs hooks from its source while installPath is a stale snapshot, so there a current core
 # would read as old: no check. Every installPath whose last or second-to-last path element is
 # rigger-core counts as a core; the "older" line prints when at least one exists and none holds rules/skills.md,
-# the "not installed" line when none exists and no `"rigger-core@` key appears at all (an entry it cannot read
-# keeps it silent). A missing or unreadable file prints nothing; a --plugin-dir run names no installPath of its own
+# the "not installed" line when none exists, no `"rigger-core@` key appears at all (an entry it cannot read
+# keeps it silent) and the file is a whole JSON object (one cut short while it is rewritten keeps it silent). A missing or unreadable file prints nothing; a --plugin-dir run names no installPath of its own
 # and stays silent. Known gaps: a current core loaded with --plugin-dir next
 # to an old cached core still prints the line, and when two scopes list rigger-core any current entry
 # keeps it silent, whichever one the session loaded. Keep this file POSIX (dash); it needs no Python.
@@ -45,6 +45,23 @@ paths=$(awk -v name="$name" '
   BEGIN { RS = "\001" }
   {
     if (index($0, "\"rigger-core@")) print "listed -"
+    # A file Claude Code is still writing ends early. A whole JSON object closes its last string and, outside
+    # its strings, has as many closing braces as opening ones. split() on the quote keeps this linear: a gsub
+    # over the whole file is quadratic in gawk. A quote after an odd run of backslashes is escaped.
+    pieces = split($0, piece, "\"")
+    inside = 0
+    opened = 0
+    shut = 0
+    for (i = 1; i <= pieces; i++) {
+      if (!inside) {
+        opened += gsub(/[{]/, "", piece[i])
+        shut += gsub(/[}]/, "", piece[i])
+      }
+      if (i == pieces) break
+      if (inside && match(piece[i], /\\+$/) && RLENGTH % 2) continue
+      inside = !inside
+    }
+    if (!inside && opened > 0 && opened == shut) print "complete -"
     count = split($0, chunk, /"installPath"[ \t\r\n]*:[ \t\r\n]*"/)
     for (i = 2; i <= count; i++) {
       rest = chunk[i]
@@ -75,9 +92,11 @@ ours=no
 cores=0
 current=no
 listed=no
+complete=no
 while read -r kind path; do
   case $kind in
     listed) listed=yes ;;
+    complete) complete=yes ;;
     core)
       cores=$((cores + 1))
       [ ! -f "$path/rules/skills.md" ] || current=yes
@@ -91,7 +110,7 @@ done <<EOF
 $paths
 EOF
 
-if [ "$ours" = yes ] && [ "$cores" -eq 0 ] && [ "$listed" = no ]; then
+if [ "$ours" = yes ] && [ "$cores" -eq 0 ] && [ "$listed" = no ] && [ "$complete" = yes ]; then
   printf '%s\n' "Rigger rules not loaded for $name: rigger-core is not installed (run claude plugin install rigger-core)"
 elif [ "$ours" = yes ] && [ "$cores" -gt 0 ] && [ "$current" = no ]; then
   printf '%s\n' "Rigger rules not loaded for $name: rigger-core is older than $name (run claude plugin update rigger-core)"

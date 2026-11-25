@@ -126,9 +126,9 @@ class CoreCheckTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
-    def run_check(self, root=None, config="set", plugin=PLUGIN, command=None, script=None, cwd=None):
-        command = command or check_command(plugin)[1]["command"]
+    def check_env(self, root=None, config="set", script=None, extra=None):
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
+        env.update(extra or {})
         if script is not None:
             env["CORE_CHECK_SCRIPT"] = script
         env["HOME"] = str(self.home)
@@ -136,8 +136,13 @@ class CoreCheckTests(unittest.TestCase):
             env["CLAUDE_CONFIG_DIR"] = str(self.config)
         env["CLAUDE_PLUGIN_ROOT"] = Path(root or self.rules).as_posix()
         env["PATH"] = os.pathsep.join([str(Path(self.sh).parent), env.get("PATH", "")])
-        proc = subprocess.run([self.sh, "-c", command], input=b'{"source":"startup"}',
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=str(cwd or self.tmp), timeout=60)
+        return env
+
+    def run_check(self, root=None, config="set", plugin=PLUGIN, command=None, script=None, cwd=None):
+        command = command or check_command(plugin)[1]["command"]
+        proc = subprocess.run([self.sh, "-c", command], input=b'{"source":"startup"}', stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, env=self.check_env(root, config, script), cwd=str(cwd or self.tmp),
+                              timeout=60)
         self.assertEqual((proc.returncode, proc.stderr), (0, b""))
         return proc.stdout
 
@@ -179,6 +184,11 @@ class CoreCheckTests(unittest.TestCase):
             ("rigger-core three elements up is not the core", {"rigger-rules@rigger": self.rules, "rigger-core@x": deep},
              {}, b""),
             ("a plugin whose name only starts with rigger-core", {"rigger-rules@rigger": self.rules, "x@x": extra},
+             {}, missing("rigger-rules")),
+            # Only a key that is exactly "rigger-core@<marketplace>" counts as listed.
+            ("a key that only starts with rigger-core",
+             {"rigger-rules@rigger": self.rules, "rigger-core-extra@m": extra}, {}, missing("rigger-rules")),
+            ("a key that only ends in rigger-core", {"rigger-rules@rigger": self.rules, "xrigger-core@m": extra},
              {}, missing("rigger-rules")),
             ("minified one-line file", {"rigger-rules@rigger": self.rules, "rigger-core@rigger": old},
              {"minified": True}, LINE),
@@ -231,6 +241,39 @@ class CoreCheckTests(unittest.TestCase):
         path.write_bytes(data[:cut])
         self.assertEqual(self.run_check(), b"")
 
+    def test_a_listing_cut_anywhere_never_says_not_installed(self):
+        # Claude Code rewriting the file while another session starts: a prefix may end after this plugin's entry
+        # and before the "rigger-core@ key, so only a complete file may say no core is installed.
+        # One-line file with a short second entry: every byte is one more run of the hook. Its key holds an escaped
+        # quote and a brace and ends in an escaped backslash: only a quote after an odd run of backslashes stays in
+        # a string, and a brace inside a string is not counted.
+        self.listing({"rigger-rules@rigger": self.rules, 'o"{\\': Path("/o/1")}, minified=True)
+        self.assertIn(b'"o\\"{\\\\"', (self.config / "plugins" / "installed_plugins.json").read_bytes())
+        data = (self.config / "plugins" / "installed_plugins.json").read_bytes()
+        self.assertFalse(data[-1:].isspace(), "the full file must be the only complete prefix")
+        self.assertEqual(self.run_check(), missing("rigger-rules"), "full file")
+        # One config dir per prefix; each of four sh loops runs the real hook command over a quarter of them,
+        # since a sh per prefix costs minutes under Git Bash.
+        cuts = self.tmp / "cuts"
+        for cut in range(1, len(data)):
+            self.write_listing(data[:cut], config=cuts / ("c%d" % cut))
+        command = check_command()[1]["command"]
+        loop = ('i=$FIRST; while [ "$i" -lt %d ]; do printf "== %%s\\n" "$i"; CLAUDE_CONFIG_DIR="$CUTS/c$i" %s; '
+                'i=$((i + 4)); done' % (len(data), command))
+        procs = [subprocess.Popen([self.sh, "-c", loop], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, cwd=str(self.tmp),
+                                  env=self.check_env(extra={"CUTS": cuts.as_posix(), "FIRST": str(first)}))
+                 for first in range(1, 5)]
+        blocks = []
+        for proc in procs:
+            out, err = proc.communicate(timeout=120)
+            self.assertEqual((proc.returncode, err), (0, b""))
+            blocks += out.decode("utf-8").replace("\r\n", "\n").split("== ")[1:]
+        seen = sorted(int(block.split("\n", 1)[0]) for block in blocks)
+        self.assertEqual(seen, list(range(1, len(data))))
+        printed = sorted(int(block.split("\n", 1)[0]) for block in blocks if block.split("\n", 1)[1])
+        self.assertEqual(printed, [], "prefixes of %d bytes that printed" % len(data))
+
     def test_a_value_with_another_json_escape_is_skipped(self):
         # ó is not undone, so the value is skipped; read literally it would name a folder that does not exist.
         self.core(self.cache / "xó" / "rigger-core" / "945ea046f764", assembler=True)
@@ -271,7 +314,11 @@ class CoreCheckTests(unittest.TestCase):
     def test_unreadable_listing_prints_nothing(self):
         self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
         self.assertEqual(self.run_check(), b"", "missing file")
-        for name, data in (("not JSON", b"{not json"), ("empty", b""), ("a list", b"[]")):
+        own = self.rules.as_posix().encode("utf-8")
+        for name, data in (("not JSON", b"{not json"), ("empty", b""), ("a list", b"[]"),
+                           # This plugin's own entry in a file that is no whole JSON object.
+                           ("own entry, no braces", b'"installPath":"' + own + b'"'),
+                           ("own entry, then a stray quote", b'{"installPath":"' + own + b'"}"')):
             with self.subTest(row=name):
                 self.write_listing(data)
                 self.assertEqual(self.run_check(), b"")
