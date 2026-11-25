@@ -616,14 +616,14 @@ class AllowedPathsTests(unittest.TestCase):
                                                       "config": {"lessons": lessons}})
         return os.path.abspath(str(root))
 
-    def run_cli(self, extra=None):
+    def run_cli(self, extra=None, cwd=None):
         env = {key: value for key, value in os.environ.items()
                if not key.upper().startswith(("CLAUDE_", "RIGGER_"))}
         env["CLAUDE_CONFIG_DIR"] = str(self.config)
         env.update(extra or {})
         proc = subprocess.run([sys.executable, "-I", str(LINT), "--archive", str(self.archive)],
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              cwd=str(self.project), env=env, timeout=60)
+                              cwd=str(cwd or self.project), env=env, timeout=60)
         return proc.returncode, proc.stdout.decode("utf-8").replace("\r\n", "\n").splitlines(), proc.stderr
 
     def refused(self):
@@ -730,12 +730,27 @@ class AllowedPathsTests(unittest.TestCase):
 
     def test_level_4_is_ignored(self):
         self.install_core()
-        project_file = self.project / ".claude" / "rigger.json"
-        self.write_json(project_file, {"schema": 1, "lessons": {"allowed_paths": [TEAM_GLOB]}})
-        code, lines, err = self.run_cli()
-        self.assertEqual((code, err), (1, b""), lines)
-        self.assertEqual(lines[:2], ["# rigger: config %s key lessons not allowed at level 4; ignored" % project_file,
-                                     self.refused()])
+        self.write_json(self.project / ".claude" / "rigger.json", {"schema": 1, "lessons": {"allowed_paths": [TEAM_GLOB]}})
+        linked = self.tmp / "linked-project"
+        make_dir_link(linked, self.project)  # macOS temp folders sit behind /var -> /private/var
+        for label, folder in (("the folder", self.project), ("a link to it", linked)):
+            with self.subTest(row=label):
+                code, lines, err = self.run_cli(cwd=folder)
+                self.assertEqual((code, err), (1, b""), lines)
+                project_file = os.path.join(cwd_as_seen(folder), ".claude", "rigger.json")
+                self.assertEqual(lines[:2], ["# rigger: config %s key lessons not allowed at level 4; ignored"
+                                             % project_file, self.refused()])
+
+
+def cwd_as_seen(folder):
+    """What os.getcwd() returns inside `folder`, the project path the lint reads and prints: POSIX resolves
+    symlinks there, Windows keeps a junction's own path."""
+    saved = os.getcwd()
+    os.chdir(str(folder))
+    try:
+        return os.getcwd()
+    finally:
+        os.chdir(saved)
 
 
 def make_dir_link(link, target):
