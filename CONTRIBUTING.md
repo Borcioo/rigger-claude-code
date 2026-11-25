@@ -77,7 +77,7 @@ PATH it prints `SKIP wsl: wsl not on PATH`. Skipped legs are counted on the pass
 | `--distro <name>` | the WSL distribution of the Linux leg (default `Ubuntu`) |
 | `--out <folder>` | where the logs and `status.txt` go (default: a `gate` folder in the temp directory, named in the first line) |
 | `--changed-modules [--base REV]` | the gate of a module-only change: the changed modules' tests (and their readers) in place of the suite, here and under WSL, from one changed-file list the host writes; not with `--release` |
-| `--verify <status.txt>` | runs nothing; checks that the status file's pass line is about the current tree, names the mode (`full` or `changed-modules: <modules>`), and refuses a changed-modules result once the change holds a shared path |
+| `--verify <status.txt>` | runs nothing; checks that the status file's pass line is about the current tree, names the mode (`full` or `changed-modules: <modules>`), and refuses a changed-modules result once the change holds a shared path or its recorded merge base is not the merge base of `--into <branch>` (default `main`) and HEAD |
 
 The last line is `# gate passed, <seconds> s[, skipped N], tree <id>` or `# gate failed: <legs>`.
 

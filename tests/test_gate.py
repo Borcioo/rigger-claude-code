@@ -946,6 +946,9 @@ class ChangedModulesGateTests(unittest.TestCase):
         for name, effect in (
             ("git failure", gate.TreeError("changed list: git merge-base exit 128: bad revision")),
             ("line break in a path", (SHA, ["plugins/a/x\ny.py"])),
+            ("carriage return in a path", (SHA, ["plugins/a/x\ry.py"])),
+            ("nul in a path", (SHA, ["plugins/a/x\0y.py"])),
+            ("empty path", (SHA, ["plugins/a/x.py", ""])),
         ):
             with self.subTest(name):
                 stale = self.out / gate.STATUS
@@ -986,16 +989,43 @@ class VerifyModeTests(TreeRepoCase):
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "module a")
         self.merge_base = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "checkout", "-q", "-B", "work")
+        git(self.repo, "branch", "-f", "main", "HEAD")   # the merge target: verify's default --into
         self.status = self.base / "status.txt"
 
-    def verify(self, mode):
+    def verify(self, mode, *more):
         lines = ["TREE x"] + ([mode] if mode is not None else []) + ["PASS a 0.1 s", "# gate passed, 0.1 s, tree " + self.tree()]
         self.status.write_text("\n".join(lines) + "\n", encoding="utf-8")
         buffer = io.StringIO()
         with mock.patch.object(gate, "run_gate", never), mock.patch.object(gate, "build_stages", never):
             with contextlib.redirect_stdout(buffer):
-                code = gate.main(["--verify", str(self.status)], root=self.repo)
+                code = gate.main(["--verify", str(self.status)] + list(more), root=self.repo)
         return code, buffer.getvalue()
+
+    def test_verify_requires_the_merge_base_of_the_merge_target(self):
+        git(self.repo, "checkout", "-q", "-b", "side")
+        self.write("scripts/s.py")   # shared against main, not against side
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "shared on side")
+        side = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "checkout", "-q", "-b", "on-side")
+        self.write("plugins/a/x.py")
+        mode = "mode: changed-modules base side merge-base %s, modules a" % side
+        self.assertEqual(self.verify(mode), (1, "verify: changed-modules gate on base side, not main; run the full gate\n"))
+        self.assertEqual(self.verify(mode, "--into", "side"),
+                         (0, "gate result matches: tree %s (changed-modules: a)\n" % self.tree()))
+        code, output = self.verify(mode, "--into", "nope")
+        self.assertEqual(code, 1, output)
+        self.assertRegex(output, r"^verify: cannot find the merge base of nope and HEAD: git merge-base exit \d+: .*\n$")
+
+    def test_into_without_verify_is_refused(self):
+        stderr = io.StringIO()
+        with mock.patch.object(gate, "run_gate", never), mock.patch.object(gate, "build_stages", never):
+            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()), \
+                    self.assertRaises(SystemExit) as raised:
+                gate.main(["--into", "main", "--out", str(self.base / "out")], root=self.repo)
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--into needs --verify", stderr.getvalue())
 
     def changed_mode(self, sha=None):
         return "mode: changed-modules base main merge-base %s, modules a" % (sha or self.merge_base)
@@ -1048,6 +1078,34 @@ class VerifyModeTests(TreeRepoCase):
         code, output = self.verify(self.changed_mode("e" * 40))
         self.assertEqual(code, 1, output)
         self.assertRegex(output, r"^verify: cannot list the change: git diff exit \d+: .+\n$")
+
+
+class HostListTests(TreeRepoCase):
+    """gate.main --changed-modules on a fixture repository: host git writes the list the legs read."""
+
+    def test_the_host_list_holds_the_change_from_the_merge_base(self):
+        self.write("plugins/a/rigger-module.json", "{}\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "module a")
+        base_sha = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "branch", "start")
+        self.write("plugins/a/x.py")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "module change")
+        self.write("plugins/a/new.py")   # untracked
+        out = self.base / "out"
+        real = gate.build_stages
+
+        def stages(*args, **kwargs):
+            return [[leg._replace(command=PASSING[leg.name]) for leg in stage] for stage in real(*args, **kwargs)]
+
+        with mock.patch.object(gate, "build_stages", stages), mock.patch.object(gate.shutil, "which", lambda name: None):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = gate.main(["--changed-modules", "--base", "start", "--out", str(out)], root=self.repo)
+        status = (out / gate.STATUS).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(code, 0, status)
+        self.assertEqual((out / LIST).read_bytes(), b"plugins/a/new.py\nplugins/a/x.py\n")
+        self.assertEqual(status[1], "mode: changed-modules base start merge-base %s, modules a" % base_sha)
 
 
 class MainTests(unittest.TestCase):

@@ -717,6 +717,9 @@ class ChangedModulesTests(unittest.TestCase):
             ("dead key", self.read_by({"plugins/a/tests/test_gone.py": ["c"]}), "plugins/a/tests/test_gone.py matches no test file"),
             ("not json", "{format: 1}\n", "unreadable"),
             ("readers a list", json.dumps({"format": 1, "readers": []}), "format"),
+            ("format true", json.dumps({"format": True, "readers": {}}), "format"),
+            ("an extra key", json.dumps({"format": 1, "readers": {}, "more": 1}), "format"),
+            ("a list of the two keys", json.dumps(["format", "readers"]), "format"),
             ("reads a string", self.read_by({"plugins/a/tests/test_x.py": "c"}), "not a list of module names"),
             ("reads empty", self.read_by({"plugins/a/tests/test_x.py": []}), "not a list of module names"),
         )
@@ -769,12 +772,17 @@ class ChangedModulesTests(unittest.TestCase):
             ("empty lines only", b"\n\n", "no path"),
             ("not utf-8", b"plugins/a/\xff.py\n", "not UTF-8"),
             ("nul byte", b"plugins/a/x.py\x00\n", "NUL"),
+            ("a folder", "folder", "unreadable"),
         )
         for name, data, reason in rows:
             with self.subTest(name):
                 listed = self.tmp / "changed-files.txt"
+                if listed.is_dir():
+                    listed.rmdir()
                 listed.unlink(missing_ok=True)
-                if data is not None:
+                if data == "folder":
+                    listed.mkdir()
+                elif data is not None:
                     self.list_file(data)
                 self.ran = []
                 code, output, calls = self.main_without_git("--changed-from", str(listed))

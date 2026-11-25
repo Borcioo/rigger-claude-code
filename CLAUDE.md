@@ -75,4 +75,5 @@ change: `CONTRIBUTING.md`.
   runs only on that test's exit code, with the full output kept in a file. The status file's
   `TREE <id>` line and the pass line's `tree <id>` name the content the gate ran on; before a merge
   run `python -I scripts/gate.py --verify <status.txt>`: it names the gate's mode and refuses a
-  changed-modules result once the change holds a shared path; when the base moved, rerun the gate.
+  changed-modules result once the change holds a shared path or its recorded merge base is not the
+  merge target's (`--into <branch>`, default `main`); when the base moved, rerun the gate.

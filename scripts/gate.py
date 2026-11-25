@@ -3,7 +3,7 @@
 Usage: python -I scripts/gate.py [--denylist FILE] [--distro NAME] [--out DIR]
        python -I scripts/gate.py --release --denylist FILE [...]
        python -I scripts/gate.py --changed-modules [--base REV] [--denylist FILE] [...]
-       python -I scripts/gate.py --verify STATUS_FILE
+       python -I scripts/gate.py --verify STATUS_FILE [--into BRANCH]
 
 Every input is optional. With no --denylist the sweep runs with --no-denylist and the status says
 `denylist: none`. With no `claude` on PATH the suite runs with --no-claude and the status says so.
@@ -45,7 +45,9 @@ The status line after TREE is the mode: `mode: full`, or for --changed-modules
               the working tree's current one; else exit 1 with one reason line. The line names the
               mode; a status with no mode line reads as full, and any other mode line exits 1. For a
               changed-modules status, host git lists the paths from the recorded merge base to the
-              working tree again, and a shared path among them exits 1.
+              working tree again, and a shared path among them exits 1; so does a recorded merge
+              base that is not the merge base of --into (default main) and HEAD.
+--into        with --verify only: the branch the change merges into.
 """
 
 import argparse
@@ -86,8 +88,10 @@ GIT_TIMEOUT = 300
 CHANGED_FILES = "changed-files.txt"
 MODE_FULL = "mode: full"
 MODE_CHANGED_RE = re.compile(
-    r"^mode: changed-modules base \S+ merge-base ([0-9a-f]{40}|[0-9a-f]{64}), modules (\S.*)$"
+    r"^mode: changed-modules base (\S+) merge-base ([0-9a-f]{40}|[0-9a-f]{64}), modules (\S.*)$"
 )
+# The branch a change merges into, whose merge base a changed-modules status must have recorded.
+DEFAULT_INTO = "main"
 # The line a changed-modules leg prints when it refuses to run; a failed leg's status shows it.
 MODE_REASON_RE = r"^changed-modules: .*; run the gate$"
 
@@ -363,11 +367,14 @@ def read_mode(lines, status_file):
     match = MODE_CHANGED_RE.match(found[0])
     if not match:
         return "verify: unknown mode %r; run the full gate" % found[0], None
-    return None, (match.group(1), match.group(2))
+    return None, (match.group(1), match.group(2), match.group(3))
 
 
-def verify(status_file, root):
-    """(exit code, the one line to print) for `--verify`: is the file's pass line about this tree, in a mode it allows."""
+def verify(status_file, root, into=DEFAULT_INTO):
+    """(exit code, the one line to print) for `--verify`: is the file's pass line about this tree, in a mode it allows.
+
+    A changed-modules status also needs every path from its merge base shared-free, and that merge base to be
+    the merge base of `into` (the branch the change merges into) and HEAD."""
     try:
         text = Path(status_file).read_text(encoding="utf-8")
     except (OSError, ValueError):
@@ -392,7 +399,7 @@ def verify(status_file, root):
         return 1, "gate ran on tree %s, current tree is %s" % (found.group(1), current)
     if mode == "full":
         return 0, "gate result matches: tree %s (full)" % current
-    merge_base, modules = mode
+    base, merge_base, modules = mode
     try:
         changed = changed_since(root, merge_base, "verify: cannot list the change")
     except TreeError as error:
@@ -400,6 +407,12 @@ def verify(status_file, root):
     for path in changed:
         if run_tests.classify(path, Path(root))[0] == "shared":
             return 1, "verify: changed-modules gate, but %s is shared; run the full gate" % path
+    try:
+        found_base = git_list(root, "verify: cannot find the merge base of %s and HEAD" % into, "merge-base", into, "HEAD")
+    except TreeError as error:
+        return 1, str(error)
+    if not found_base or found_base[0].strip() != merge_base:
+        return 1, "verify: changed-modules gate on base %s, not %s; run the full gate" % (base, into)
     return 0, "gate result matches: tree %s (changed-modules: %s)" % (current, modules)
 
 
@@ -527,9 +540,12 @@ def main(argv=None, root=ROOT):
         "--changed-modules", action="store_true", help="the gate of a change whose every path lies in module folders"
     )
     parser.add_argument("--base", default=None, help="with --changed-modules: the change starts at the merge base with this (default: main)")
+    parser.add_argument("--into", default=None, help="with --verify: the branch the change merges into (default: main)")
     args = parser.parse_args(argv)
+    if args.into is not None and args.verify is None:
+        parser.error("--into needs --verify")
     if args.verify is not None:
-        code, line = verify(args.verify, root)
+        code, line = verify(args.verify, root, into=args.into or DEFAULT_INTO)
         print(line, flush=True)
         return code
     if args.base is not None and not args.changed_modules:
