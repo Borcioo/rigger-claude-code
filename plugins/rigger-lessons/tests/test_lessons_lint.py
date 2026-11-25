@@ -608,10 +608,19 @@ class AllowedPathsTests(unittest.TestCase):
     def personal(self, lessons):
         self.write_json(self.config / "rigger" / "config.json", {"schema": 1, "lessons": lessons})
 
-    def run_cli(self):
+    def company_module(self, lessons):
+        """A company module folder whose config sets `lessons` (level 2), for RIGGER_MODULE_DIRS."""
+        root = self.tmp / "team-module"
+        self.write_json(root / ".claude-plugin" / "plugin.json", {"name": "team-rules"})
+        self.write_json(root / "rigger-module.json", {"schema": 1, "name": "team-rules", "layer": "company",
+                                                      "config": {"lessons": lessons}})
+        return os.path.abspath(str(root))
+
+    def run_cli(self, extra=None):
         env = {key: value for key, value in os.environ.items()
                if not key.upper().startswith(("CLAUDE_", "RIGGER_"))}
         env["CLAUDE_CONFIG_DIR"] = str(self.config)
+        env.update(extra or {})
         proc = subprocess.run([sys.executable, "-I", str(LINT), "--archive", str(self.archive)],
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               cwd=str(self.project), env=env, timeout=60)
@@ -627,6 +636,10 @@ class AllowedPathsTests(unittest.TestCase):
         self.assertEqual((code, err, lines[0]), (1, b"", self.refused()), lines)  # control: the fixed set refuses it
         self.personal({"allowed_paths": [TEAM_GLOB]})
         code, lines, err = self.run_cli()
+        self.assertEqual((code, err, lines), (0, b"", ["# 5 case files checked, 0 problems"]))
+        self.personal({})
+        module = {"RIGGER_MODULE_DIRS": self.company_module({"allowed_paths": [TEAM_GLOB]})}
+        code, lines, err = self.run_cli(module)  # level 2: a company module's config
         self.assertEqual((code, err, lines), (0, b"", ["# 5 case files checked, 0 problems"]))
         meta = {"scope": "project:p", "project": "p", "rule": TEAM_RULE}
         self.assertIsNone(lessons_lint.scope_problem(meta, [TEAM_GLOB]))  # a project may still keep its rule there
@@ -694,6 +707,26 @@ class AllowedPathsTests(unittest.TestCase):
         (Path(root) / "tools" / "assemble" / "config.py").write_bytes(b"raise ValueError('broken copy')\n")
         globs, notices, reason = lessons_lint.allowed_paths(str(self.config), str(self.project), {})
         self.assertEqual((globs, notices, reason), ([], [], "rigger-core did not load (ValueError: broken copy)"))
+
+    def test_a_wrongly_shaped_plugin_list_uses_the_fixed_set(self):
+        self.install_core()
+        self.personal({"allowed_paths": [TEAM_GLOB]})
+        listing = self.config / "plugins" / "installed_plugins.json"
+        root = json.loads(listing.read_bytes())["plugins"]["rigger-core@rigger"][0]["installPath"]
+        no_core, no_path = "no rigger-core in the plugin list", "no tools/assemble/config.py in an installPath of rigger-core@rigger"
+        rows = [
+            ("a list file", [{"rigger-core@rigger": [{"installPath": root}]}], no_core),
+            ("plugins a number", {"plugins": 7}, no_core),
+            ("plugins a list of names", {"plugins": ["rigger-core@rigger"]}, no_core),
+            ("its row a number", {"plugins": {"rigger-core@rigger": 7}}, no_path),
+            ("its row item a string", {"plugins": {"rigger-core@rigger": [root]}}, no_path),
+        ]
+        for label, data, reason in rows:
+            with self.subTest(row=label):
+                self.write_json(listing, data)
+                code, lines, err = self.run_cli()
+                self.assertEqual((code, err, lines[:2]), (1, b"", [
+                    "# lessons.allowed_paths not read (%s); the fixed set applies" % reason, self.refused()]))
 
     def test_level_4_is_ignored(self):
         self.install_core()
