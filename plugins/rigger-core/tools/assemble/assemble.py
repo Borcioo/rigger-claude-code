@@ -28,7 +28,8 @@ sys.path.insert(0, str(HERE))
 import slots  # noqa: E402
 import snapshot  # noqa: E402
 from config import Resolved, _shown, defaults_path, load_level, resolve  # noqa: E402
-from discover import INLINE, PERSONAL, Discovery, _read_json, _Unreadable, discover, root_text  # noqa: E402,F401
+from discover import (INLINE, INSTALLED, KNOWN, LISTING, PERSONAL, Discovery, _enabled_flags, _read_json,  # noqa: E402,F401
+                      _Unreadable, discover, root_text)
 from manifest import CORE, SLOT_PATHS, UNSAFE, ManifestError, Module, TriggerRow, load_manifest  # noqa: E402
 from parts import PART_CAP, SESSION_PARTS, SUBAGENT_PARTS, Block, pack  # noqa: E402
 from render import SECOND_TABLE, RenderContext, _slot_target, collect_rows, fits_part, render  # noqa: E402
@@ -1031,6 +1032,60 @@ def _table_rows(text: str) -> List[Tuple[str, List[str]]]:
     return found
 
 
+def _json_or_none(path: Path):
+    try:
+        return _read_json(path)
+    except _Unreadable:
+        return None
+
+
+def _dependency_rows(inputs: Inputs) -> List[_Row]:
+    """D96: one row per dependency of each enabled, installed plugin. Static: it sees a dependency that is missing
+    or not enabled, never whether the session loaded the plugin."""
+    flags = _enabled_flags(inputs.config_dir, inputs.project_dir, [])
+    data = _json_or_none(inputs.config_dir / INSTALLED)
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    plugins = plugins if isinstance(plugins, dict) else {}
+    known = _json_or_none(inputs.config_dir / KNOWN)
+    known = known if isinstance(known, dict) else {}
+
+    def present(key: str) -> bool:
+        entries = plugins.get(key)
+        return flags.get(key) is True and isinstance(entries, list) and any(
+            isinstance(e, dict) and isinstance(e.get("installPath"), str) and e["installPath"] for e in entries)
+
+    def allows(market: str, other: str) -> bool:
+        entry = known.get(market)
+        source = entry.get("source") if isinstance(entry, dict) and isinstance(entry.get("source"), dict) else {}
+        folder = (entry.get("installLocation") if isinstance(entry, dict) else None) or source.get("path")
+        listing = _json_or_none(Path(folder) / LISTING) if isinstance(folder, str) and folder else None
+        allowed = listing.get("allowCrossMarketplaceDependenciesOn") if isinstance(listing, dict) else None
+        return isinstance(allowed, list) and other in allowed
+
+    rows = []  # type: List[_Row]
+    for key in sorted(k for k in plugins if present(k)):
+        market = key.rpartition("@")[2]
+        entry = next(e for e in plugins[key] if isinstance(e, dict) and isinstance(e.get("installPath"), str))
+        manifest = _json_or_none(Path(entry["installPath"]) / ".claude-plugin" / "plugin.json")
+        deps = manifest.get("dependencies") if isinstance(manifest, dict) else None
+        for dep in deps if isinstance(deps, list) else ():
+            if not isinstance(dep, str) or not dep:
+                continue
+            target = dep if "@" in dep else "%s@%s" % (dep, market)  # a bare name resolves in the same marketplace
+            name = "dependency " + _shown(key)
+            if present(target):
+                rows.append((name, "OK", "needs %s: installed and enabled" % _shown(target), None))
+                continue
+            detail = "needs %s: not installed or not enabled, so %s does not load" % (_shown(target), _shown(key))
+            other = target.rpartition("@")[2]
+            if other != market and not allows(market, other):
+                detail += ("; install skips it until %s's marketplace.json lists \"%s\" in "
+                           "allowCrossMarketplaceDependenciesOn" % (_shown(market), _shown(other)))
+            fix = "claude plugin install " + target if _FIX_TARGET.fullmatch(target) else None
+            rows.append((name, "MISSING", detail, fix))
+    return rows
+
+
 def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> List[_Row]:
     """A rules.d file that holds a trigger table, with its rows as `triggers` JSON (spec section 13, migration)."""
     folder = inputs.config_dir / "rigger" / PERSONAL_DIR
@@ -1065,7 +1120,7 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
         if len(text) > TABLE_JSON_MAX:
             text = text[:TABLE_JSON_MAX] + " …"
         rows.append(("rules-d-table " + _shown("%s/%s" % (PERSONAL_DIR, name)), "INFO",
-                     "holds a trigger table; move its rows to triggers in %s: %s"
+                     "rules file still holds a skill-trigger table; its rows as triggers for %s: %s"
                      % (_shown(_personal_config(inputs), 300), text), None))
     return rows
 
@@ -1107,7 +1162,7 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
         rows.append(("config-inactive " + key, "INFO", "%s in %s: no effect in this release" % (key, where)))
     plain = [m for m in found.discovery.modules if m.origin != PERSONAL]
     for name, status, detail, fix in (_slot_rows(found, plain, own) + _order_rows(found)
-                                      + _rules_d_rows(inputs, found, plain)):
+                                      + _rules_d_rows(inputs, found, plain) + _dependency_rows(inputs)):
         rows.append((name, status, detail))
         if fix is not None:
             fixes[len(rows) - 1] = fix

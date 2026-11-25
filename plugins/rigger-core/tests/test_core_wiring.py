@@ -180,6 +180,25 @@ class StateFileRuleTests(Base):
     def test_the_rule_path_blocks_without_a_config_dir(self):
         self.assertIn('"decision": "block"', self.pre_decision(self.tmp / "home", ""))
 
+    def test_the_rule_points_items_at_the_tool_and_keeps_its_limits(self):
+        text = re.sub(r"\s+", " ", RULE.read_text(encoding="utf-8"))
+        self.assertIn("`## Items`", text)
+        self.assertRegex(text, r"`## Items` only (?:with|through) `[^`]*tools/state/state\.py")
+        self.assertIn("9 000 characters", text)
+        self.assertIn("`## Next step` is the first section", text)
+        self.assertIn("never append to it", text)
+
+    def test_the_state_handler_runs_on_every_session_start(self):
+        hooks = json.loads(HOOKS.read_text(encoding="utf-8"))["hooks"]["SessionStart"]
+        found = [(group.get("matcher"), item) for group in hooks for item in group["hooks"]
+                 if "tools/state/state.py" in item["command"]]
+        self.assertEqual(len(found), 1, found)
+        matcher, item = found[0]
+        self.assertEqual(sorted(matcher.split("|")), ["clear", "compact", "resume", "startup"])
+        self.assertEqual(item["timeout"], 10)
+        self.assertEqual(item["command"], 'sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S '
+                                          '"${CLAUDE_PLUGIN_ROOT}/tools/state/state.py" hook || true')
+
     def test_install_names_the_config_dir_too(self):
         text = INSTALL.read_text(encoding="utf-8")
         self.assertIn("<config dir>/state/<session id>.md", text)

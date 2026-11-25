@@ -1576,5 +1576,106 @@ class StaleOverrideTests(unittest.TestCase):
         self.assertNotIn("acme", out.decode("utf-8"))
 
 
+class DependencyRowTests(unittest.TestCase):
+    """D96: doctor reads each enabled plugin's `dependencies`. Layouts as `claude plugin` 2.1.327 wrote them (Task 33
+    spike): known_marketplaces.json gives a directory marketplace's folder as `installLocation`, a bare dependency
+    resolves in the plugin's own marketplace, and install skips a cross-marketplace dependency the plugin's
+    marketplace does not allow."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.layout = Layout(self.tmp)
+        self.installed = {}
+        self.enabled = {}
+        self.known = {}
+
+    def tearDown(self):
+        shutil.rmtree(str(self.tmp), ignore_errors=True)
+
+    def marketplace(self, name, allow=None):
+        folder = self.tmp / ("mkt-" + name)
+        listing = {"name": name, "owner": {"name": "t"}, "plugins": []}
+        if allow is not None:
+            listing["allowCrossMarketplaceDependenciesOn"] = allow
+        write_json(folder / ".claude-plugin" / "marketplace.json", listing)
+        self.known[name] = {"source": {"source": "directory", "path": str(folder)}, "installLocation": str(folder)}
+
+    def plugin(self, key, deps=None, installed=True, enabled=True):
+        name, _, market = key.partition("@")
+        root = self.layout.config / "plugins" / "cache" / market / name / "0.1.0"
+        data = {"name": name, "version": "0.1.0"}
+        if deps is not None:
+            data["dependencies"] = deps
+        write_json(root / ".claude-plugin" / "plugin.json", data)
+        if installed:
+            self.installed[key] = [{"scope": "user", "installPath": str(root), "version": "0.1.0"}]
+        self.enabled[key] = enabled
+
+    def rows(self):
+        config = self.layout.config
+        write_json(config / "plugins" / "installed_plugins.json", {"version": 2, "plugins": self.installed})
+        write_json(config / "plugins" / "known_marketplaces.json", self.known)
+        write_json(config / "settings.json", {"enabledPlugins": self.enabled})
+        code, out, err = self.layout.cli("--doctor")
+        self.assertEqual(code, 0, out + err)
+        lines = out.decode("utf-8").splitlines()
+        return [line.split("\t") for line in lines if line.split("\t")[1].startswith("dependency ")]
+
+    def test_missing_dependency_is_an_error_row(self):
+        for name, installed, enabled in (("not installed", False, True), ("installed, disabled", True, False)):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.marketplace("core-fx")
+                self.plugin("mod-b@core-fx", ["core-a"])
+                self.plugin("core-a@core-fx", installed=installed, enabled=enabled)
+                self.assertEqual(self.rows(), [
+                    ["CHECK", "dependency mod-b@core-fx", "MISSING", "needs core-a@core-fx: not installed or not "
+                     "enabled, so mod-b@core-fx does not load", "assemble.py --doctor"],
+                    ["FIX", "dependency mod-b@core-fx", "claude plugin install core-a@core-fx"]])
+
+    def test_cross_marketplace_without_allowlist_names_the_fix(self):
+        self.marketplace("core-fx")
+        self.marketplace("company-fx")
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.assertEqual(self.rows(), [
+            ["CHECK", "dependency mod-b@company-fx", "MISSING", "needs core-a@core-fx: not installed or not enabled, "
+             "so mod-b@company-fx does not load; install skips it until company-fx's marketplace.json lists "
+             "\"core-fx\" in allowCrossMarketplaceDependenciesOn", "assemble.py --doctor"],
+            ["FIX", "dependency mod-b@company-fx", "claude plugin install core-a@core-fx"]])
+        self.tearDown()
+        self.setUp()  # control: with the allowlist the row is the plain missing row
+        self.marketplace("core-fx")
+        self.marketplace("company-fx", allow=["core-fx"])
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.assertEqual(self.rows()[0][3], "needs core-a@core-fx: not installed or not enabled, so mod-b@company-fx "
+                                            "does not load")
+
+    def test_dependency_present_is_ok(self):
+        self.marketplace("core-fx")
+        self.marketplace("company-fx")  # installed by hand, a dependency loads without the allowlist (spike q2)
+        self.plugin("mod-b@company-fx", ["core-a@core-fx"])
+        self.plugin("core-a@core-fx")
+        self.assertEqual(self.rows(), [["CHECK", "dependency mod-b@company-fx", "OK",
+                                        "needs core-a@core-fx: installed and enabled", "assemble.py --doctor"]])
+
+    def test_a_plugin_without_dependencies_has_no_row(self):
+        self.marketplace("core-fx")
+        self.plugin("core-a@core-fx")
+        self.plugin("mod-c@core-fx", [])
+        self.plugin("mod-d@core-fx", ["core-z"], enabled=False)  # a disabled plugin is not checked
+        self.assertEqual(self.rows(), [])
+
+    def test_wrong_shapes_give_no_row(self):
+        # plugin.json is the plugin author's file: a shape doctor cannot read names no dependency.
+        for name, deps in (("a string", "core-z"), ("not strings", [1, {"name": "core-z"}, ""])):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.marketplace("core-fx")
+                self.plugin("mod-b@core-fx", deps)
+                self.assertEqual(self.rows(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -110,8 +110,13 @@ updates never touch them.
 
 ## What is optional
 
-"Depends on" in the table is the only hard requirement. The rest works without the other plugin;
-text that names it then points at nothing:
+"Depends on" in the table is the only hard requirement. A plugin from another marketplace that
+depends on a Rigger plugin writes the dependency as `rigger-core@rigger`, and its own
+`marketplace.json` lists `"rigger"` in `allowCrossMarketplaceDependenciesOn`. Without that entry
+`claude plugin install` exits 0 but skips the dependency, and the plugin does not load (the debug log
+says `dependency-unsatisfied`). `/rigger-core:doctor` shows a `dependency` row for each enabled
+plugin's dependency. The rest works without the other plugin; text that names it then points at
+nothing:
 
 - **Sibling plugins.** A rule or skill that names a skill of another plugin (`rigger-core:<skill>`,
   `rigger-windows:<skill>`, the `safe-edit.ps1` of `rigger-windows`) works only when that plugin is

@@ -13,6 +13,11 @@ than a fix, so we can agree on the shape before you write it.
   bytes with LF endings (the hook text cap is 10,000 characters). The tests and
   `plugins/rigger-core/tools/assemble/assemble.py --check` enforce it.
 - `bin/py.sh` exists once per plugin as byte-identical copies: change all of them in one commit.
+- A dependency on a plugin of another marketplace is written `<plugin>@<marketplace>`, and the
+  depending plugin's `marketplace.json` lists that marketplace in
+  `allowCrossMarketplaceDependenciesOn`. Without it `claude plugin install` exits 0, skips the
+  dependency, and the plugin does not load. Exit status proves nothing here: check the debug log
+  (`dependency-unsatisfied`) or the doctor's `dependency` row.
 - Every new test gets a red run: break the code it covers once and show the failing assertion.
 - Run every `claude` command, including `claude plugin validate`, under a temporary
   `CLAUDE_CONFIG_DIR`, because it writes into the config directory. `CLAUDE.md` lists the other

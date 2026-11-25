@@ -69,6 +69,7 @@ TEST_SEGMENT_ENDS = (".tests", ".test")  # a .NET test project, compared in lowe
 TEST_NAMES = ("test_*", "*_test.*", "*.test.*", "*.spec.*", "*_spec.*", "*.tests.*", "test-*", "*Tests.*",
               "*Test.*")  # compared case-sensitively
 REGULAR = (b"100644", b"100755")
+LINK = b"120000"
 PROJECT_CONFIG = ".claude/rigger.json"
 OBJECT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
 LEVEL_NAMES = {2: "company", 3: "personal", 4: "project"}
@@ -543,8 +544,19 @@ def scope(repo, base, head, rules=()):
         changed = set(path for path, _status in changes)
         newly = (_named_rules_files(blobs, head_tree.get(PROJECT_CONFIG))
                  - _named_rules_files(blobs, base_tree.get(PROJECT_CONFIG)))
-        rows += [(name, NEWLY_NAMED) for name in newly if name not in changed and name in head_tree]
+        rows += [(name, _newly_named(head_tree[name])) for name in newly if name not in changed and name in head_tree]
     return sorted(rows)
+
+
+def _newly_named(entry):
+    # type: (TreeEntry) -> str
+    """NEWLY_NAMED, or a variant that says why the file is not to be read: a link leads wherever its target
+    points, and a file over TEXT_CAP is one a later review drops."""
+    if entry[0] == LINK:
+        return NEWLY_NAMED + " (link)"
+    if entry[2] > TEXT_CAP:
+        return NEWLY_NAMED + " (over %d bytes)" % TEXT_CAP
+    return NEWLY_NAMED
 
 
 # --- review.paths (D61) --------------------------------------------------------------------------------

@@ -156,8 +156,8 @@ class SlotRunCase(unittest.TestCase):
         return [program or sys.executable, FAKE, mode, "--record", self.record, "--out", "{out}",
                 "--scope", "{scope}", "--base", "{base}", "--head", "{head}"] + list(extra)
 
-    def write_snapshot(self, rows, trusted=(), session=SESSION):
-        data = {"format": snapshot.SNAPSHOT_FORMAT, "parts": [], "modules": [], "config": {}, "sections": [],
+    def write_snapshot(self, rows, trusted=(), session=SESSION, config=None):
+        data = {"format": snapshot.SNAPSHOT_FORMAT, "parts": [], "modules": [], "config": config or {}, "sections": [],
                 "rows": [], "slots": slots.as_snapshot(rows, frozenset(trusted)), "notices": []}
         self.assertIsNotNone(snapshot.write_snapshot(self.config, session, data))
 
@@ -206,6 +206,18 @@ class RunTests(SlotRunCase):
         self.write_snapshot([command_row(self.command("copy-scope"))])
         code, lines = self.run_slot()
         self.assertEqual((code, lines[-1]), (0, "slot-run: ok reviewer 0 findings"), lines)
+
+    def test_scope_file_carries_review_paths_of_the_session(self):
+        paths = {"a.py": {"skip": "reviewed elsewhere"}}
+        config = {"effective": {"review": {"paths": paths}},
+                  "sources": [[["review", "paths", "a.py", "skip"], "L3:personal"]]}
+        self.write_snapshot([command_row(self.command("ok"))], config=config)
+        code, lines = self.run_slot()
+        self.assertEqual((code, lines[-1]), (0, "slot-run: ok reviewer 1 findings"), lines)
+        with open(os.path.join(os.path.dirname(self.output_path(lines)), "scope.txt"), "rb") as handle:
+            scope = handle.read().decode("utf-8").splitlines()
+        self.assertEqual(scope, ["skip: reviewed elsewhere (review.paths)\ta.py", "skip: deleted\tb.py", "skip: deleted\tc.py",
+                                 "review\td.py"])
 
     def test_refused_output_is_refused(self):
         self.write_snapshot([command_row(self.command("bad-status"))])
