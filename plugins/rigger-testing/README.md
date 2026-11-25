@@ -5,7 +5,12 @@ commit-time weak-test guard. It depends on `rigger-core`, whose skill triggers r
 or tests loads the `testing` slot before the TDD skill.
 
 Install: `claude plugin install rigger-testing@rigger` (with the `rigger` marketplace added, as
-rigger-core's README says).
+rigger-core's README says). The install adds rigger-core when it is missing but does not update an
+installed one: coming from a release whose rigger-core shipped the testing skill, also run
+`claude plugin update rigger-core@rigger`, then `/rigger-core:doctor`. Until rigger-core is updated,
+the weak-test guard runs twice (once from each plugin) and rigger-core's startup check reports the
+duplicate; update rigger-core rather than disabling a plugin. Without this plugin the `testing` slot
+stays empty, each session prints the install line, and the commit-time weak-test guard is off.
 
 ## Skill
 

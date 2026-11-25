@@ -5,7 +5,11 @@ The review module of Rigger: the `reviewer` agent that fills rigger-core's `revi
 lists the files in scope and whose `slot_check.py reviewer` checks the agent's closing JSON.
 
 Install: `claude plugin install rigger-review@rigger` (with the `rigger` marketplace added, as
-rigger-core's README says).
+rigger-core's README says). The install adds rigger-core when it is missing but does not update an
+installed one: coming from a release whose rigger-core shipped the reviewer, also run
+`claude plugin update rigger-core@rigger`, then `/rigger-core:doctor`. Without this plugin the
+`reviewer` slot stays empty, each session prints the install line, and an orchestrated review is
+reported as blocked, never skipped.
 
 ## Agent
 
