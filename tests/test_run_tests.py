@@ -4,6 +4,7 @@ import atexit
 import contextlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -444,6 +445,7 @@ class ChangedModulesTests(unittest.TestCase):
             "scripts/sweep.py": SWEEP_STUB,
             "plugins/zzz/x.py": "x = 1\n",
             "plugins/a/f.py": "f = 1\n",
+            "tests/read_by.json": '{"format": 1, "readers": {}}\n',
         }
         for name, deps in (("a", None), ("b", ["a"]), ("c", None), ("rigger-core", None), ("rigger-rules", None)):
             manifest = {"name": name}
@@ -643,6 +645,160 @@ class ChangedModulesTests(unittest.TestCase):
         lines = output.splitlines()
         count_at = lines.index("# changed-modules: sweep files 3, findings 2")
         self.assertEqual(lines[count_at - 2:count_at], finding_lines, output)
+
+    def commit(self, files, message="more"):
+        for rel, text in files.items():
+            if text is None:
+                (self.root / rel).unlink()
+            else:
+                self.write(rel, text)
+        fixture_git(self.root, "add", "-A")
+        fixture_git(self.root, "commit", "-q", "-m", message)
+
+    def read_by(self, readers):
+        return json.dumps({"format": 1, "readers": readers}) + "\n"
+
+    def test_known_readers_run_on_a_change_to_what_they_read(self):
+        self.commit({
+            "plugins/r/rigger-module.json": '{"name": "r"}\n',
+            "plugins/r/.claude-plugin/plugin.json": '{"name": "r"}\n',
+            "plugins/r/tests/stub.py": "STUB = 1\n",
+            "plugins/a/tests/test_s.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({"plugins/a/tests/test_s.py": ["r"]}),
+        })
+        self.write("plugins/r/tests/stub.py", "STUB = 2\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(set(self.ran), set(ALWAYS_RUN) | {"plugins/a/tests/test_s.py"}, output)
+
+    def test_a_wildcard_reader_runs_on_any_module_change(self):
+        self.commit({
+            "plugins/c/tests/test_w.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({"plugins/c/tests/test_w.py": ["*"]}),
+        })
+        self.write("plugins/a/tools/t/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("plugins/c/tests/test_w.py", self.ran, output)
+        self.assertNotIn("plugins/c/tests/test_x.py", self.ran, output)
+
+    def test_an_unlisted_repo_test_runs_on_any_module_change(self):
+        self.commit({
+            "tests/test_other.py": PASSING_TEST,
+            "tests/test_listed.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({"tests/test_listed.py": ["a"]}),
+        })
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("tests/test_other.py", self.ran, output)
+        self.assertNotIn("tests/test_listed.py", self.ran, output)   # a listed repo test reads only what it names
+
+    def test_folder_key_matches_by_segment(self):
+        self.commit({
+            "plugins/a/tools/t/tests/test_in.py": PASSING_TEST,
+            "plugins/a/tools/t_x/tests/test_out.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({
+                "plugins/a/tools/t/": ["c"],
+                "plugins/a/tools/t_x/tests/test_out.py": ["rigger-core"],
+            }),
+        })
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("plugins/a/tools/t/tests/test_in.py", self.ran, output)
+        self.assertNotIn("plugins/a/tools/t_x/tests/test_out.py", self.ran, output)
+
+    def test_a_broken_map_exits_two(self):
+        rows = (
+            ("missing", None, "tests/read_by.json: missing"),
+            ("format 2", json.dumps({"format": 2, "readers": {}}), "format"),
+            ("unknown module", self.read_by({"plugins/a/tests/test_x.py": ["nope"]}), "unknown module nope"),
+            ("dead key", self.read_by({"plugins/a/tests/test_gone.py": ["c"]}), "plugins/a/tests/test_gone.py matches no test file"),
+            ("not json", "{format: 1}\n", "unreadable"),
+            ("readers a list", json.dumps({"format": 1, "readers": []}), "format"),
+            ("format true", json.dumps({"format": True, "readers": {}}), "format"),
+            ("an extra key", json.dumps({"format": 1, "readers": {}, "more": 1}), "format"),
+            ("a list of the two keys", json.dumps(["format", "readers"]), "format"),
+            ("reads a string", self.read_by({"plugins/a/tests/test_x.py": "c"}), "not a list of module names"),
+            ("reads empty", self.read_by({"plugins/a/tests/test_x.py": []}), "not a list of module names"),
+        )
+        for name, text, reason in rows:
+            with self.subTest(name):
+                fixture_git(self.root, "reset", "-q", "--hard")
+                (self.root / "plugins/c/tools/t.py").unlink(missing_ok=True)   # untracked: the change of the last row
+                self.commit({"tests/read_by.json": text}, message=name)
+                self.write("plugins/c/tools/t.py", "t = 1\n")
+                self.ran = []
+                code, output = self.main()
+                self.assertEqual(code, 2, output)
+                self.assertRegex(output, r"(?m)^changed-modules: read-by map: .*%s.*; run the gate$" % re.escape(reason))
+                self.assertEqual(self.ran, [])
+                if text is None:
+                    self.commit({"tests/read_by.json": self.read_by({})}, message="restore")
+
+    def main_without_git(self, *argv):
+        """main with every subprocess.run of git recorded and refused; (code, output, git calls)."""
+        calls = []
+        real = subprocess.run
+
+        def guarded(command, *args, **kwargs):
+            if Path(str(command[0])).stem.lower() == "git":
+                calls.append(command)
+                raise subprocess.CalledProcessError(128, command, stderr="git refused by the test")
+            return real(command, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", guarded):
+            code, output = self.main(*argv)
+        return code, output, calls
+
+    def list_file(self, data):
+        path = self.tmp / "changed-files.txt"
+        path.write_bytes(data)
+        return path
+
+    def test_changed_from_runs_no_git(self):
+        listed = self.list_file(b"plugins/a/x.py\n")
+        code, output, calls = self.main_without_git("--changed-from", str(listed))
+        self.assertEqual(calls, [])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(set(self.ran), set(ALWAYS_RUN) | {self.MODULE_TESTS["a"], self.MODULE_TESTS["b"]}, output)
+        self.assertIn("# changed-modules: sweep left to the gate's sweep legs\n", output)
+        self.assertEqual(self.sweep_calls(), [])   # the plain mode's sweep is pinned by expect_sweep_and_control
+
+    def test_changed_from_missing_file_exits_two(self):
+        rows = (
+            ("missing", None, "missing"),
+            ("empty lines only", b"\n\n", "no path"),
+            ("not utf-8", b"plugins/a/\xff.py\n", "not UTF-8"),
+            ("nul byte", b"plugins/a/x.py\x00\n", "NUL"),
+            ("a folder", "folder", "unreadable"),
+        )
+        for name, data, reason in rows:
+            with self.subTest(name):
+                listed = self.tmp / "changed-files.txt"
+                if listed.is_dir():
+                    listed.rmdir()
+                listed.unlink(missing_ok=True)
+                if data == "folder":
+                    listed.mkdir()
+                elif data is not None:
+                    self.list_file(data)
+                self.ran = []
+                code, output, calls = self.main_without_git("--changed-from", str(listed))
+                self.assertEqual(code, 2, output)
+                self.assertRegex(output, r"(?m)^changed-modules: changed list %s: .*%s.*; run the gate$"
+                                 % (re.escape(str(listed)), re.escape(reason)))
+                self.assertEqual((self.ran, calls), ([], []))
+
+    def test_changed_from_without_the_mode_is_refused(self):
+        errors = io.StringIO()
+        with mock.patch.object(run_tests, "run_file", self.fake_run_file()), contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                run_tests.main(["--changed-from", str(self.tmp / "x.txt")], root=self.root)
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--changed-from", errors.getvalue())
+        self.assertNotIn("unrecognized arguments", errors.getvalue())
 
     def test_fix_round_control_or_agent_next_to_it_is_refused(self):
         for flag in ("--fix-round", "--control", "--agent"):

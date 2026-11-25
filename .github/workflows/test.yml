@@ -32,6 +32,10 @@ jobs:
       - run: python -I scripts/gate.py --out "${{ runner.temp }}/gate"
       - if: failure()
         run: tail -n 300 "${{ runner.temp }}/gate/tests.log"
+      - name: hook latency
+        continue-on-error: true
+        timeout-minutes: 15
+        run: python -I -X utf8 scripts/hook_latency.py --runs 20
 
   tests:
     name: tests (${{ matrix.os }})
@@ -53,3 +57,7 @@ jobs:
       - name: startup bench
         continue-on-error: true
         run: python -I -X utf8 scripts/startup_bench.py --runs 20
+      - name: hook latency
+        continue-on-error: true
+        timeout-minutes: 15
+        run: python -I -X utf8 scripts/hook_latency.py --runs 20

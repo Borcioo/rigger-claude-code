@@ -67,10 +67,13 @@ change: `CONTRIBUTING.md`.
   prints `SKIP <leg>: <reason>`. Between fixes `python -I scripts/run_tests.py --fix-round`, never
   as the gate; add `--no-claude` when no `claude` run is allowed, or `test_reinject.py` starts
   `claude -p`. Before the gate, a change inside one module's folder may run
-  `python -I scripts/run_tests.py --changed-modules` as a fast pre-check; it never replaces the gate
-  for a pull request or a release, and exit 2 means a shared file changed. A change to a rules file or a skill runs `test_plugin_rules` and `test_drift_lint` in
+  `python -I scripts/run_tests.py --changed-modules` as a fast pre-check; a pull request whose every
+  changed path lies in module folders may take `python -I scripts/gate.py --changed-modules` as its
+  gate; a release, and a change with a shared path, take the full gate. A change to a rules file or a skill runs `test_plugin_rules` and `test_drift_lint` in
   the same round as the edit (text moved into a placeholder leaves a stale drift-lint baseline row,
   itself a finding) and again before the merge; a commit chained after a test
   runs only on that test's exit code, with the full output kept in a file. The status file's
   `TREE <id>` line and the pass line's `tree <id>` name the content the gate ran on; before a merge
-  run `python -I scripts/gate.py --verify <status.txt>`, and when the base moved, rerun the gate.
+  run `python -I scripts/gate.py --verify <status.txt>`: it names the gate's mode and refuses a
+  changed-modules result once the change holds a shared path or its recorded merge base is not the
+  merge target's (`--into <branch>`, default `main`); when the base moved, rerun the gate.

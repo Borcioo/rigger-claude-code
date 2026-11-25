@@ -830,6 +830,60 @@ class ProgramTests(SlotRunCase):
                                                      "starts (for an npm tool: node <script>)" % shown]))
                 self.assertEqual([call for call in self.calls if inside(call[0], folder)], [])
 
+    def other_spelling_rows(self, spell):
+        """(row, program path, cwd, args) for a program in the repository and one in the working directory (started
+        there with --repo), each named through `spell(folder)`, another spelling of the folder that holds it."""
+        elsewhere = self.tmp / "elsewhere"
+        self.plant(elsewhere)
+        repo_args = ["--session", SESSION, "--base", self.base, "--head", self.head, "--repo", str(self.repo)]
+        return [("the repository", os.path.join(spell(self.repo), self.file), None, None),
+                ("the working directory", os.path.join(spell(elsewhere), self.file), elsewhere, repo_args)]
+
+    def assert_refused_by_identity(self, rows):
+        for row, program, cwd, args in rows:
+            with self.subTest(row=row):
+                self.assertTrue(os.path.isfile(program), program)
+                self.calls = []
+                code, lines = self.run_with_path(self.base_path, program=program, cwd=cwd, args=args)
+                self.assertEqual((code, lines), (2, ["slot-run: refused: %s resolves inside the repository" % program]))
+                self.assertEqual(self.reviewer_calls(), [])
+
+    def test_absolute_program_spelled_in_another_case_is_refused(self):
+        """On a case-insensitive file system (macOS by default, WSL's /mnt/<drive>, Windows) the repository's or the
+        working directory's name in the other case is the same folder."""
+        def twin(folder):
+            spelled = folder.parent / folder.name.swapcase()
+            if not spelled.is_dir() or not os.path.samefile(str(spelled), str(folder)):
+                reason = "case-sensitive file system at %s (on WSL set TMPDIR to a /mnt/<drive> folder)" % folder
+                if sys.platform == "darwin":  # APFS is case-insensitive by default: a skip would hide the proof
+                    self.fail(reason)
+                self.skipTest(reason)
+            return str(spelled)
+        self.assert_refused_by_identity(self.other_spelling_rows(twin))
+
+    @unittest.skipUnless(NT, "the admin share is a Windows spelling")
+    def test_absolute_program_through_the_admin_share_is_refused(self):
+        """`\\\\localhost\\<drive>$\\…` names the same file as the drive path, though no spelling or real path
+        matches; skipped when the share cannot be opened, failed instead when CI is set."""
+        def share(folder):
+            drive, rest = os.path.splitdrive(os.path.abspath(str(folder)))
+            probe = "\\\\localhost\\%s$\\" % drive[:1]
+            if not os.path.isdir(probe):
+                reason = "the admin share %s cannot be opened" % probe
+                if os.environ.get("CI"):
+                    self.fail(reason)
+                self.skipTest(reason)
+            return probe + rest.lstrip("\\")
+        self.assert_refused_by_identity(self.other_spelling_rows(share))
+
+    def test_a_repository_that_cannot_be_read_refuses_every_program(self):
+        """Without the repository's identity another spelling of it cannot be ruled out."""
+        outside = self.plant(self.tmp / "outbin")
+        with self.assertRaises(slot_run.Refusal) as caught:
+            slot_run.resolve_program(outside, self.tmp / "gone")
+        self.assertEqual(str(caught.exception), "%s resolves inside the repository" % outside)
+        self.assertTrue(same_path(slot_run.resolve_program(outside, self.repo), outside))  # control
+
     def test_absolute_path_that_is_not_a_program_file_refuses(self):
         script = self.tmp / "tool.py"
         script.write_bytes(b"print(1)\n")  # no execute bit on POSIX

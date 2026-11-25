@@ -37,9 +37,16 @@ to a rules file or a skill also runs `plugins/rigger-rules/tests/test_plugin_rul
 `plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py`.
 
 `python -I scripts/run_tests.py --changed-modules [--base REV]` is a fast local pre-check for a
-change inside one module's folder: it runs that module's tests, its dependents' and four
-repository-wide files, then the sweep. It is not a gate. A pull request and a release still need
-the full gate, and exit 2 means a shared file changed, so only the gate says anything.
+change inside one module's folder: it runs that module's tests, its dependents', the tests that
+read it and four repository-wide files, then the sweep. Exit 2 means a shared file changed, so only
+the full gate says anything. A pull request whose every changed path lies in module folders may
+take `python -I scripts/gate.py --changed-modules [--base REV]` as its gate; a release, and a
+change with a shared path, take the full gate.
+
+When a test starts reading another module's files (a path, a module name, a loop over `plugins/`),
+add it to `tests/read_by.json`: `{"<test file, or a test folder ending in />": ["<module>", …] or
+["*"]}`. `tests/test_read_by.py` fails on a read the map does not declare; a key that matches no
+test file makes the mode exit 2. A `tests/test_*.py` file the map does not list reads every module.
 
 A plugin that fills a slot ships its contract fixtures in `tests/contract/<slot>/` and names the
 slot in `tests.contract` of its `rigger-module.json`. Each folder holds `pass*` files that must pass
@@ -69,7 +76,8 @@ PATH it prints `SKIP wsl: wsl not on PATH`. Skipped legs are counted on the pass
 | `--release` | requires `--denylist`; plants one term of it and requires the sweep to find it exactly once |
 | `--distro <name>` | the WSL distribution of the Linux leg (default `Ubuntu`) |
 | `--out <folder>` | where the logs and `status.txt` go (default: a `gate` folder in the temp directory, named in the first line) |
-| `--verify <status.txt>` | runs nothing; checks that the status file's pass line is about the current tree |
+| `--changed-modules [--base REV]` | the gate of a module-only change: the changed modules' tests (and their readers) in place of the suite, here and under WSL, from one changed-file list the host writes; not with `--release` |
+| `--verify <status.txt>` | runs nothing; checks that the status file's pass line is about the current tree, names the mode (`full` or `changed-modules: <modules>`), and refuses a changed-modules result once the change holds a shared path or its recorded merge base is not the merge base of `--into <branch>` (default `main`) and HEAD |
 
 The last line is `# gate passed, <seconds> s[, skipped N], tree <id>` or `# gate failed: <legs>`.
 

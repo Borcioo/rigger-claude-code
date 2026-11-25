@@ -2,7 +2,8 @@
 
 Usage: python -I scripts/gate.py [--denylist FILE] [--distro NAME] [--out DIR]
        python -I scripts/gate.py --release --denylist FILE [...]
-       python -I scripts/gate.py --verify STATUS_FILE
+       python -I scripts/gate.py --changed-modules [--base REV] [--denylist FILE] [...]
+       python -I scripts/gate.py --verify STATUS_FILE [--into BRANCH]
 
 Every input is optional. With no --denylist the sweep runs with --no-denylist and the status says
 `denylist: none`. With no `claude` on PATH the suite runs with --no-claude and the status says so.
@@ -23,12 +24,30 @@ computed again after the last leg; a different id fails the gate (`tree changed 
 The Python running this file runs the legs. A leg still running after LEG_TIMEOUT seconds fails,
 and everything it started is killed.
 
+The status line after TREE is the mode: `mode: full`, or for --changed-modules
+`mode: changed-modules base <rev> merge-base <sha>, modules <names>`.
+
 --denylist    the sweep's private denylist (optional).
 --release     the release gate: --denylist required, plus the denylist control.
 --distro      WSL distribution (default: Ubuntu).
 --out         folder for the logs (default: gate/ beside the --agent log).
+--changed-modules
+              the gate of a change whose every path lies in module folders. Host git computes the
+              changed paths once (from the merge base with --base, default main, to the working tree,
+              untracked files included) into <out>/changed-files.txt; the leg changed-modules runs
+              `run_tests.py --changed-modules --changed-from <that file>` in place of the suite, and the
+              WSL leg runs the same from the file's /mnt path, so it never runs git. The sweep legs and
+              the control are the full gate's. A shared path fails the leg (its exit 2), and the status
+              shows that leg's `changed-modules: …; run the gate` line. A list git cannot give, or a
+              path holding a line break, fails the gate before any leg. Not with --release.
+--base        with --changed-modules only.
 --verify      run no leg: exit 0 only when the last line of STATUS_FILE is a pass line whose tree id is
-              the working tree's current one; else exit 1 with one reason line.
+              the working tree's current one; else exit 1 with one reason line. The line names the
+              mode; a status with no mode line reads as full, and any other mode line exits 1. For a
+              changed-modules status, host git lists the paths from the recorded merge base to the
+              working tree again, and a shared path among them exits 1; so does a recorded merge
+              base that is not the merge base of --into (default main) and HEAD.
+--into        with --verify only: the branch the change merges into.
 """
 
 import argparse
@@ -65,6 +84,16 @@ SKIP_FILE_RE = re.compile(r"^SKIP \S", re.M)
 TREE_INDEX = "gate-tree.index"
 TREE_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 GIT_TIMEOUT = 300
+# The host's changed-file list that every --changed-modules leg reads instead of asking git.
+CHANGED_FILES = "changed-files.txt"
+MODE_FULL = "mode: full"
+MODE_CHANGED_RE = re.compile(
+    r"^mode: changed-modules base (\S+) merge-base ([0-9a-f]{40}|[0-9a-f]{64}), modules (\S.*)$"
+)
+# The branch a change merges into, whose merge base a changed-modules status must have recorded.
+DEFAULT_INTO = "main"
+# The line a changed-modules leg prints when it refuses to run; a failed leg's status shows it.
+MODE_REASON_RE = r"^changed-modules: .*; run the gate$"
 
 
 class Leg(NamedTuple):
@@ -79,6 +108,8 @@ class Leg(NamedTuple):
     skip: Optional[str] = None
     # The count the leg must read exactly, instead of at least 1.
     exact: Optional[int] = None
+    # A regex for the line that says why the leg refused; on a failure its last match goes to the status.
+    reason_re: Optional[str] = None
 
 
 class Status:
@@ -222,6 +253,11 @@ def run_leg(leg, root, out, status):
     problem = judge(leg, returncode, seconds, log_path)
     if problem:
         status.tell("FAIL %s: %s" % (leg.name, problem))
+        if leg.reason_re is not None:
+            text = log_path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+            reasons = re.findall(leg.reason_re, text, re.M)
+            if reasons:
+                status.tell(reasons[-1])
         return leg.name
     text = log_path.read_text(encoding="utf-8", errors="replace")
     status.tell("PASS %s %.1f s%s" % (leg.name, seconds, pass_details(leg, text)))
@@ -285,8 +321,60 @@ def run_gate(stages, root, out, notes=()):
         status.handle.close()
 
 
-def verify(status_file, root):
-    """(exit code, the one line to print) for `--verify`: is the file's pass line about this tree."""
+def git_list(root, what, *args):
+    """The NUL-separated names a host git call prints, with no inherited GIT_* variable; TreeError on failure."""
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    try:
+        done = subprocess.run(
+            ["git", *args], cwd=str(root), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, timeout=GIT_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise TreeError("%s: git %s: %s" % (what, args[0], error))
+    if done.returncode != 0:
+        detail = " ".join(done.stderr.decode("utf-8", "replace").split())
+        raise TreeError("%s: git %s exit %d: %s" % (what, args[0], done.returncode, detail))
+    try:
+        text = done.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        raise TreeError("%s: git %s printed a name that is not UTF-8" % (what, args[0]))
+    return [name for name in text.split("\0") if name]
+
+
+def changed_since(root, merge_base, what):
+    """Paths that differ between `merge_base` and the working tree, untracked ones included, sorted."""
+    changed = git_list(root, what, "diff", "--name-only", "--no-renames", "-z", merge_base, "--")
+    untracked = git_list(root, what, "ls-files", "-o", "--exclude-standard", "-z")
+    return sorted(set(changed) | set(untracked))
+
+
+def changed_list(root, base):
+    """(merge base of `base` and HEAD, the changed paths) as select_tests.changed_files reads them, by host git."""
+    found = git_list(root, "changed list", "merge-base", base, "HEAD")
+    merge_base = found[0].strip() if found else ""
+    if not TREE_RE.match(merge_base):
+        raise TreeError("changed list: git merge-base printed %r" % merge_base)
+    return merge_base, changed_since(root, merge_base, "changed list")
+
+
+def read_mode(lines, status_file):
+    """(None, mode) where mode is "full" or (merge base, modules), or (the refusal line, None)."""
+    found = [line for line in lines if line.startswith("mode:")]
+    if len(found) > 1:
+        return "verify: more than one mode line in %s" % status_file, None
+    if not found or found[0] == MODE_FULL:
+        return None, "full"
+    match = MODE_CHANGED_RE.match(found[0])
+    if not match:
+        return "verify: unknown mode %r; run the full gate" % found[0], None
+    return None, (match.group(1), match.group(2), match.group(3))
+
+
+def verify(status_file, root, into=DEFAULT_INTO):
+    """(exit code, the one line to print) for `--verify`: is the file's pass line about this tree, in a mode it allows.
+
+    A changed-modules status also needs every path from its merge base shared-free, and that merge base to be
+    the merge base of `into` (the branch the change merges into) and HEAD."""
     try:
         text = Path(status_file).read_text(encoding="utf-8")
     except (OSError, ValueError):
@@ -294,6 +382,9 @@ def verify(status_file, root):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines or not re.match(r"^# gate passed(,|$)", lines[-1]):
         return 1, "no pass line in %s" % status_file
+    refusal, mode = read_mode(lines, status_file)
+    if refusal is not None:
+        return 1, refusal
     found = re.search(r", tree ([0-9a-f]{40}|[0-9a-f]{64})$", lines[-1])
     if not found:
         return 1, "pass line has no tree id"
@@ -306,7 +397,23 @@ def verify(status_file, root):
         shutil.rmtree(work, ignore_errors=True)
     if current != found.group(1):
         return 1, "gate ran on tree %s, current tree is %s" % (found.group(1), current)
-    return 0, "gate result matches: tree %s" % current
+    if mode == "full":
+        return 0, "gate result matches: tree %s (full)" % current
+    base, merge_base, modules = mode
+    try:
+        changed = changed_since(root, merge_base, "verify: cannot list the change")
+    except TreeError as error:
+        return 1, str(error)
+    for path in changed:
+        if run_tests.classify(path, Path(root))[0] == "shared":
+            return 1, "verify: changed-modules gate, but %s is shared; run the full gate" % path
+    try:
+        found_base = git_list(root, "verify: cannot find the merge base of %s and HEAD" % into, "merge-base", into, "HEAD")
+    except TreeError as error:
+        return 1, str(error)
+    if not found_base or found_base[0].strip() != merge_base:
+        return 1, "verify: changed-modules gate on base %s, not %s; run the full gate" % (base, into)
+    return 0, "gate result matches: tree %s (changed-modules: %s)" % (current, modules)
 
 
 plant = run_tests.plant   # one planted file for the gate's sweep control and --changed-modules
@@ -363,8 +470,15 @@ def build_stages(args, root, out, release=None, claude=True):
     sweep = python + ["scripts/sweep.py"] + denylist
     caught = "# control: caught"
     findings = r"^# files \d+, findings (\d+)$"
+    no_claude = [] if claude else ["--no-claude"]
+    if args.changed_modules:
+        listed = write_changed(out, args.changed[1])
+        suite = Leg("changed-modules", run + ["--changed-modules", "--changed-from", str(listed)] + no_claude,
+                    count_re=RUN_TESTS_COUNT, skip_files=True, reason_re=MODE_REASON_RE)
+    else:
+        suite = Leg("tests", run + no_claude, count_re=RUN_TESTS_COUNT, skip_files=True)
     first = [
-        Leg("tests", run + ([] if claude else ["--no-claude"]), count_re=RUN_TESTS_COUNT, skip_files=True),
+        suite,
         Leg("control", run + ["--control"], marker=caught, count_re=r"^FAIL tests/control/failing_control\.py: (\d+) tests"),
         Leg("sweep", sweep, count_re=r"^# files (\d+), findings \d+$"),
         Leg("sweep-control", sweep + [str(plant(out))], expected=1, marker=PLANTED, count_re=findings),
@@ -378,8 +492,41 @@ def build_stages(args, root, out, release=None, claude=True):
             stages.append([Leg("wsl", [], skip=NO_WSL)])
         else:
             command = ["wsl", "-d", args.distro, "--cd", wsl_path(root), "-e", "python3", "-I", "scripts/run_tests.py"]
-            stages.append([Leg("wsl", command + ["--no-claude"], count_re=RUN_TESTS_COUNT, skip_files=True)])
+            reason = MODE_REASON_RE if args.changed_modules else None
+            linux = ["--no-claude"]
+            if args.changed_modules:
+                linux = ["--changed-modules", "--changed-from", wsl_path(os.path.abspath(str(listed))), "--no-claude"]
+            stages.append([Leg("wsl", command + linux, count_re=RUN_TESTS_COUNT, skip_files=True, reason_re=reason)])
     return stages
+
+
+def write_changed(out, changed):
+    """<out>/CHANGED_FILES: one path per line, UTF-8; ValueError for a path the format cannot carry."""
+    for path in changed:
+        if not path or any(char in path for char in "\0\r\n"):
+            raise ValueError("changed list: path %r cannot be written one per line" % path)
+    listed = out / CHANGED_FILES
+    listed.write_bytes("".join(path + "\n" for path in changed).encode("utf-8"))
+    return listed
+
+
+def mode_note(args, root):
+    if not args.changed_modules:
+        return MODE_FULL
+    merge_base, changed = args.changed
+    names, _shared = run_tests.changed_modules(Path(root), changed)
+    return "mode: changed-modules base %s merge-base %s, modules %s" % (args.base, merge_base, ", ".join(names) or "none")
+
+
+def fail_early(out, line):
+    """A gate that cannot start writes its status too, so a stale status in `out` is never read as this run's."""
+    status = Status(out / STATUS)
+    try:
+        status.tell(line)
+        status.tell("# gate failed: changed list")
+    finally:
+        status.handle.close()
+    return 1
 
 
 def main(argv=None, root=ROOT):
@@ -389,11 +536,22 @@ def main(argv=None, root=ROOT):
     parser.add_argument("--distro", default=DEFAULT_DISTRO, help="WSL distribution")
     parser.add_argument("--out", default=None, help="folder for the logs")
     parser.add_argument("--verify", metavar="STATUS_FILE", help="run no leg; check a status file against the current tree")
+    parser.add_argument(
+        "--changed-modules", action="store_true", help="the gate of a change whose every path lies in module folders"
+    )
+    parser.add_argument("--base", default=None, help="with --changed-modules: the change starts at the merge base with this (default: main)")
+    parser.add_argument("--into", default=None, help="with --verify: the branch the change merges into (default: main)")
     args = parser.parse_args(argv)
+    if args.into is not None and args.verify is None:
+        parser.error("--into needs --verify")
     if args.verify is not None:
-        code, line = verify(args.verify, root)
+        code, line = verify(args.verify, root, into=args.into or DEFAULT_INTO)
         print(line, flush=True)
         return code
+    if args.base is not None and not args.changed_modules:
+        parser.error("--base needs --changed-modules")
+    if args.release and args.changed_modules:
+        parser.error("--release cannot be combined with --changed-modules: a release takes the full gate")
     term = None
     if args.release:
         if args.denylist is None:
@@ -402,14 +560,26 @@ def main(argv=None, root=ROOT):
             term = release_term(args.denylist)
         except ReleaseError as error:
             parser.error("--release: %s" % error)
-    notes = [] if args.denylist else ["denylist: none"]
-    claude = shutil.which("claude") is not None
-    if not claude:
-        notes.append(NO_CLAUDE)
     out = Path(args.out) if args.out else run_tests.log_path(root).with_name("gate")
     out.mkdir(parents=True, exist_ok=True)
     print("# status %s" % (out / STATUS), flush=True)
-    return 0 if run_gate(build_stages(args, root, out, release=term, claude=claude), root, out, notes=notes) else 1
+    args.changed = None
+    if args.changed_modules:
+        if args.base is None:
+            args.base = "main"
+        try:
+            args.changed = changed_list(root, args.base)
+        except TreeError as error:
+            return fail_early(out, str(error))
+    claude = shutil.which("claude") is not None
+    try:
+        stages = build_stages(args, root, out, release=term, claude=claude)
+    except ValueError as error:
+        return fail_early(out, str(error))
+    notes = [mode_note(args, root)] + ([] if args.denylist else ["denylist: none"])
+    if not claude:
+        notes.append(NO_CLAUDE)
+    return 0 if run_gate(stages, root, out, notes=notes) else 1
 
 
 if __name__ == "__main__":
