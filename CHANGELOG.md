@@ -34,9 +34,10 @@ format. Releases are tagged `v<version>`.
   Update rigger-core instead of disabling either plugin; the line then goes away.
 - **An external reviewer command** (a `reviewer` slot of kind `command`) reads `{scope}` lines whose
   verdict may now be `review: binary added`: treat every verdict that starts with `review` as a path
-  to review. Its reply is refused under the new rule `coverage-test-skipped` when `coverage.skipped`
-  holds a test file that `review_scope.py` lists for review; the contract id stays
-  `rigger.reviewer/1`.
+  to review. A `review` path may be one the diff deletes: `.claude/rigger.json` and the rules files
+  it names are reviewed even when deleted. Its reply is refused under the new rule
+  `coverage-test-skipped` when `coverage.skipped` holds a test file, `.claude/rigger.json` or a rules
+  file it names that `review_scope.py` lists for review; the contract id stays `rigger.reviewer/1`.
 
 ### Changed
 

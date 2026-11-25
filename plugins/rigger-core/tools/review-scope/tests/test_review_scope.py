@@ -1094,6 +1094,28 @@ class ProjectRulesTests(PathRuleCase):
                 self.assertEqual(review_scope.always_reviewed(self.repo, base, head) & set(expected),
                                  {path for path, verdict in expected.items() if verdict == "review"})
 
+    def test_a_head_config_of_any_shape_is_reviewed(self):
+        """I1: the head config is read for the rules files it names; a wrong shape names none and refuses nothing."""
+        shapes = [
+            ("review is a list", {"schema": 1, "review": []}),
+            ("paths is a list", {"schema": 1, "review": {"paths": ["docs/r.md"]}}),
+            ("an entry is a number", {"schema": 1, "review": {"paths": {"src/**": 7}}}),
+            ("an entry is a list", {"schema": 1, "review": {"paths": {"src/**": ["docs/r.md"]}}}),
+            ("rules is a list", {"schema": 1, "review": {"paths": {"src/**": {"rules": ["docs/r.md"]}}}}),
+        ]
+        for index, (label, body) in enumerate(shapes):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "shape-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = self.files({".claude/rigger.json": self.project({"docs/**": {"skip": "prose"}}),
+                                   "docs/r.md": b"r\n"}, "base")
+                head = self.files({".claude/rigger.json": json.dumps(body).encode("utf-8"), "docs/r.md": b"r2\n"},
+                                  "head")
+                code, text = self.cli("--base", base, "--head", head, "--repo", str(self.repo))
+                self.assertEqual(code, 0, text)
+                got = dict(reversed(line.split("\t")) for line in text.split("\n") if "\t" in line)
+                self.assertEqual(got, {".claude/rigger.json": "review", "docs/r.md": "skip: prose (review.paths)"})
+
     def test_rules_out_holds_the_base_text(self):
         base, head, out = self.base_and_out({"src/a.py": b"a = 2\n"})
         self.write("docs/rules.md", b"working tree rules\n")
