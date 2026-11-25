@@ -106,7 +106,7 @@ The owner's decisions are cited as "decisions doc D<n>"; this plan's own start a
   `ANTHROPIC_BASE_URL` to the stub. Prove the isolation with a canary first. Record
   `claude --version` and `command -v claude` before the first run; bounded timeout, `Popen`
   streaming stdout. Scratch under `<temp>/rigger-p3/<task>/`.
-- The one real-model run (Task 14 Step 4) is a subagent of the builder's own session, not
+- The one real-model run (Task 14 Step 5) is a subagent of the builder's own session, not
   `claude -p`, and costs plan usage only.
 
 **Docs and sweep**
@@ -126,7 +126,7 @@ The release notes list each one.
 3. `review_scope.py` marks binary, generated, vendored and lockfile paths `skip: <reason>`, never a
    test file without a path rule (D60).
 4. `review.paths` in config has an effect: per-path rules files for the review skill, and named
-   skips (D61). A project file's entries are ignored for a diff that changes them.
+   skips (D61). A project file's entries are read at the reviewed diff's base revision.
 5. `slot_check.py reviewer` refuses a reply that skips a test file `review_scope.py` lists as
    `review` (D62).
 6. `python -I scripts/gate.py --changed-modules` is a gate for a change inside module folders (D59).
@@ -209,8 +209,8 @@ reviewers for a Critical on a Risk-full change, `:154` the re-review; `coordinat
    `vendor/` folder.** A person expects those files reviewed: a skip that the reviewed diff itself
    creates would hide it. Test: Task 8, `test_a_skip_the_diff_creates_is_reviewed`.
 3. **A project `.claude/rigger.json` changed in the reviewed diff to skip or re-rule a path.** A
-   person expects the project's entries ignored for that review, with a line saying why. Test:
-   Task 8, `test_project_entries_changed_in_the_diff_are_ignored`.
+   person expects the review to use the base revision's entries, with a line saying the file
+   changed. Test: Task 8, `test_project_entries_come_from_base`.
 4. **A test file that also looks generated, vendored or like a lockfile**
    (`vendor/pkg/test_x.py`, `tests/fixtures/package-lock.json`). A person expects it reviewed unless
    a path rule names it with a reason. Test: Task 8,
@@ -241,7 +241,7 @@ Phase 2 used D25–D53.
 | D58 | The read-by map is `tests/read_by.json`: `{"format": 1, "readers": {"<test file or test folder ending in />": ["<module>", …] or ["*"]}}`. A folder key covers every file in it, helpers included. A discovered `tests/test_*.py` file that the map does not list reads every module (`*`); a module's test file that the map does not list reads only its own module. `--changed-modules` runs, besides today's set (D26), every test file whose entry names a changed module or `*`. `tests/test_read_by.py` derives reads from the text of every `.py` file under a discovered test folder: R1 `plugins/<module>`; R2 a quoted module name; R3 `plugins/*`, or `module_dirs(`, `iterdir(` or `glob(` on a line that names `plugins` or `PLUGINS` (reads `*`); R4 a file inherits the reads of a helper it imports from its own folder or from `tests/`. Every derived read must be its own module or covered by the map; the test prints `# read-by: files <n>, reads <m>, undeclared <k>` and fails on `n` 0 or `k` above 0. Its controls: the four known readers of phase 2's list are derived, and a planted file per rule is flagged. | Phase 2's "Review ideas left for phase 3". Text matching over-approximates (a fixture named like a module counts as a read), which only runs more tests. A computed module name escapes it (open risk 1); CI's full gate on every pull request stays the backstop. One central file keeps the map reviewable and makes every change to it a shared change. |
 | D59 | `gate.py --changed-modules [--base REV]` runs the legs `changed-modules` (`run_tests.py --changed-modules`, count `RUN_TESTS_COUNT`), `control`, `sweep` and `sweep-control` as today, then on Windows `wsl` running the same mode under WSL with `--no-claude`. The status file's second line is `scope: changed-modules base <rev>, modules <names>`; the pass line keeps its format; `--verify` on such a status prints `gate result matches: tree <id> (changed-modules)`. The mode's exit 2 fails the leg, and the status shows its `changed-modules: shared file …; run the gate` line. `--release` with `--changed-modules` is a usage error. When it is the gate: a pull request whose every changed path is a module path under D26 may take it as its local gate; a release, and any change the mode exits 2 on, take the full gate. CI keeps the full gate (D27). | Decisions doc D1. A gate needs a status file, a tree id and the POSIX leg; the mode alone has none of them. |
 | D60 | `review_scope.py` verdicts, first match wins: `skip: deleted`; a test file (a path segment `test`, `tests`, `__tests__` or `spec`, or a file name `test_*`, `*_test.*`, `*.test.*` or `*.spec.*`) is `review` unless a `review.paths` skip names it; a `review.paths` skip gives `skip: <its reason> (review.paths)`; `skip: binary` when the first 8,000 bytes of the head blob hold a NUL byte; `skip: lockfile` for the file names `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, `composer.lock`, `Cargo.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `go.sum`; `skip: vendored` for a path under a segment `vendor`, `node_modules`, `third_party` or `third-party` that already existed at `base`; `skip: generated` when the first 5 lines of the blob hold `@generated`, `DO NOT EDIT` or `auto-generated` at `head` and at `base` (`*.min.js` and `*.min.css` count as generated without a marker, when the path existed at base). Everything else is `review`. Blobs are read through one `git cat-file --batch` process with the hardened git of phase 2, at most 8,000 bytes kept per blob. | Spec §13 and open point 6, settled here. The "existed at base" rule closes Review Focus 2: a skip the reviewed diff creates would let the diff hide itself. `.gitattributes` `linguist-*` attributes are not read: the reviewed diff can change them. |
-| D61 | `review.paths` (levels 1–4) maps a glob to a rules file (a string) or to `{"rules": <file>, "skip": <reason>}` with at least one key; at most 50 entries per level, a glob and a reason at most 200 characters; a bad entry is dropped with one notice. Globs match the repository-relative path by segment: `**` any number of segments, `*` and `?` inside one, case-sensitive. A rules file is relative to the repository root (level 4), to the personal config file's folder (level 3) or to the module root (level 2), and must stay inside it at levels 2 and 4. `config.ACTIVE_ABOVE_L1` gains `review`. `review_scope.py` reads the entries and their levels from the session snapshot (`config.effective` and `config.sources`), found by `--session <id>` or `CLAUDE_CODE_SESSION_ID`; with no snapshot it prints `# review.paths: none (no snapshot)` and applies none. Level-4 entries apply only when neither `.claude/rigger.json` nor the rules file they name changed in `base..head`; otherwise it prints `# review.paths: project entries ignored: <file> changed in this diff`. After the path lines it prints `# rules <glob> <absolute rules file> (<level>)` for each entry that matched an in-scope path. The `{scope}` file of `slot_run.py` keeps its format. | Spec §7.2 gives `{glob: rules file}`; the skip form is needed because spec §13 says a test file is skipped only when `review.paths` names it "with a reason". Phase 2's Q3 found `CLAUDE_CODE_SESSION_ID` in every shell tool. The unchanged-in-diff rule is Review Focus 3. |
+| D61 | `review.paths` (levels 1–4) maps a glob to a rules file (a string) or to `{"rules": <file>, "skip": <reason>}` with at least one key; at most 50 entries per level, a glob and a reason at most 200 characters; a bad entry is dropped with one notice. Globs match the repository-relative path by segment: `**` any number of segments, `*` and `?` inside one, case-sensitive. A rules file is relative to the repository root (level 4), to the personal config file's folder (level 3) or to the module root (level 2), and must stay inside it at levels 2 and 4. `config.ACTIVE_ABOVE_L1` gains `review`, and `config.validate_level(data, level, where)` becomes the public name of `_validate`. `review_scope.py` reads levels 2 and 3 from the session snapshot (`config.effective` and `config.sources`), found by `--session <id>` or `CLAUDE_CODE_SESSION_ID`; an entry's level is the highest level among its leaves in `config.sources` (measured: a glob set as a string at level 3 and given a `skip` at level 4 has leaves from both). With no snapshot it prints `# review.paths: none (no snapshot)` for those levels. Level 4 is never taken from the snapshot: `review_scope.py` reads `<base>:.claude/rigger.json` with the hardened git, validates it as level 4, and reads a level-4 rules file at `base` too; when either changed in `base..head` it prints `# review.paths: project entries read at base; <file> changed in this diff`. After the path lines it prints `# rules <glob> <rules file> (<level>)` for each entry that matched an in-scope path, a level-4 file as `<base>:<path>`. The `{scope}` file of `slot_run.py` keeps its format. | Spec §7.2 gives `{glob: rules file}`; the skip form is needed because spec §13 says a test file is skipped only when `review.paths` names it "with a reason". Phase 2's Q3 found `CLAUDE_CODE_SESSION_ID` in every shell tool of a main session. Reading the project file at base means the reviewed diff cannot change what it is reviewed against, whichever folder the session runs in (Review Focus 3); the snapshot holds the session folder's working-tree copy, which need not be base's. |
 | D62 | `slot_check.py reviewer` gains the refusal rule `coverage-test-skipped`: a path in `coverage.skipped` that `review_scope.scope()` (with the same `--session` entries) marks `review` and that is a test file. The contract stays `rigger.reviewer/1`; a reply's JSON stays the last fenced `json` block, with no Markdown form (D41, spec open point 3, settled). | Spec §13 "never skips a test file". A stricter check of existing keys, not a new key, so the id is unchanged; the release notes name the rule for external reviewers. |
 | D63 | Checklists, first set (open point 8): `python.md` (`.py`), `typescript.md` (`.ts .tsx .js .jsx .mjs .cjs`), `php.md` (`.php`), `shell.md` (`.sh .bash`, and an extensionless file whose first line starts `#!` and names `sh` or `bash`). Each holds at most 25 bullets and none that a linter or `rigger-rules/rules/defects.md` already covers. The review skill loads at most 3, in order of how many `review` paths each matches, ties alphabetical. | Bounded tokens per review; the extension table lives in the skill and a test pins it to the files present. |
 | D64 | `agents/reviewer.md` keeps its frontmatter, its edit ban, the report format, severities, `Pre-existing`, `SHORTCUTS` and the contract JSON ending, and gains "Load the `review` skill first". The new `review` skill holds the procedure: run rigger-core's `tools/review-scope/review_scope.py --base <base> --head <head>`; load the `# rules` files (a level-4 file read with `git show <base>:<path>`) and the checklists of D63; review every `review` path; the behaviour-change section; the closing JSON. | The agent stays the contract's filler; the procedure can grow without touching the agent the contract tests pin. |
@@ -253,13 +253,38 @@ Phase 2 used D25–D53.
 | D70 | The weak-test guard moves with `git mv` and no code change; its handlers keep their text, `if` filters and 20 s timeouts. Its full-risk proof is the wiring: a test runs both handlers from the testing module's `hooks.json` through `sh -c` on a weakening commit and expects the deny. | Moved code with its tests; only the place it is wired from is new. |
 | D71 | The `testing` contract's commit-guard clause (D47) becomes a check in `tests/test_module_contracts.py` on the default filler only: its `hooks.json` has a `PreToolUse` handler on `Bash` and one on `PowerShell`, each behind an `if` naming `commit`. A filler chosen in config is not checked. | A filler from config may be a skill alone; doctor has no reason to refuse that. |
 
+## Rulings on the plan's questions
+
+Each question below is open until the owner, or the coordinator under the owner's delegation,
+rules on it. The proposed default is what the plan is written to. A ruling edits this list and
+the decision it names before Task 1 starts.
+
+1. **rigger-core updated without the two new plugins:** an install line per session event and a
+   doctor `MISSING` row for `reviewer` and `testing` only (D57). Pending.
+2. **The shape of `review.paths`:** a rules-file string or `{rules, skip}` (D61). Pending.
+3. **Project entries of `review.paths`:** read at the reviewed diff's base, never from the session
+   snapshot (D61). Pending.
+4. **Skips the reviewed diff creates:** generated, vendored and minified skips need the path, or
+   its marker, at base (D60). Pending.
+5. **`coverage-test-skipped` under `rigger.reviewer/1`:** no version bump; the release notes name
+   the rule (D62). Pending.
+6. **The safe-edit port and rigger-windows' test tools:** 3b (D55). Pending.
+7. **macOS latency numbers:** a `continue-on-error` CI step on the three systems, in pull request 1
+   (D66). Pending.
+8. **Repo-level tests the read-by map does not list:** they read every module (D58). Pending.
+9. **The second review round:** no third fresh round, and no `coord_state.py` check (D65). Pending.
+10. **The `test_slot_run.py` cleanup error:** diagnosed in Task 6; a product cause becomes its own
+    item outside 3a (D69). Pending.
+11. **`CLAUDE_CODE_SESSION_ID` in a subagent's shell:** measured in Task 14 Step 1, with the
+    `--session` sentence as the fallback (D61). Pending.
+
 ## Spec corrections
 
 Task 15 applies each row to the spec file; the second pull request's body carries the table.
 
 | Spec | Correction | Reason |
 |---|---|---|
-| §7.2 `review.paths` | The value is a rules file or `{rules, skip}`; project entries apply only when unchanged in the reviewed diff; rules files resolve per level. | D61 |
+| §7.2 `review.paths` | The value is a rules file or `{rules, skip}`; project entries and their rules files are read at the reviewed diff's base; rules files resolve per level. | D61 |
 | §7.3 step 5 | `reviewer` and `testing` at their level-1 default give an install notice when their plugin is not enabled. | D57 |
 | §10.4 `testing` | The commit-guard clause is checked on the default filler only. | D71 |
 | §10.5 | New refusal `coverage-test-skipped`; contract id unchanged. | D62 |
@@ -281,9 +306,9 @@ Task 15 applies each row to the spec file; the second pull request's body carrie
 | `scripts/run_tests.min` | 7, 16 | the minimum file count |
 | `review_scope.py`, `test_review_scope.py`, `plugins/rigger-core/tools/assemble/config.py`, `test_config.py` | 8 | skip reasons, `review.paths` |
 | `plugins/rigger-core/tools/slot-check/slot_check.py`, `test_slot_check.py`, one new fixture under the review module's `tests/contract/reviewer/` | 9 | `coverage-test-skipped` |
-| `plugins/rigger-REVIEW/**` (new; agent and fixtures moved from rigger-core), `plugins/rigger-core/rigger-module.json` (`contract` list), `plugins/rigger-core/rigger-defaults.json` (`reviewer`), `plugins/rigger-core/tests/test_core_wiring.py` (reviewer part moves), `tests/test_assembly_golden.py`, `tests/golden_baseline.py`, the `test_assemble.py` and `test_stub_session.py` pins of the reviewer row | 10 | the review module |
-| `plugins/rigger-TESTING/**` (new; skill, guard, eval moved), `plugins/rigger-core/hooks/hooks.json`, `rigger-defaults.json` (`testing`), `tests/test_repo.py`, `scripts/run_tests.py` (`TIMEOUTS` path), `plugins/rigger-rules/tests/test_plugin_rules.py`, `tests/test_module_contracts.py`, golden and `test_assemble.py` pins of the testing row | 11 | the testing module |
-| `plugins/rigger-core/tools/assemble/slots.py`, `assemble.py` (`_doctor`), `test_slots.py`, `test_assemble.py`, `plugins/rigger-core/tools/doctor/tests/test_doctor_sh_plugins.py`, `.claude-plugin/marketplace.json`, `plugins/rigger-core/README.md`, `skills/stack-tooling/SKILL.md` | 12 | install notice, doctor row, listing, wording |
+| `plugins/rigger-REVIEW/**` (new; agent and fixtures moved from rigger-core), `plugins/rigger-core/rigger-module.json` (`contract` list), `plugins/rigger-core/rigger-defaults.json` (`reviewer`), `plugins/rigger-core/tests/test_core_wiring.py` (reviewer part moves), `tests/test_assembly_golden.py`, `tests/golden_baseline.py`, the `test_assemble.py` and `test_stub_session.py` pins of the reviewer row, `.claude-plugin/marketplace.json` and the listing in `tests/test_repo.py`, `tests/read_by.json` | 10 | the review module |
+| `plugins/rigger-TESTING/**` (new; skill, guard, eval moved), `plugins/rigger-core/hooks/hooks.json`, `rigger-defaults.json` (`testing`), `tests/test_repo.py`, `scripts/run_tests.py` (`TIMEOUTS` path), `plugins/rigger-rules/tests/test_plugin_rules.py`, `tests/test_module_contracts.py`, golden and `test_assemble.py` pins of the testing row, `.claude-plugin/marketplace.json`, `tests/read_by.json` | 11 | the testing module |
+| `plugins/rigger-core/tools/assemble/slots.py`, `assemble.py` (`_doctor`), `test_slots.py`, `test_assemble.py`, `plugins/rigger-core/tools/doctor/tests/test_doctor_sh_plugins.py`, `plugins/rigger-core/README.md`, `skills/stack-tooling/SKILL.md` | 12 | install notice, doctor row, wording |
 | `plugins/rigger-core/skills/orchestrating-subagents/SKILL.md`, `commands/coordinate.md`, `tests/test_core_wiring.py`, `tools/coord-state/tests/test_coordinate_wiring.py` | 13 | second review round |
 | `plugins/rigger-core/tools/assemble/tests/test_stub_session.py`, `docs/superpowers/spikes/phase-3a/release-review.md` | 14 | stub exit criteria, the real review |
 | `CHANGELOG.md`, both new READMEs, `CONTRIBUTING.md`, the spec file | 15 | release notes, migration, spec corrections |
@@ -298,14 +323,15 @@ Task 15 applies each row to the spec file; the second pull request's body carrie
 | — | pull request 1 merges; `feature/modular-phase-3a` is cut from `main` | 7 | — |
 | D1 | 8, 10 | the merge above | 8: `review_scope.py`, `config.py` and their tests. 10: the new review folder, the core files moved out, the reviewer pins. |
 | D2 | 9, 11, 13 | 9 after 8 and 10; 11 and 13 after 10 | 9: `slot_check.py`, its test, one fixture in the review module. 11: the testing folder, core's `hooks.json`, `test_repo.py`, `test_plugin_rules.py`, `test_module_contracts.py`, `run_tests.py`, and the testing row in the golden and `test_assemble.py` pins (Task 10 is done with both files). 13: two text files and two test files; `test_core_wiring.py` after Task 10 moved its reviewer part out. |
-| E | 12 | 11 | `slots.py`, `_doctor`, the doctor test, the listing, two text files; it reads the defaults Task 11 wrote. |
+| E | 12 | 11 | `slots.py`, `_doctor`, the doctor test, two text files; it reads the defaults Task 11 wrote. |
 | F | 14, then 15, then 16 | all | — |
 
 Parallel: 1–5; then 8 and 10; then 9, 11 and 13. Serial: 6, 7, the merge, 12, 14, 15, 16. Files
 with several owners, each in a different wave: `scripts/run_tests.py` (1, then 6, then 11),
 `review_scope.py` (4, then 8), `rigger-defaults.json`, `tests/test_assembly_golden.py` and
-`test_assemble.py` (10, then 11, then 12), `test_core_wiring.py` (10, then 13),
-`scripts/run_tests.min` (7, then 16).
+`test_assemble.py` (10, then 11, then 12), `test_core_wiring.py` (10, then 13, then 14 only on
+its fallback), `tests/read_by.json` (1, then 10, then 11), `.claude-plugin/marketplace.json` and
+`tests/test_repo.py`'s listing (10, then 11), `scripts/run_tests.min` (7, then 16).
 
 ---
 
@@ -433,19 +459,19 @@ with several owners, each in a different wave: `scripts/run_tests.py` (1, then 6
 **Interfaces:**
 - Produces:
   - `PathRule = NamedTuple("PathRule", [("glob", str), ("rules", Optional[str]), ("skip", Optional[str]), ("level", int), ("source", str)])`;
-  - `path_rules(snapshot: Optional[dict], repo: Path) -> List[PathRule]`;
+  - `path_rules(snapshot: Optional[dict], repo: Path, base: str) -> List[PathRule]` (levels 2–3 from the snapshot, level 4 from `<base>:.claude/rigger.json`);
   - `scope(repo, base, head, rules: Sequence[PathRule] = ()) -> List[Tuple[str, str]]` (D60 verdicts);
   - `is_test_file(path: str) -> bool`; `glob_match(pattern: str, path: str) -> bool`;
   - CLI `--session <id>` (default `CLAUDE_CODE_SESSION_ID`), the `# review.paths:` and `# rules` lines of D61.
 
 - [ ] **Step 1: Write the failing tests** (fixture repositories built with `git init`):
   - one row per D60 reason and per lockfile name; `test_a_skip_the_diff_creates_is_reviewed` (Review Focus 2: a marker added in the diff, a marker on an added file, a new `vendor/` folder, an added `x.min.js`); `test_test_files_are_never_skipped_without_a_path_rule` (Review Focus 4); `test_binary_detection_reads_a_bounded_prefix` (Review Focus 7: a 20 MB file with a NUL at byte 10, the reader asked for 8,000 bytes, patched to count bytes kept);
-  - `review.paths`: `test_glob_match_table` (`**` zero and many segments, `*` not crossing `/`, case); `test_project_entries_changed_in_the_diff_are_ignored` (Review Focus 3: the config file changed, and separately the named rules file changed); `test_rules_lines_name_matched_entries_only`; `test_no_snapshot_applies_no_rule`; `test_level_four_rules_file_outside_the_repository_is_dropped`;
+  - `review.paths`: `test_glob_match_table` (`**` zero and many segments, `*` not crossing `/`, case); `test_project_entries_come_from_base` (Review Focus 3: the config file changed in the diff, and separately the named rules file; the head versions are never used, and the line names the file); `test_project_entries_apply_without_a_snapshot`; `test_an_entry_with_a_level_four_leaf_counts_as_level_four`; `test_rules_lines_name_matched_entries_only`; `test_no_snapshot_applies_no_personal_or_company_rule`; `test_level_four_rules_file_outside_the_repository_is_dropped`;
   - `test_config.py`: `review` active above level 1; bad entries dropped one by one with their notice (not an object, both keys missing, glob over 200, 51 entries).
 - [ ] **Step 2: Run** both files. Expected: `FAILED` on the new rows.
 - [ ] **Step 3: Implement.** One `git cat-file --batch` process per call, fed the head (and, where D60 needs it, base) blob ids from `git ls-tree -z`; read exactly the header's size, keep the first 8,000 bytes.
 - [ ] **Step 4: Run** both files on Windows and WSL. Expected: `OK`.
-- [ ] **Step 5: Red runs** (full, trust): one mutant per D60 reason row (always skip, never skip), per "existed at base" clause, per test-file pattern, and on the order (a lockfile rule before the test rule); for `review.paths`, apply level-4 entries despite a changed config file, despite a changed rules file, and accept a `..` rules path (each red on its row).
+- [ ] **Step 5: Red runs** (full, trust): one mutant per D60 reason row (always skip, never skip), per "existed at base" clause, per test-file pattern, and on the order (a lockfile rule before the test rule); for `review.paths`, read the level-4 config at `head`, read a level-4 rules file at `head`, take level 4 from the snapshot, use the lowest leaf's level, and accept a `..` rules path (each red on its row).
 - [ ] **Step 6: Commit.** `feat(rigger-core): review_scope skip reasons and review.paths`
 
 ### Task 9: `coverage-test-skipped`
@@ -470,7 +496,7 @@ with several owners, each in a different wave: `scripts/run_tests.py` (1, then 6
 **Files:**
 - Create: `plugins/rigger-REVIEW/.claude-plugin/plugin.json`, `rigger-module.json`, `README.md`, `skills/review/SKILL.md`, `checklists/python.md`, `checklists/typescript.md`, `checklists/php.md`, `checklists/shell.md`, `tests/test_review_module.py`
 - Move (`git mv`): `plugins/rigger-core/agents/reviewer.md` to the module's `agents/`, `plugins/rigger-core/tests/contract/reviewer/` to the module's `tests/contract/reviewer/`
-- Modify: `plugins/rigger-core/rigger-module.json` (`contract` loses `reviewer`), `rigger-defaults.json:4`, `plugins/rigger-core/tests/test_core_wiring.py` (the reviewer tests at `:213-242` move to `test_review_module.py`), `tests/test_assembly_golden.py` and `tests/golden_baseline.py` (the layout gains the module; `SLOT_ROWS` reviewer row; one `ALLOWED` entry "the reviewer slot names the review module"), the reviewer-row pins of `test_assemble.py` and `test_stub_session.py:452`, `tests/read_by.json` if the lint derives a new read
+- Modify: `plugins/rigger-core/rigger-module.json` (`contract` loses `reviewer`), `rigger-defaults.json:4`, `plugins/rigger-core/tests/test_core_wiring.py` (the reviewer tests at `:213-242` move to `test_review_module.py`), `tests/test_assembly_golden.py` and `tests/golden_baseline.py` (the layout gains the module; `SLOT_ROWS` reviewer row; one `ALLOWED` entry "the reviewer slot names the review module"), the reviewer-row pins of `test_assemble.py` and `test_stub_session.py:452`, `.claude-plugin/marketplace.json` (the module listed after rigger-core) with the list in `tests/test_repo.py:59-70`, `tests/read_by.json` (a key for a moved file follows it, and a new derived read is declared)
 
 **Interfaces:**
 - Produces: the D56 manifest; agent `rigger-REVIEW:reviewer`; skill `rigger-REVIEW:review`; the checklist table of D63 inside the skill.
@@ -487,7 +513,7 @@ with several owners, each in a different wave: `scripts/run_tests.py` (1, then 6
 **Files:**
 - Create: `plugins/rigger-TESTING/.claude-plugin/plugin.json`, `rigger-module.json`, `README.md`, `hooks/hooks.json` (the two handlers of core's `hooks.json:91-102`, text unchanged), `bin/py.sh` (copy), `tests/test_testing_wiring.py`
 - Move (`git mv`): rigger-core's `skills/testing/`, `tools/weak-test-guard/`, `evals/testing-skill-loads/`
-- Modify: `plugins/rigger-core/hooks/hooks.json` (lose `:91-102`), `rigger-defaults.json:8`, `tests/test_repo.py:29` (`PLUGINS_WITH_PY_SH`), `scripts/run_tests.py:97` (the path), `plugins/rigger-rules/tests/test_plugin_rules.py:38` and `:445` (the rendered cell `rigger-TESTING:testing`), `tests/test_module_contracts.py` (D71), the testing-row pins of the golden test (one `ALLOWED` entry "the testing slot names the testing module") and `test_assemble.py`
+- Modify: `plugins/rigger-core/hooks/hooks.json` (lose `:91-102`), `rigger-defaults.json:8`, `tests/test_repo.py:29` (`PLUGINS_WITH_PY_SH`) and `:59-70` (the listing), `.claude-plugin/marketplace.json` (the module listed after the review module), `tests/read_by.json` (as in Task 10), `scripts/run_tests.py:97` (the path), `plugins/rigger-rules/tests/test_plugin_rules.py:38` and `:445` (the rendered cell `rigger-TESTING:testing`), `tests/test_module_contracts.py` (D71), the testing-row pins of the golden test (one `ALLOWED` entry "the testing slot names the testing module") and `test_assemble.py`
 
 **Interfaces:**
 - Produces: skill `rigger-TESTING:testing`; the two commit handlers in the testing module.
@@ -499,10 +525,10 @@ with several owners, each in a different wave: `scripts/run_tests.py` (1, then 6
 - [ ] **Step 5: Red runs** (full, wiring): drop the Bash handler, then the PowerShell handler, from the module's `hooks.json` (wiring test red each, and `test_repo.py`'s count); change one `if` to `Bash(*commmit*)` (wiring test red); empty `provides.testing` (contract test red).
 - [ ] **Step 6: Commit.** `feat(rigger-testing): the testing module fills the testing slot and carries the commit guard`
 
-### Task 12: The install notice, doctor and the listing
+### Task 12: The install notice and doctor
 
 **Files:**
-- Modify: `plugins/rigger-core/tools/assemble/slots.py`, `assemble.py` (`_doctor` only), `tests/test_slots.py`, `tests/test_assemble.py`, `plugins/rigger-core/tools/doctor/tests/test_doctor_sh_plugins.py`, `.claude-plugin/marketplace.json` (the two plugins after rigger-core), `plugins/rigger-core/README.md:21`, `plugins/rigger-core/skills/stack-tooling/SKILL.md:75` ("how to test is in the testing skill the Skill triggers table names")
+- Modify: `plugins/rigger-core/tools/assemble/slots.py`, `assemble.py` (`_doctor` only), `tests/test_slots.py`, `tests/test_assemble.py`, `plugins/rigger-core/tools/doctor/tests/test_doctor_sh_plugins.py`, `plugins/rigger-core/README.md:21`, `plugins/rigger-core/skills/stack-tooling/SKILL.md:75` ("how to test is in the testing skill the Skill triggers table names")
 
 **Interfaces:**
 - Produces: `slots.INSTALL_HINT_SLOTS`; the D57 notice and doctor row.
@@ -529,14 +555,15 @@ with several owners, each in a different wave: `scripts/run_tests.py` (1, then 6
 ### Task 14: Stub exit criteria and a real review
 
 **Files:**
-- Modify: `plugins/rigger-core/tools/assemble/tests/test_stub_session.py`
+- Modify: `plugins/rigger-core/tools/assemble/tests/test_stub_session.py`; only if Step 1 finds no session id in the subagent's shell, the review module's `skills/review/SKILL.md`, `plugins/rigger-core/skills/orchestrating-subagents/SKILL.md` and their pins in `test_review_module.py` and `test_core_wiring.py`
 - Create: `docs/superpowers/spikes/phase-3a/release-review.md`
 
-- [ ] **Step 1: Write the stub tests** (each starts `claude -p` against the stub with the D-constraints above): `test_new_modules_fill_their_slots` (with both modules in `--plugin-dir` and `RIGGER_MODULE_DIRS`, the first request's `## Slots` holds `rigger-REVIEW:reviewer` and `rigger-TESTING:testing`, and the trigger cell names the testing module); `test_without_them_the_session_names_the_install_commands` (both lines arrive).
-- [ ] **Step 2: Run** them. Expected: red on unchanged `test_stub_session.py` expectations, then `OK` after writing them; the report says "stub".
-- [ ] **Step 3: Measure again** with `scripts/hook_latency.py` on Windows and WSL: the testing module's two handlers are measured and match their Task 3 numbers within the run's spread.
-- [ ] **Step 4: Real review** (spec §13 exit criterion): in the builder's session, dispatch the review module's `reviewer` agent on this repository's last release diff, `v0.5.0..v0.6.0` (146 files, 11,644 insertions; base and head as full commit ids) with a scratch folder; save its reply; run `slot_check.py reviewer <reply file> --base <base> --head <head>`. Expected: `slot-check: ok reviewer <n> findings`, every in-scope path covered, every quote anchored. Record the command, the counts and the result line in `release-review.md`; findings are listed by id and title only.
-- [ ] **Step 5: Sweep and commit.** `test(rigger-core): stub exit criteria for the review and testing modules`
+- [ ] **Step 1: Known answer for D61's session id.** Before any test: one stub session whose scripted reply starts an agent of the review module's `reviewer` type, whose own scripted reply runs a Bash command that prints whether `CLAUDE_CODE_SESSION_ID` is set and equal to the parent's id (the stub logs the parent's id from the first request). Control: the same command in the main session prints `set, equal`. Record the answer; if the subagent's shell lacks it, the review skill's text tells the agent to pass the id the brief gives as `--session`, and the orchestrating skill's review brief line names that id (one sentence each, added in this task with a pin).
+- [ ] **Step 2: Write the stub tests** (each starts `claude -p` against the stub under "Real `claude` runs" in Global Constraints): `test_new_modules_fill_their_slots` (with both modules in `--plugin-dir` and `RIGGER_MODULE_DIRS`, the first request's `## Slots` holds `rigger-REVIEW:reviewer` and `rigger-TESTING:testing`, and the trigger cell names the testing module); `test_without_them_the_session_names_the_install_commands` (both lines arrive). Run them. Expected: `OK`; the report says "stub".
+- [ ] **Step 3: Red runs:** set the `reviewer` default back to rigger-core's agent on a scratch copy (the fill test red on its `## Slots` line); empty `INSTALL_HINT_SLOTS` (the install-lines test red).
+- [ ] **Step 4: Measure again** with `scripts/hook_latency.py` on Windows and WSL: the testing module's two handlers are measured and match their Task 3 numbers within the run's spread.
+- [ ] **Step 5: Real review** (spec §13 exit criterion): in the builder's session, dispatch the review module's `reviewer` agent on this repository's last release diff, `v0.5.0..v0.6.0` (146 files, 11,644 insertions; base and head as full commit ids) with a scratch folder; save its reply; run `slot_check.py reviewer <reply file> --base <base> --head <head>`. Expected: `slot-check: ok reviewer <n> findings`, every in-scope path covered, every quote anchored. Record the command, the counts and the result line in `release-review.md`; findings are listed by id and title only.
+- [ ] **Step 6: Sweep and commit.** `test(rigger-core): stub exit criteria for the review and testing modules`
 
 ### Task 15: Docs, release notes, migration
 
@@ -581,7 +608,7 @@ round and the read-by map are in this plan, and strict dismissal is one sentence
 | `coverage-test-skipped` (Task 9) | 1.25 | 50 | 90 |
 | Review module: skill, 4 checklists, manifest, README (Task 10) | 4 | 450 (Markdown counted as code) | 150 |
 | Testing module (Task 11) | 2 | 80 | 80 |
-| Install notice, doctor, listing (Task 12) | 3 | 90 | 220 |
+| Install notice, doctor (Task 12) | 3 | 90 | 220 |
 | Second review round (Task 13) | 1 | 25 | 40 |
 | Stub run, real review (Task 14) | 2.5 | — | 150 |
 | Docs, two gates, two pull requests (Tasks 7, 15, 16) | 3.5 | — | — |
@@ -594,10 +621,10 @@ Against the decisions doc: its 42 h cover 3a and 3b together. The spec's phase 3
 1,000 code and 1,050 test lines; with decisions doc D5–D7 (5 h) that is about 21 h for 3a. This
 plan adds what neither priced: the read-by map and the gate mode (5.5 h), the trust rules of
 `review.paths` and the "existed at base" clauses (2 h), the install notice (3 h), the measurement's
-CI leg, and two pull requests with a full gate and two review rounds each. Phase 2 ran at 2.7
-times the spec's hours.
+CI leg, and two pull requests with a full gate and two review rounds each. For comparison, phase
+2's plan priced its spec-scope part at 2.7 times the spec's hours, and phase 1 ran at 1.8 times.
 
-**Simpler version, about 27 h, 1,300 code lines, 1,450 test lines:**
+**Simpler version, about 29 h, 1,330 code lines, 1,460 test lines:**
 - **What it keeps:** both modules with the moves, the slot defaults and the install notice; the
   skip reasons; the read-by map with its lint; the second review round; the measurement; the
   backlog.
@@ -619,11 +646,13 @@ times the spec's hours.
 3. **The generated-marker rule trusts the base revision.** A file that already carried a marker at
    base and is hand-edited in the diff is skipped. It shows in coverage with its reason.
 4. **A project's `review.paths` rules file is reviewer guidance from the repository.** It is read
-   at base, and changing it in the diff switches it off for that review (D61), but text present at
-   base still steers the reviewer.
-5. **`CLAUDE_CODE_SESSION_ID` was measured in phase 2's Q3 on that CLI version.** If a later CLI
-   drops it, `review_scope.py` applies no path rules and says so, and `slot_check.py` fails closed
-   on a skipped test file.
+   at base (D61), so the reviewed diff cannot change it, but text present at base still steers the
+   reviewer.
+5. **`CLAUDE_CODE_SESSION_ID` was measured in phase 2's Q3 in a main session's shell tools only.**
+   An agent reviewer's shell is unmeasured until Task 14 Step 1, which also carries the fallback. Without it, `review_scope.py`
+   applies no personal or company path rule and says so (project entries still apply, read at
+   base), and `slot_check.py`, run by the orchestrator in the main session, fails closed on a
+   skipped test file.
 6. **People who update rigger-core and skip the migration** see two notice lines in every session
    until they install the modules or set the slots themselves. That is the intended cost of D57.
 7. **The `test_slot_run.py` cleanup error** may come from a process `slot_run.py` leaves running on
