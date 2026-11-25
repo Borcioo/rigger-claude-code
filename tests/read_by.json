@@ -15,7 +15,7 @@
     "plugins/rigger-core/tools/report-gate/tests/test_report_shadow.py": ["rigger-lessons"],
     "plugins/rigger-core/tools/token-audit/tests/test_archive.py": ["*"],
     "plugins/rigger-lessons/tests/test_batch_apply.py": ["rigger-rules"],
-    "plugins/rigger-lessons/tests/test_lessons_batch.py": ["rigger-rules"],
+    "plugins/rigger-lessons/tests/test_lessons_batch.py": ["rigger-core", "rigger-rules"],
     "plugins/rigger-lessons/tests/test_lessons_lint.py": ["*"],
     "plugins/rigger-lessons/tests/test_lessons_rules.py": ["rigger-core"],
     "plugins/rigger-lessons/tests/test_proposal_check.py": ["rigger-rules"],
