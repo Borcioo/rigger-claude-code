@@ -495,6 +495,21 @@ class ProgramLookupTests(GitCase):
                     with working_directory(cwd):
                         self.same(review_scope.find_program("tool", repo, (EXE,)), self.tool)
 
+    def test_an_entry_spelled_inside_through_a_link_that_leads_outside_is_not_searched(self):
+        """The repository or the working directory can point its link elsewhere at any time: an entry spelled
+        inside either is refused by its spelling, though its real path and every folder above it are outside."""
+        self.program(self.repo / "bin", "tool")
+        rows = [
+            ("a link in the repository", self.link(self.repo / "out-link", self.good)),
+            ("a link in the working directory", self.link(self.elsewhere / "out-link", self.good)),
+        ]
+        for label, entry in rows:
+            with self.subTest(row=label):
+                self.same(os.path.realpath(str(entry)), os.path.realpath(str(self.good)))
+                self.assertIs(review_scope.searchable(str(entry), self.repo, str(self.elsewhere)), False)
+        # Not over-excluded: the folder the links lead to, spelled as itself, is still searched.
+        self.assertIs(review_scope.searchable(str(self.good), self.repo, str(self.elsewhere)), True)
+
     @unittest.skipUnless(os.name == "nt", "the extended and device prefixes are Windows spellings")
     def test_a_prefixed_entry_is_read_without_its_prefix(self):
         """A prefixed entry outside both is still searched; one the prefix cannot be removed from is not."""
