@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -45,6 +46,10 @@ KEEP_BACKUPS, KEEP_LOGS = 10, 20
 ATTEMPTS_LIMIT = 2
 APPLY_TRIES = 3
 SPAWN_LOG_LIMIT = 1 << 20
+RENDER_TIMEOUT = 30
+RENDER_CAP = 1_000_000
+RENDER_CHUNK = 65536
+RENDERED_NAME = "rules-rendered.md"
 ARCHIVE_NAME, QUEUE_NAME = "lessons-archive.md", "lessons-proposals.md"
 RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9]+")
 
@@ -336,6 +341,96 @@ def _prune(folder: Path, pattern: str, keep: int) -> None:
         path.unlink()
 
 
+def _assembler(config: Path):
+    """(rigger-core's assemble.py, None) from the first installPath holding it under the first `rigger-core@` key of
+    installed_plugins.json, or (None, reason). Only an absolute path counts: a relative one would name a file of
+    whatever folder the batch runs in."""
+    try:
+        data = json.loads((config / "plugins" / "installed_plugins.json").read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        return None, "no plugin list"
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    if not isinstance(plugins, dict):
+        return None, "no plugin list"
+    key = next((name for name in plugins if isinstance(name, str) and name.startswith("rigger-core@")), None)
+    if key is None:
+        return None, "no rigger-core@ key"
+    items = plugins[key] if isinstance(plugins[key], list) else []
+    for item in items:
+        root = item.get("installPath") if isinstance(item, dict) else None
+        if not isinstance(root, str) or not os.path.isabs(root) or (os.name == "nt" and not os.path.splitdrive(root)[0]):
+            continue
+        script = Path(root) / "tools" / "assemble" / "assemble.py"
+        if script.is_file():
+            return script, None
+    return None, "no assemble.py in an installPath of %s" % key
+
+
+def render_rules(config: Path, run_dir: Path, env: dict, log) -> Path | None:
+    """rigger-core's `assemble.py --render` output, CRLF made LF, as run_dir/rules-rendered.md; None, with one
+    `rendered rules: unavailable (<reason>)` line, on any failure. No shell; stdout is read by one thread and
+    counted: past RENDER_TIMEOUT seconds or RENDER_CAP bytes the whole process tree is stopped. The hook's
+    CLAUDE_PLUGIN_ROOT is left out of `env`: it names rigger-lessons, which the assembler would take for the core."""
+    def unavailable(reason):
+        log("rendered rules: unavailable (%s)" % reason)
+        return None
+
+    script, reason = _assembler(config)
+    if script is None:
+        return unavailable(reason)
+    env = {key: value for key, value in env.items() if key.upper() != "CLAUDE_PLUGIN_ROOT"}
+    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
+    timeout, cap = RENDER_TIMEOUT, RENDER_CAP
+    deadline = time.monotonic() + timeout
+    try:
+        proc = subprocess.Popen([sys.executable, "-I", "-X", "utf8", str(script), "--render"], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, **extra)
+    except OSError as exc:
+        return unavailable("start failed (%s)" % type(exc).__name__)
+    chunks, size = [], [0]
+
+    def read():
+        while size[0] <= cap:
+            chunk = proc.stdout.read1(RENDER_CHUNK)
+            if not chunk:
+                return
+            chunks.append(chunk)
+            size[0] += len(chunk)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    reader.join(max(0.0, deadline - time.monotonic()))
+    stopped = None
+    if reader.is_alive():
+        stopped = "timeout after %g s" % timeout
+    elif size[0] > cap:
+        stopped = "over %d bytes" % cap
+    else:
+        try:
+            proc.wait(max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            stopped = "timeout after %g s" % timeout
+    if stopped:
+        batch_model._kill_tree(proc)
+        reader.join(batch_model.KILL_WAIT)
+        try:
+            proc.wait(batch_model.KILL_WAIT)
+        except subprocess.TimeoutExpired:
+            pass
+    proc.stdout.close()
+    if stopped:
+        return unavailable(stopped)
+    if proc.returncode != 0:
+        return unavailable("exit %d" % proc.returncode)
+    data = b"".join(chunks).replace(b"\r\n", b"\n")
+    if not data:
+        return unavailable("no output")
+    path = run_dir / RENDERED_NAME
+    path.write_bytes(data)
+    log("rendered rules: %d bytes" % len(data))
+    return path
+
+
 def _run_locked(environ, inbox: Path, state: Path, run_id: str, log, started: float):
     """True: applied; False: a failed run (counted); None: stopped before any call."""
     try:
@@ -353,7 +448,8 @@ def _run_locked(environ, inbox: Path, state: Path, run_id: str, log, started: fl
         return None
     run_dir = Path(tempfile.mkdtemp(prefix="lessons-batch-"))
     try:
-        files = batch_model.write_corpus(run_dir, config)
+        rendered = render_rules(config, run_dir, batch_model.child_env(environ), log)
+        files = batch_model.write_corpus(run_dir, config, rendered)
         log("corpus: %d files; slice: lines %s" % (files, ", ".join(str(number) for number, _ in slice_)))
         if not files:
             return None

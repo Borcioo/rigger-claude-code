@@ -6,14 +6,17 @@ process waits for it and checks it is gone.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -51,6 +54,16 @@ def write(path: Path, text, mtime=None) -> Path:
 
 def read(path: Path) -> str:
     return path.read_bytes().decode("utf-8") if path.exists() else ""
+
+
+@contextlib.contextmanager
+def working_directory(path):
+    before = os.getcwd()
+    os.chdir(str(path))
+    try:
+        yield
+    finally:
+        os.chdir(before)
 
 
 def tri(line, action, **extra):
@@ -469,6 +482,203 @@ class RunTests(Base):
         counts = [len(list((self.state / folder).glob("2*" + suffix)))
                   for folder, suffix in (("logs", ".log"), ("runs", ".json"), ("backups", ".md"))]
         self.assertEqual((counts, read(self.state / "logs" / "spawn.log")), ([20, 20, 10], "kept"))
+
+
+RENDER_MARK = "RENDERED-MARK"
+RENDERED = (b"RENDERED-MARK rules\n", b"second line\n")  # what the OK stub's output reads with LF line ends
+STUB_OK = ("import json, os, sys\n"
+           "if os.environ.get('RENDER_RECORD'):\n"
+           "    with open(os.environ['RENDER_RECORD'], 'w', encoding='utf-8') as handle:\n"
+           "        json.dump({'argv': sys.argv[1:], 'isolated': sys.flags.isolated, 'utf8': sys.flags.utf8_mode,\n"
+           "                   'plugin_root': os.environ.get('CLAUDE_PLUGIN_ROOT'),\n"
+           "                   'config': os.environ.get('CLAUDE_CONFIG_DIR')}, handle)\n"
+           "sys.stdout.buffer.write(b'RENDERED-MARK rules\\r\\n')\n"
+           "sys.stdout.buffer.flush()\n"
+           "print('second line')\n")
+STUB_EXIT = "print('RENDERED-MARK half')\nraise SystemExit(3)\n"
+STUB_EMPTY = "pass\n"
+STUB_SLEEP = ("import os, subprocess, sys, time\n"
+              "child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'])\n"
+              "with open(os.environ['RENDER_GRANDCHILD'] + '.tmp', 'w') as handle:\n"
+              "    handle.write(str(child.pid))\n"
+              "os.replace(os.environ['RENDER_GRANDCHILD'] + '.tmp', os.environ['RENDER_GRANDCHILD'])\n"
+              "print('RENDERED-MARK late', flush=True)\n"
+              "time.sleep(60)\n")
+STUB_CLOSED = "import os, time\nos.write(1, b'RENDERED-MARK early')\nos.close(1)\ntime.sleep(60)\n"
+CAP = 100  # the patched RENDER_CAP of the bound rows
+
+
+def stub_bytes(size):
+    """A stub that writes `size` bytes of RENDER_MARK text and then waits, so only a stop at the cap ends it early."""
+    return ("import sys, time\nsys.stdout.buffer.write((b'RENDERED-MARK' + b'x' * %d)[:%d])\nsys.stdout.buffer.flush()\n"
+            "time.sleep(0 if %d <= %d else 60)\n" % (size, size, size, CAP))
+
+
+class RenderTests(Base):
+    """D68: the batch renders the rules through rigger-core's installed assemble.py, or goes on with raw text."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.config / "CLAUDE.md", "# Global\n")  # a raw file in every corpus, whatever the plugin list holds
+        self.record, self.grandchild = self.tmp / "render-record.json", self.tmp / "grandchild.pid"
+        self.env = dict(self.env, RENDER_RECORD=str(self.record), RENDER_GRANDCHILD=str(self.grandchild),
+                        CLAUDE_PLUGIN_ROOT=str(PLUGIN))  # a hook's environment names rigger-lessons' root
+        self.addCleanup(self.stop_grandchild)
+
+    def stop_grandchild(self):
+        if self.grandchild.exists() and stub_claude.alive(int(read(self.grandchild))):
+            os.kill(int(read(self.grandchild)), 9)
+
+    def core(self, name, script):
+        root = self.tmp / "cache" / "rigger" / name
+        write(root / "tools" / "assemble" / "assemble.py", script)
+        return root
+
+    def installed(self, data):
+        write(self.config / "plugins" / "installed_plugins.json", data if isinstance(data, str) else json.dumps(data))
+
+    def run_with_corpus(self):
+        """(exit, corpus.md text, log text, seconds) of one batch run; the run deletes its folder, so the corpus
+        is read as write_corpus leaves it."""
+        corpora = []
+        real = lessons_batch.batch_model.write_corpus
+
+        def keep(run_dir, config, rules_text=None):
+            count = real(run_dir, config, rules_text)
+            corpora.append(read(run_dir / "corpus.md"))
+            return count
+
+        started = time.monotonic()
+        with mock.patch.object(lessons_batch.batch_model, "write_corpus", keep):
+            code = self.run_batch()
+        seconds = time.monotonic() - started
+        self.assertEqual(len(corpora), 1)
+        return code, corpora[0], read(self.logs()[-1]), seconds
+
+    def test_render_found_through_install_path_enters_the_corpus(self):
+        good = self.core("rigger-core", STUB_OK)
+        decoy = self.core("decoy", "print('DECOY')\n")
+        self.installed({"plugins": {
+            "rigger-corex@rigger": [{"installPath": str(decoy)}],  # starts like the key, is not it
+            "rigger-rules@rigger": [{"installPath": str(self.root)}],
+            "rigger-core@rigger": [{"installPath": str(self.tmp / "gone")}, {"installPath": str(good)},
+                                   {"installPath": str(decoy)}]}})
+        code, corpus, log, _ = self.run_with_corpus()
+        self.assertEqual(code, 0)
+        marked = re.search(r"^===== FILE: (.*)/rules-rendered\.md \(rendered rules in use; not an edit target\)\n"
+                           r"RENDERED-MARK rules\nsecond line\n", corpus, re.M)
+        self.assertIsNotNone(marked, corpus)
+        self.assertNotIn("DECOY", corpus)
+        self.assertIn("===== FILE: %s\n" % self.rule.as_posix(), corpus)  # the raw files stay
+        self.assertIn("corpus: 3 files", log)
+        self.assertIn("rendered rules: %d bytes" % len(b"".join(RENDERED)), log)
+        record = json.loads(read(self.record))
+        self.assertEqual((record["argv"], record["isolated"], record["utf8"]), (["--render"], 1, 1))
+        # The batch's child environment, without the hook's plugin root, which would make rigger-lessons the core.
+        self.assertEqual((record["plugin_root"], record["config"]), (None, str(self.config)))
+
+    def test_render_of_the_real_assembler_from_a_cache_copy(self):
+        """The real rigger-core `assemble.py --render`, from a copy laid out like the plugin cache."""
+        copy = self.tmp / "cache" / "rigger" / "rigger-core" / "0.0.1"
+        shutil.copytree(str(PLUGIN.parent / "rigger-core"), str(copy), ignore=shutil.ignore_patterns("__pycache__"))
+        self.installed({"plugins": {"rigger-core@rigger": [{"installPath": str(copy)}]}})
+        lines = []
+        run_dir = self.tmp / "run"
+        run_dir.mkdir()
+        path = lessons_batch.render_rules(self.config, run_dir, lessons_batch.batch_model.child_env(self.env),
+                                          lines.append)
+        self.assertIsNotNone(path, lines)
+        first = read(path).split("\n", 1)[0]
+        self.assertEqual(first, "Plugin root: %s" % (copy.as_posix() if os.name == "nt" else str(copy)))
+
+    def test_render_failures_fall_back_to_raw_text_in_time(self):
+        ok = str(self.core("ok", STUB_OK))
+        missing = str(self.core("no-script", STUB_OK) / "elsewhere")
+        relative = "relative-core"
+        write(self.tmp / relative / "tools" / "assemble" / "assemble.py", STUB_OK)
+
+        def install(*items):
+            return {"plugins": {"rigger-rules@rigger": [{"installPath": str(self.root)}],
+                                "rigger-core@rigger": list(items)}}
+
+        def core_with(script):
+            return install({"installPath": str(self.core("core-%d" % len(script), script))})
+
+        reason_no_script = "no assemble.py in an installPath of rigger-core@rigger"
+        rows = [  # (row, installed_plugins.json content or None for none, reason)
+            ("no list", None, "no plugin list"),
+            ("not JSON", "{", "no plugin list"),
+            ("a list at the top", [], "no plugin list"),
+            ("plugins is a list", {"plugins": [ok]}, "no plugin list"),
+            ("no rigger-core@ key", {"plugins": {"rigger-rules@rigger": [{"installPath": str(self.root)}]}},
+             "no rigger-core@ key"),
+            ("the key holds a dict", {"plugins": {"rigger-core@rigger": {"installPath": ok}}}, reason_no_script),
+            ("the key holds a number", {"plugins": {"rigger-core@rigger": 5}}, reason_no_script),
+            ("an entry that is a string", install(ok), reason_no_script),
+            ("an installPath that is a list", install({"installPath": [ok]}), reason_no_script),
+            ("a relative installPath", install({"installPath": relative}), reason_no_script),
+            ("no file", install({"installPath": missing}), reason_no_script),
+            ("exit 3", core_with(STUB_EXIT), "exit 3"),
+            ("a stub that sleeps", core_with(STUB_SLEEP), "timeout after 1 s"),
+            ("a stub that closes its output and sleeps", core_with(STUB_CLOSED), "timeout after 1 s"),
+            ("output over the cap", core_with(stub_bytes(CAP + 1)), "over %d bytes" % CAP),
+            ("no output", core_with(STUB_EMPTY), "no output"),
+        ]
+        if os.name == "nt":  # rooted but on no drive: it would resolve against the working directory's drive
+            rows.append(("a rooted installPath with no drive", install({"installPath": os.path.splitdrive(ok)[1]}),
+                         reason_no_script))
+        for row, data, reason in rows:
+            with self.subTest(row=row):
+                for path in self.logs():
+                    path.unlink()
+                if data is None:
+                    (self.config / "plugins" / "installed_plugins.json").unlink()
+                else:
+                    self.installed(data)
+                write(self.inbox, self.text)  # each row's run starts from the same inbox
+                for name in ("lessons-archive.md", "lessons-proposals.md", "lessons-batch/attempts.json"):
+                    if (self.config / name).exists():
+                        (self.config / name).unlink()
+                with mock.patch.object(lessons_batch, "RENDER_TIMEOUT", 1), \
+                        mock.patch.object(lessons_batch, "RENDER_CAP", CAP), working_directory(self.tmp):
+                    code, corpus, log, seconds = self.run_with_corpus()
+                self.assertEqual(code, 0, log)
+                self.assertIn("rendered rules: unavailable (%s)" % reason, log)
+                self.assertNotIn(RENDER_MARK, corpus)
+                self.assertNotIn("rendered rules in use", corpus)
+                self.assertIn("===== FILE: %s\n" % (self.config / "CLAUDE.md").as_posix(), corpus)
+                self.assertLess(seconds, 1 + 5)
+        # The sleeping stub's grandchild is stopped with it.
+        self.assertTrue(self.grandchild.exists())
+        self.assertFalse(stub_claude.alive(int(read(self.grandchild))), "the render's grandchild left running")
+
+    def test_render_output_at_the_cap_is_kept(self):
+        self.installed({"plugins": {"rigger-core@rigger": [{"installPath": str(self.core("cap", stub_bytes(CAP)))}]}})
+        run_dir = self.tmp / "run"
+        run_dir.mkdir()
+        with mock.patch.object(lessons_batch, "RENDER_CAP", CAP):
+            path = lessons_batch.render_rules(self.config, run_dir, dict(self.env), lambda text: None)
+        self.assertIsNotNone(path)
+        self.assertEqual(len(path.read_bytes()), CAP)
+
+    def test_render_runs_without_a_shell(self):
+        """An installPath holding `;`, spaces and `%OS%` (which cmd.exe expands) is one argument to the program."""
+        root = self.core("core %OS% ; x", STUB_OK)
+        self.installed({"plugins": {"rigger-core@rigger": [{"installPath": str(root)}]}})
+        run_dir = self.tmp / "run"
+        run_dir.mkdir()
+        lines = []
+        path = lessons_batch.render_rules(self.config, run_dir, dict(self.env), lines.append)
+        self.assertIsNotNone(path, lines)
+        self.assertTrue(read(path).startswith("RENDERED-MARK rules\n"), read(path))
+
+    def test_rendered_file_holds_no_carriage_return(self):
+        self.installed({"plugins": {"rigger-core@rigger": [{"installPath": str(self.core("crlf", STUB_OK))}]}})
+        run_dir = self.tmp / "run"
+        run_dir.mkdir()
+        path = lessons_batch.render_rules(self.config, run_dir, dict(self.env), lambda text: None)
+        self.assertEqual(path, run_dir / "rules-rendered.md")
+        self.assertEqual(path.read_bytes(), b"".join(RENDERED))
 
 
 class ProcessTests(Base):
