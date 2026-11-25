@@ -59,7 +59,7 @@ def _plain(entry):
     return None
 
 
-def _same_folder_above(path, roots):
+def under_by_identity(path, roots):
     # type: (str, Sequence[os.stat_result]) -> bool
     """`path` or a folder above it is one of `roots` by file identity, which holds where a case-insensitive file
     system lets another spelling name the same folder; a level that cannot be read is passed over."""
@@ -94,7 +94,7 @@ def searchable(entry, repo, cwd):
                     for path in (entry, real)
                     for root in (str(repo), cwd)
                     for base in (root, os.path.realpath(root)))
-                or _same_folder_above(real, roots))
+                or under_by_identity(real, roots))
 
 
 def find_program(name, repo, exts):

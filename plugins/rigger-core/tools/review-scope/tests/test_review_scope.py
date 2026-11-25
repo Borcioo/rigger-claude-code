@@ -323,6 +323,20 @@ def ctypes_volume_name(mount):
     return buffer.value
 
 
+def admin_share(case, path):
+    """`path` spelled through the administrative share of its drive on this machine; the test is skipped when
+    the share cannot be opened, and fails instead when CI is set, so a CI runner cannot skip it unseen."""
+    drive, rest = os.path.splitdrive(os.path.abspath(str(path)))
+    share = "\\\\localhost\\%s$%s" % (drive[:1], rest)
+    probe = "\\\\localhost\\%s$\\" % drive[:1]
+    if not os.path.isdir(probe):
+        reason = "the admin share %s cannot be opened" % probe
+        if os.environ.get("CI"):
+            case.fail(reason)
+        case.skipTest(reason)
+    return share
+
+
 @contextlib.contextmanager
 def working_directory(path):
     before = os.getcwd()
@@ -454,8 +468,30 @@ class ProgramLookupTests(GitCase):
         """`folder` with its last name in the other case, when the file system reads it as the same folder."""
         twin = folder.parent / folder.name.swapcase()
         if not twin.is_dir() or not os.path.samefile(str(twin), str(folder)):
-            self.skipTest("case-sensitive file system at %s (on WSL set TMPDIR to a /mnt/<drive> folder)" % folder)
+            reason = "case-sensitive file system at %s (on WSL set TMPDIR to a /mnt/<drive> folder)" % folder
+            if sys.platform == "darwin":  # APFS is case-insensitive by default: a skip here would hide the proof
+                self.fail(reason)
+            self.skipTest(reason)
         return twin
+
+    @unittest.skipUnless(os.name == "nt", "the admin share is a Windows spelling")
+    def test_admin_share_entry_is_not_searched(self):
+        """The repository or the working directory spelled through the `\\\\localhost\\<drive>$` share is the same
+        folder by file identity, though no spelling or real path matches."""
+        (self.repo / "bin").mkdir()
+        (self.elsewhere / "bin").mkdir()
+        rows = [
+            ("the repository", admin_share(self, self.repo)),
+            ("a folder inside the repository", admin_share(self, self.repo / "bin")),
+            ("a missing folder inside the repository", os.path.join(admin_share(self, self.repo), "nope", "deeper")),
+            ("the working directory", admin_share(self, self.elsewhere)),
+            ("a folder inside the working directory", admin_share(self, self.elsewhere / "bin")),
+        ]
+        for label, unsafe in rows:
+            with self.subTest(row=label):
+                self.assertIs(review_scope.searchable(unsafe, self.repo, str(self.elsewhere)), False)
+        # Not over-excluded: a folder outside both, spelled through the share, is still searched.
+        self.assertIs(review_scope.searchable(admin_share(self, self.good), self.repo, str(self.elsewhere)), True)
 
     def test_lookup_skips_the_repository_and_the_cwd_spelled_in_another_case(self):
         """On a case-insensitive file system (macOS by default, WSL's /mnt/<drive>, Windows) another spelling of
