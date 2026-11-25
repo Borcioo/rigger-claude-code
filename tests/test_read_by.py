@@ -1,8 +1,10 @@
 """The read-by map (tests/read_by.json) against the reads a lint derives from the text of every test folder.
 
 derived_reads applies D58's rules to every .py file under a folder that holds a discovered test file:
-R1 `plugins/<module>`; R2 a quoted module name; R3 `plugins/*`, or `module_dirs(`, `iterdir(` or `glob(`
-on a line that names `plugins` or `PLUGINS` (reads `*`); R4 a file inherits the reads of a helper it
+R1 `plugins/<module>`; R2 a quoted module name; R3 a directory walk (`module_dirs(`, `iterdir(`, `glob(`,
+`listdir(`, `scandir(`, `walk(`) on a line that names `plugins` or `PLUGINS`, or a `plugins` path joined
+with a name that is not a literal (reads `*`; a `plugins/*` pattern in a string alone does not); R4 a file
+inherits the reads of a helper it
 imports from its own folder or from `tests/`. Every derived read of a discovered test file must be its
 own module or covered by the map, as `run_tests.py --changed-modules` reads it.
 """
@@ -21,7 +23,10 @@ import run_tests  # noqa: E402
 import select_tests  # noqa: E402
 
 ALL = "*"
-R3_CALLS = ("module_dirs(", "iterdir(", "glob(")
+R3_CALLS = ("module_dirs(", "iterdir(", "glob(", "listdir(", "scandir(", "walk(")  # glob( covers rglob, iglob
+# A `plugins` folder joined with a variable: `PLUGINS / name`, `root / "plugins" / name`, `join(PLUGINS, name)`.
+R3_JOINS = (re.compile(r"""(?:\bPLUGINS\b|\bplugins\b|["']plugins["'])\)?\s+/\s+[A-Za-z_]"""),
+            re.compile(r"""join\([^)]*(?:\bPLUGINS\b|\bplugins\b|["']plugins["'])\s*,\s*[A-Za-z_]"""))
 
 
 def own_module(rel):
@@ -36,12 +41,20 @@ def text_reads(text, modules):
         names = "|".join(re.escape(name) for name in sorted(modules, key=len, reverse=True))
         reads.update(re.findall(r"plugins/(%s)(?![A-Za-z0-9_-])" % names, text))       # R1
         reads.update(match[1] for match in re.findall(r"([\"'])(%s)\1" % names, text))  # R2
-    if "plugins/*" in text:                                                          # R3
+    if iterates(text):                                                               # R3
         reads.add(ALL)
+    return reads
+
+
+def iterates(text):
+    """R3: a line that walks module folders or joins one by a variable name, not one that only names a
+    `plugins/*` pattern."""
     for line in text.splitlines():
         if ("plugins" in line or "PLUGINS" in line) and any(call in line for call in R3_CALLS):
-            reads.add(ALL)
-    return reads
+            return True
+        if any(pattern.search(line) for pattern in R3_JOINS):
+            return True
+    return False
 
 
 def test_folder_files(root):
@@ -55,8 +68,8 @@ def test_folder_files(root):
     return sorted(files)
 
 
-def derived_reads(root):
-    """Each .py file under a test folder to the modules its text reads, R4's inheritance applied."""
+def derived_reads(root, reads_of=text_reads):
+    """Each .py file under a test folder to the modules its text reads (`reads_of`), R4's inheritance applied."""
     root = Path(root)
     modules = set(run_tests.module_names(root))
     own = {}
@@ -68,7 +81,7 @@ def derived_reads(root):
         if rel in own:
             continue
         text = path.read_bytes().decode("utf-8", "replace")
-        own[rel] = text_reads(text, modules)
+        own[rel] = reads_of(text, modules)
         found = set()
         for name in select_tests.imported_modules(text):
             for folder in (path.parent, root / "tests"):
@@ -123,6 +136,19 @@ class ReadByTests(unittest.TestCase):
         self.assertGreater(files, 0)
         self.assertEqual(missing, [])
 
+    def test_wildcards_only_for_files_that_iterate_plugins(self):
+        """D93: a "*" entry is for a file that lists module folders (itself or through a helper, R4); a file
+        that only names a `plugins/*` pattern gets the modules the lint derives for it."""
+        self.assertTrue(iterates("for p in (ROOT / 'plugins').iterdir():\n    pass\n"))
+        self.assertFalse(iterates("X = 'plugins/*/tools/*/lessons_guard.py'\n"))
+        readers = run_tests.read_by(ROOT)
+        listing = derived_reads(ROOT, lambda text, _modules: {ALL} if iterates(text) else set())
+        stars = sorted(rel for rel, reads in readers.items() if ALL in reads)
+        wrong = [rel for rel in stars if ALL not in listing.get(rel, set())]
+        print("# read-by: wildcard entries %d, not iterating %d" % (len(stars), len(wrong)))
+        self.assertGreater(len(stars), 0)
+        self.assertEqual(wrong, [])
+
     def test_the_known_readers_are_derived(self):
         reads = derived_reads(ROOT)
         rows = (
@@ -146,6 +172,12 @@ class ReadByTests(unittest.TestCase):
             "plugins/m1/tests/test_r2.py": "NAME = \"m2\"\n",
             "plugins/m1/tests/test_r3_star.py": "X = 'plugins/*/x'\n",
             "plugins/m1/tests/test_r3_call.py": "for p in (ROOT / 'plugins').iterdir():\n    pass\n",
+            "plugins/m1/tests/test_r3_listdir.py": "names = os.listdir(os.path.join(ROOT, 'plugins'))\n",
+            "plugins/m1/tests/test_r3_scandir.py": "entries = os.scandir(PLUGINS)\n",
+            "plugins/m1/tests/test_r3_walk.py": "for top, _d, _f in os.walk(str(ROOT / 'plugins')):\n    pass\n",
+            "plugins/m1/tests/test_r3_join_slash.py": "path = ROOT / 'plugins' / name\n",
+            "plugins/m1/tests/test_r3_join_call.py": "path = os.path.join(PLUGINS, name, 'rules')\n",
+            "plugins/m1/tests/test_r3_join_literal.py": "path = PLUGINS / 'm2'\nother = os.path.join(PLUGINS, 'm2')\n",
             "plugins/m1/tests/test_r4.py": "import near_helper\n",
             "plugins/m1/tests/near_helper.py": "NAME = 'm2'\n",
             "plugins/m1/tests/test_r4_repo.py": "from repo_helper import x\n",
@@ -160,8 +192,14 @@ class ReadByTests(unittest.TestCase):
         rows = {
             "plugins/m1/tests/test_r1.py": {"m2"},
             "plugins/m1/tests/test_r2.py": {"m2"},
-            "plugins/m1/tests/test_r3_star.py": {ALL},
+            "plugins/m1/tests/test_r3_star.py": set(),  # a pattern in a string walks nothing (D93)
             "plugins/m1/tests/test_r3_call.py": {ALL},
+            "plugins/m1/tests/test_r3_listdir.py": {ALL},
+            "plugins/m1/tests/test_r3_scandir.py": {ALL},
+            "plugins/m1/tests/test_r3_walk.py": {ALL},
+            "plugins/m1/tests/test_r3_join_slash.py": {ALL},
+            "plugins/m1/tests/test_r3_join_call.py": {ALL},
+            "plugins/m1/tests/test_r3_join_literal.py": {"m2"},
             "plugins/m1/tests/test_r4.py": {"m2"},
             "plugins/m1/tests/test_r4_repo.py": {"m2"},
             "plugins/m1/tests/test_none.py": set(),
