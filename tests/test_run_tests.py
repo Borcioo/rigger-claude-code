@@ -734,6 +734,64 @@ class ChangedModulesTests(unittest.TestCase):
                 if text is None:
                     self.commit({"tests/read_by.json": self.read_by({})}, message="restore")
 
+    def main_without_git(self, *argv):
+        """main with every subprocess.run of git recorded and refused; (code, output, git calls)."""
+        calls = []
+        real = subprocess.run
+
+        def guarded(command, *args, **kwargs):
+            if Path(str(command[0])).stem.lower() == "git":
+                calls.append(command)
+                raise subprocess.CalledProcessError(128, command, stderr="git refused by the test")
+            return real(command, *args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", guarded):
+            code, output = self.main(*argv)
+        return code, output, calls
+
+    def list_file(self, data):
+        path = self.tmp / "changed-files.txt"
+        path.write_bytes(data)
+        return path
+
+    def test_changed_from_runs_no_git(self):
+        listed = self.list_file(b"plugins/a/x.py\n")
+        code, output, calls = self.main_without_git("--changed-from", str(listed))
+        self.assertEqual(calls, [])
+        self.assertEqual(code, 0, output)
+        self.assertEqual(set(self.ran), set(ALWAYS_RUN) | {self.MODULE_TESTS["a"], self.MODULE_TESTS["b"]}, output)
+        self.assertIn("# changed-modules: sweep left to the gate's sweep legs\n", output)
+        self.assertEqual(self.sweep_calls(), [])   # the plain mode's sweep is pinned by expect_sweep_and_control
+
+    def test_changed_from_missing_file_exits_two(self):
+        rows = (
+            ("missing", None, "missing"),
+            ("empty lines only", b"\n\n", "no path"),
+            ("not utf-8", b"plugins/a/\xff.py\n", "not UTF-8"),
+            ("nul byte", b"plugins/a/x.py\x00\n", "NUL"),
+        )
+        for name, data, reason in rows:
+            with self.subTest(name):
+                listed = self.tmp / "changed-files.txt"
+                listed.unlink(missing_ok=True)
+                if data is not None:
+                    self.list_file(data)
+                self.ran = []
+                code, output, calls = self.main_without_git("--changed-from", str(listed))
+                self.assertEqual(code, 2, output)
+                self.assertRegex(output, r"(?m)^changed-modules: changed list %s: .*%s.*; run the gate$"
+                                 % (re.escape(str(listed)), re.escape(reason)))
+                self.assertEqual((self.ran, calls), ([], []))
+
+    def test_changed_from_without_the_mode_is_refused(self):
+        errors = io.StringIO()
+        with mock.patch.object(run_tests, "run_file", self.fake_run_file()), contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                run_tests.main(["--changed-from", str(self.tmp / "x.txt")], root=self.root)
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--changed-from", errors.getvalue())
+        self.assertNotIn("unrecognized arguments", errors.getvalue())
+
     def test_fix_round_control_or_agent_next_to_it_is_refused(self):
         for flag in ("--fix-round", "--control", "--agent"):
             with self.subTest(flag=flag):

@@ -2,7 +2,7 @@
 
 Usage: python -I scripts/run_tests.py [--no-claude] [--min-files N] [--jobs N] [--agent]
                                       [--fix-round [--base REV]] [--control]
-       python -I scripts/run_tests.py --changed-modules [--base REV] [--no-claude] [--jobs N]
+       python -I scripts/run_tests.py --changed-modules [--base REV | --changed-from FILE] [--no-claude] [--jobs N]
 
 Discovers tests/test_*.py, plugins/*/tests/test_*.py and plugins/*/tools/*/tests/test_*.py and
 runs each as `<python> -I -X utf8 <file>` from the repo root, in an environment without CLAUDE_*
@@ -58,6 +58,11 @@ and the `# files` line ends with `, load-only N`. One that fails again stays fai
               only when every file passed, the sweep printed "# files N, findings 0" with N > 0
               and the control found the planted line, else 1. --fix-round, --control and --agent are
               refused next to it.
+--changed-from
+              with --changed-modules only: the changed paths come from FILE (one per line, UTF-8, as
+              scripts/gate.py --changed-modules writes it), git never runs, and the sweep and its
+              control are left to the gate's sweep legs. A missing, unreadable or non-UTF-8 file, a
+              NUL byte or no path in it exits 2.
 """
 
 import argparse
@@ -651,23 +656,53 @@ def run_sweep(root, env, log, files=(), show=True):
     return (int(counts[-1][0]), int(counts[-1][1])), done.returncode
 
 
-def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int:
-    """A local pre-check, not a gate: the tests of the changed modules, their dependents and ALWAYS_RUN, then the sweep."""
-    spec = importlib.util.spec_from_file_location("select_tests", Path(__file__).with_name("select_tests.py"))
-    selector = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(selector)
+def read_changed_list(path) -> List[str]:
+    """The repository-relative paths of a --changed-from file, one per line; ValueError says why it cannot be used."""
     try:
-        changed = selector.changed_files(root, base)
-    except (OSError, subprocess.SubprocessError) as error:
-        detail = (getattr(error, "stderr", None) or "").strip() or str(error)
-        tell("changed-modules: git failed: %s; run the gate" % " ".join(detail.split()), log)
-        return 2
+        data = Path(path).read_bytes()
+    except FileNotFoundError:
+        raise ValueError("missing")
+    except OSError as error:
+        raise ValueError("unreadable: %s" % error)
+    if b"\0" in data:
+        raise ValueError("holds a NUL byte")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("not UTF-8")
+    changed = [line for line in text.split("\n") if line]
+    if not changed:
+        raise ValueError("no path in it")
+    return changed
+
+
+def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log, changed_from=None) -> int:
+    """A local pre-check, not a gate: the tests of the changed modules, their dependents and ALWAYS_RUN, then the sweep.
+
+    With `changed_from` the changed paths come from that file, no git runs and the sweep is left to the gate's legs."""
+    if changed_from is not None:
+        try:
+            changed = read_changed_list(changed_from)
+        except ValueError as error:
+            tell("changed-modules: changed list %s: %s; run the gate" % (changed_from, error), log)
+            return 2
+    else:
+        spec = importlib.util.spec_from_file_location("select_tests", Path(__file__).with_name("select_tests.py"))
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        try:
+            changed = selector.changed_files(root, base)
+        except (OSError, subprocess.SubprocessError) as error:
+            detail = (getattr(error, "stderr", None) or "").strip() or str(error)
+            tell("changed-modules: git failed: %s; run the gate" % " ".join(detail.split()), log)
+            return 2
     names, shared = changed_modules(root, changed)
     if shared is not None:
         tell("changed-modules: shared file %s; run the gate" % shared, log)
         return 2
+    source = "base %s" % base if changed_from is None else "list %s" % changed_from
     tell(
-        "# changed-modules: base %s, changed %d, modules %s" % (base, len(changed), ", ".join(names) or "none"),
+        "# changed-modules: %s, changed %d, modules %s" % (source, len(changed), ", ".join(names) or "none"),
         log,
     )
     discovered = discover(root)
@@ -682,6 +717,10 @@ def run_changed_modules(root: Path, base: str, env: dict, jobs: int, log) -> int
         tell("changed-modules: read-by map: %s; run the gate" % error, log)
         return 2
     code = run_suite([files], env, root, jobs, 1, log)
+    if changed_from is not None:
+        # The sweep reads the git index, which WSL git cannot open in a Windows worktree; the gate sweeps on the host.
+        tell("# changed-modules: sweep left to the gate's sweep legs", log)
+        return 1 if code != 0 else 0
     counts, sweep_exit = run_sweep(root, env, log)
     if counts is None:
         tell("# changed-modules: sweep printed no count (exit %d)" % sweep_exit, log)
@@ -787,10 +826,16 @@ def main(argv=None, root=ROOT):
     parser.add_argument(
         "--changed-modules", action="store_true", help="local pre-check: the changed modules' tests, never a gate"
     )
+    parser.add_argument(
+        "--changed-from", metavar="FILE", default=None,
+        help="with --changed-modules: the changed paths, one per line, instead of asking git",
+    )
     args = parser.parse_args(argv)
     for flag, value in (("--fix-round", args.fix_round), ("--control", args.control), ("--agent", args.agent)):
         if args.changed_modules and value:
             parser.error("--changed-modules cannot be combined with %s" % flag)
+    if args.changed_from is not None and not args.changed_modules:
+        parser.error("--changed-from needs --changed-modules")
     env = clean_env(os.environ, no_claude=args.no_claude)
 
     if args.control:
@@ -810,7 +855,7 @@ def main(argv=None, root=ROOT):
         return 1
     jobs = args.jobs if args.jobs is not None else min(JOBS, os.cpu_count() or 1)
     if args.changed_modules:
-        return run_changed_modules(root, args.base, env, jobs, None)
+        return run_changed_modules(root, args.base, env, jobs, None, changed_from=args.changed_from)
     minimum = args.min_files if args.min_files is not None else read_min(root)
     if minimum is None and not args.fix_round:
         print("# cannot read a positive integer from %s" % MIN_FILE)
