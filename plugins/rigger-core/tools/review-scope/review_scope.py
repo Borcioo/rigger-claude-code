@@ -1,11 +1,12 @@
 """The one list of files a review covers: every path `git diff` names between two commits.
 
 Each path gets a verdict, first match wins (D60): `review` for `.claude/rigger.json` and every rules file it
-names at base or at head (always_reviewed), whatever a skip says; `skip: deleted`; a `review.paths` skip; a file named like
-a test is `review`; `skip: binary` when the first 8,000 bytes of the head and the base blob hold a NUL byte,
-`review: binary added` when only the head blob does; a file under a test folder is `review`; `skip: lockfile`;
-`skip: vendored` and `skip: generated` only for a path that existed at base; everything else `review`. A
-verdict that starts with `review` is to be reviewed. A skip the reviewed diff itself creates never applies.
+names at base or at head (always_reviewed), whatever a skip says; `skip: deleted`; a `review.paths` skip; a
+file named like a test is `review`; `skip: binary` when the first 8,000 bytes of the head and the base blob
+hold a NUL byte, `review: binary added` when only the head blob does; a file under a test folder is `review`;
+`skip: lockfile`, `skip: vendored` and `skip: generated` only for a path that was a regular file at base;
+everything else `review`. A verdict that starts with `review` is to be reviewed. A skip the reviewed diff
+itself creates never applies.
 
 A revision is checked in Python before git sees it and resolved to a commit id; only those ids reach git,
 which runs with the repository's and the environment's diff drivers off. Blobs are read by object id through
@@ -500,11 +501,12 @@ def _verdict(path, status, at_base, at_head, blobs, rules, trusted):
     if _test_folder(path):
         return REVIEW
     name = path.rsplit("/", 1)[-1]
-    if name in LOCKFILES:
+    regular_at_base = at_base is not None and at_base[0] in REGULAR
+    if regular_at_base and name in LOCKFILES:
         return LOCKFILE
-    if at_base is not None and any(segment in VENDOR_SEGMENTS for segment in path.split("/")[:-1]):
+    if regular_at_base and any(segment in VENDOR_SEGMENTS for segment in path.split("/")[:-1]):
         return VENDORED
-    if at_base is not None and name.endswith(MINIFIED):
+    if regular_at_base and name.endswith(MINIFIED):
         return GENERATED
     # The base blob is read only for a head blob with a NUL byte (returned above) or a marker.
     if base_prefix is not None and _marked(base_prefix):

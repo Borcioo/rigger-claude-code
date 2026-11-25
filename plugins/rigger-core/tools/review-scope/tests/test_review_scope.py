@@ -705,7 +705,9 @@ class SkipReasonTests(GitCase):
     """D60: each skip reason, the "existed at base" clauses, the test-file rule and the binary prefix."""
 
     def test_each_reason_on_a_path_that_existed_at_base(self):
-        base_files = {
+        base_files = {name: b"lock 0\n" for name in LOCKFILES}
+        base_files.update({
+            "sub/yarn.lock": b"lock 0\n",
             "vendor/lib.js": b"v = 1\n",
             "node_modules/p/index.js": b"n = 1\n",
             "third_party/x.c": b"int x;\n",
@@ -723,11 +725,9 @@ class SkipReasonTests(GitCase):
             "plain.py": b"p = 1\n",
             "vendored.txt": b"no vendor segment\n",
             "tools/vendor": b"#!/bin/sh\n",
-        }
+        })
         base = self.files(base_files, "base")
         head_files = {name: data + b"y\n" for name, data in base_files.items()}
-        head_files.update({name: b"lock 1\n" for name in LOCKFILES})
-        head_files["sub/yarn.lock"] = b"lock 2\n"
         head = self.files(head_files, "head")
         expected = {
             "vendor/lib.js": "skip: vendored",
@@ -757,9 +757,24 @@ class SkipReasonTests(GitCase):
         self.assertEqual(set(got), set(expected))
 
     def test_a_skip_the_diff_creates_is_reviewed(self):
-        base = self.files({"plain.py": b"p = 1\n", "unmarked.py": MARKED, "mod.js": b"var m = 1;\n",
-                           "vendor/old.js": b"o = 1\n"}, "base")
+        for name, data in {"plain.py": b"p = 1\n", "unmarked.py": MARKED, "mod.js": b"var m = 1;\n",
+                           "vendor/old.js": b"o = 1\n"}.items():
+            self.write(name, data)
+        self.git("add", "-A")
+        links = ("vendor/lib.js", "y.min.js", "Cargo.lock")  # links at base, regular files at head
+        target = self.tmp / "link-target.txt"
+        target.write_bytes(b"../elsewhere.js")
+        link = self.git("hash-object", "-w", str(target))
+        for name in links:
+            self.git("update-index", "--add", "--cacheinfo", "120000,%s,%s" % (link, name))
+        self.git("commit", "-q", "-m", "base")
+        base = self.git("rev-parse", "HEAD")
+        self.git("rm", "-q", "--cached", "--", *links)  # without core.symlinks, `git add` keeps a link's mode
         head = self.files({
+            "vendor/lib.js": b"run = 1\n",
+            "y.min.js": b"var y=1;\n",
+            "Cargo.lock": b"lock 1\n",
+            "src/yarn.lock": b"require('child_process')\n",
             "plain.py": b"# @generated\np = 1\n",
             "unmarked.py": b"x = 1\n",
             "new_marked.py": MARKED,
@@ -769,7 +784,15 @@ class SkipReasonTests(GitCase):
             "blob.bin": NUL_TEXT,
             "mod.js": b"var m = 1;\x00\n",
         }, "head")
+        for name in links:
+            with self.subTest(fixture=name):
+                self.assertTrue(self.git("ls-tree", base, "--", name).startswith("120000 "))
+                self.assertTrue(self.git("ls-tree", head, "--", name).startswith("100644 "))
         expected = {
+            "vendor/lib.js": "review",
+            "y.min.js": "review",
+            "Cargo.lock": "review",
+            "src/yarn.lock": "review",
             "plain.py": "review",
             "unmarked.py": "review",
             "new_marked.py": "review",

@@ -67,10 +67,10 @@ format. Releases are tagged `v<version>`.
   `skip: <reason> (review.paths)`; a file named like a test (`test_*`, `*_test.*`, `*.test.*`,
   `*.spec.*`) is `review`; `skip: binary` when the first 8,000 bytes hold a NUL byte at head and at
   base; `review: binary added` when only the head holds one (a binary file the diff adds or creates
-  is reviewed); a file under a test folder is `review`; `skip: lockfile`; `skip: vendored` (under
+  is reviewed); a file under a test folder is `review`; `skip: lockfile`, `skip: vendored` (under
   `vendor`, `node_modules`, `third_party` or `third-party`) and `skip: generated` (`@generated`,
   `DO NOT EDIT` or `auto-generated` in the first 5 lines, or `*.min.js` and `*.min.css`) only for a
-  path that existed at base; everything else `review`. A skip the reviewed diff itself would create
+  path that was a regular file at base; everything else `review`. A skip the reviewed diff itself would create
   never applies.
 - **`review.paths` in config takes effect** and is no longer listed as `config-inactive`. Each entry
   maps a glob (`**`, `*` and `?` by path segment, case-sensitive) to a rules file, or to
