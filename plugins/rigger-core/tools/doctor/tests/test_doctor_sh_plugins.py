@@ -312,11 +312,11 @@ class DoctorShTests(DoctorShCase):
 
     # -- rules assembly (assemble.py --doctor through a real interpreter) ------------------------
 
-    def run_assembly(self, *dirs, kernel=None):
+    def run_assembly(self, *dirs, kernel=None, defaults=True):
         """doctor.sh with this test's own Python and RIGGER_MODULE_DIRS naming the repo's rigger-rules, rigger-review,
-        rigger-testing (the two slot defaults) and `dirs`."""
-        roots = [str(REPO_PLUGINS / "rigger-rules"), str(REPO_PLUGINS / "rigger-review"),
-                 str(REPO_PLUGINS / "rigger-testing")] + [str(d) for d in dirs]
+        rigger-testing (the two slot defaults, left out with `defaults=False`) and `dirs`."""
+        modules = ("rigger-rules", "rigger-review", "rigger-testing") if defaults else ("rigger-rules",)
+        roots = [str(REPO_PLUGINS / name) for name in modules] + [str(d) for d in dirs]
         kernel = kernel or ("MINGW64_NT-10.0-26100" if os.name == "nt" else "Linux")
         return self.run_doctor(kernel, path=self.real_python_path(), env={"RIGGER_MODULE_DIRS": os.pathsep.join(roots)})
 
@@ -426,6 +426,17 @@ class DoctorShTests(DoctorShCase):
         self.assertEqual([n for n, row in result.checks.items() if row[2] == how and row[0] in ("WARN", "MISSING")], [])
         self.assertEqual(self.rows(result, "slot-"), {})
         self.assertRow(result, "rules-assembly", "OK")
+
+    def test_a_default_slot_without_its_plugin_is_missing_with_an_install_fix(self):
+        # D57: the review and testing modules not installed; superpowers' empty slots stay INFO.
+        result = self.run_assembly(defaults=False)
+        how = "assemble.py --doctor"
+        self.assertEqual(result.checks["slot reviewer"], ("MISSING", "empty: plugin rigger-review is not enabled", how))
+        self.assertEqual(result.checks["slot testing"], ("MISSING", "empty: plugin rigger-testing is not enabled", how))
+        self.assertEqual(result.fixes["slot reviewer"], ["claude plugin install rigger-review@rigger"])
+        self.assertEqual(result.fixes["slot testing"], ["claude plugin install rigger-testing@rigger"])
+        self.assertEqual(result.checks["slot process.tdd"], ("INFO", "empty: plugin superpowers is not enabled", how))
+        self.assertRow(result, "rules-assembly", "OK")  # the install lines have rows of their own
 
     def test_hook_slot_rows_name_the_filler_and_its_failure_mode(self):
         # `requires: []` keeps the shell-guard row on every system; it sets neither kind nor target.

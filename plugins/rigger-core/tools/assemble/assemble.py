@@ -861,6 +861,7 @@ def _check(argv: List[str], environ: Mapping[str, str]) -> Tuple[int, bytes]:
 
 
 _FIX_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")  # a name a FIX line may carry into a pasted shell command
+_FIX_TARGET = re.compile(r"[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9-]*")  # <plugin>@<marketplace> of the same shape
 _TABLE_HEAD = re.compile(r"\|\s*Before\s*\|\s*Skill\s*\|")
 _SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 TABLE_JSON_MAX = 1500
@@ -894,6 +895,8 @@ def _slot_rows(found: Assembly, modules: List[Module], own: Set[str]) -> List[_R
         fillers = [_shown(filler) for filler in row.fillers]
         expected = row.kind == "hook" and row.source != "default" and isinstance(row.target, str) \
             and row.target not in enabled
+        install = slots.install_plugin(row.path, level_one.get(row.path), modules, enabled) \
+            if not row.filled and row.source == "default" else None
         if len(fillers) > 1:
             last = row.fillers[-1]
             own.update(n for n in found.notices if n.startswith("rigger: slot %s is filled by " % row.path))
@@ -907,6 +910,12 @@ def _slot_rows(found: Assembly, modules: List[Module], own: Set[str]) -> List[_R
             rows.append((name, "OK", slots._target_cell(row), None))
         elif row.filled:
             rows.append((name, "OK", "%s (%s)" % (slots._target_cell(row), _shown(row.source)), None))
+        elif install is not None:
+            # D57: the session's install line has this row of its own; the FIX is that line's command.
+            own.update(n for n in found.notices if n.startswith("rigger: slot %s is empty: install " % row.path))
+            command = slots.install_command(install, modules)
+            rows.append((name, "MISSING", "empty: " + _empty_reason(row, level_one, modules, enabled),
+                         command if _FIX_TARGET.fullmatch(command.rpartition(" ")[2]) else None))
         else:
             rows.append((name, "INFO", "empty: " + _empty_reason(row, level_one, modules, enabled), None))
         if row.path == "shell-guard" and row.filled:

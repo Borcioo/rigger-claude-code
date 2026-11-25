@@ -72,7 +72,7 @@ Run `actionlint` before committing a workflow change, `shellcheck` on bash scrip
 `jq`/`yq` for JSON/YAML; on Windows with rigger-windows installed, details in
 `rigger-windows:windows-dev-env`.
 
-## Test guards (set once per project; how to test is in `rigger-core:testing`)
+## Test guards (set once per project; how to test is in the testing skill the Skill triggers table names)
 
 | Guard | Stack | Setting |
 |---|---|---|

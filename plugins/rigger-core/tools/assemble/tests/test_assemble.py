@@ -986,6 +986,22 @@ class SlotWiringTests(Base):
         self.assertEqual(compacted.count(line), 1)
         self.assertNotIn(b"snapshot missing", compacted)
 
+    def test_default_slot_without_its_plugin_names_the_install_command(self):
+        # Review Focus 1: rigger-core updated, the review and testing modules not installed.
+        self.layout.dirs = [d for d in self.layout.dirs if d not in (str(self.layout.review), str(self.layout.testing))]
+        self.layout.rules_module()
+        lines = [b"rigger: slot reviewer is empty: install rigger-review (claude plugin install rigger-review@rigger)\n",
+                 b"rigger: slot testing is empty: install rigger-testing (claude plugin install rigger-testing@rigger); "
+                 b"the commit-time weak-test guard is off\n"]
+        for source in ("startup", "clear", "compact"):
+            with self.subTest(source=source):
+                stdin = self.layout.hook_input(session_id="ih1", source=source)
+                text = b"".join(self.layout.part(i, stdin=stdin) for i in range(1, 7))
+                for line in lines:
+                    self.assertEqual(text.count(line), 1, (source, line))
+                self.assertIn(b"| reviewer | \xe2\x80\x94 | \xe2\x80\x94 | \xe2\x80\x94 | default |\n", text)
+                self.assertNotIn(b"snapshot missing", text)  # compact printed the session's snapshot
+
     def test_format_one_snapshot_is_read_again(self):
         # Review Focus 8: a snapshot of release 0.5.0 (format 1) is read as missing, and replaced.
         self.layout.rules_module()

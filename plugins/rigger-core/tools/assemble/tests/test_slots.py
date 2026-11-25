@@ -241,6 +241,73 @@ class ResolutionTests(SlotsTestCase):
                 self.assertEqual(notices, [])
 
 
+REVIEW_HINT = "install rigger-review (claude plugin install rigger-review@rigger)"
+TESTING_HINT = ("install rigger-testing (claude plugin install rigger-testing@rigger); "
+                "the commit-time weak-test guard is off")
+WITHOUT_MODULES = ENABLED - {"rigger-review", "rigger-testing"}
+
+
+class InstallHintTests(SlotsTestCase):
+    """D57: the reviewer and testing defaults name the install command when their plugin is not enabled."""
+
+    def plain_core(self):
+        core = self.module("core-plain", agents=("worker", "implementer", "mapper"))
+        core.name = "rigger-core"
+        return core
+
+    def test_level_one_defaults_give_one_install_line_each(self):
+        rows, _, _, notices = self.resolve(enabled=WITHOUT_MODULES, modules=[self.plain_core(), self.windows,
+                                                                             self.lessons])
+        self.assertEqual(notices, ["rigger: slot reviewer is empty: " + REVIEW_HINT,
+                                   "rigger: slot testing is empty: " + TESTING_HINT])
+        for path in ("reviewer", "testing"):
+            self.assertEqual((rows[path].filled, rows[path].target, rows[path].source), (False, None, "default"), path)
+
+    def test_testing_notice_says_the_commit_guard_is_off(self):
+        _, _, _, notices = self.resolve(enabled=ENABLED - {"rigger-testing"})
+        self.assertEqual(notices, ["rigger: slot testing is empty: install rigger-testing (claude plugin install "
+                                   "rigger-testing@rigger); the commit-time weak-test guard is off"])
+
+    def test_a_slot_set_above_level_one_keeps_its_own_notice(self):
+        # A model set at level 3 fails the same way: D34's line names the file and carries the hint, no second line.
+        _, _, _, notices = self.resolve(l3=level({"reviewer": {"model": "opus"}}), enabled=WITHOUT_MODULES)
+        self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: plugin rigger-review is not enabled; "
+                                   "the slot is empty; %s" % (L3_FILE, REVIEW_HINT),
+                                   "rigger: slot testing is empty: " + TESTING_HINT])
+        # A slot the person emptied on purpose, or filled from another plugin, gets no hint.
+        for value in (None, {"target": "superpowers:code-reviewer"}):
+            with self.subTest(value=value):
+                rows, _, _, notices = self.resolve(l3=level({"reviewer": value}), enabled=ENABLED - {"rigger-review"})
+                self.assertEqual(notices, [])
+                self.assertEqual(rows["reviewer"].filled, value is not None)
+
+    def test_a_stale_override_falls_back_with_the_install_command(self):
+        # A personal file from before the move still names rigger-core's reviewer, which rigger-core no longer has.
+        _, _, _, notices = self.resolve(l3=level({"reviewer": {"target": "rigger-core:reviewer"}}),
+                                        enabled=ENABLED - {"rigger-review"},
+                                        modules=[self.plain_core(), self.testing, self.windows, self.lessons])
+        self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: rigger-core has no agent reviewer; "
+                                   "the slot is empty; %s" % (L3_FILE, REVIEW_HINT)])
+
+    def test_superpowers_slots_stay_quiet(self):
+        _, _, _, notices = self.resolve(enabled=ENABLED - {"superpowers"})
+        self.assertEqual(notices, [])
+        rows, _, _, notices = self.resolve(enabled=WITHOUT_MODULES - {"superpowers"})
+        self.assertEqual([n.split(" is empty")[0] for n in notices], ["rigger: slot reviewer", "rigger: slot testing"])
+        self.assertFalse(rows["process.tdd"].filled)  # control: the superpowers slots are empty too
+
+    def test_install_command_names_rigger_cores_marketplace(self):
+        core = self.plain_core()
+        for market, expected in (("rigger", "rigger"), ("my-market", "my-market"), ("inline", "rigger"),
+                                 (None, "rigger"), ("bad name;", "rigger")):
+            with self.subTest(market=market):
+                core.marketplace = market
+                _, _, _, notices = self.resolve(enabled=ENABLED - {"rigger-review"},
+                                                modules=[core, self.testing, self.windows, self.lessons])
+                self.assertEqual(notices, ["rigger: slot reviewer is empty: install rigger-review (claude plugin "
+                                           "install rigger-review@%s)" % expected])
+
+
 class TrustTests(SlotsTestCase):
     def test_l4_command_without_trust_is_dropped_with_the_line(self):
         rows, _, trusted, notices = self.resolve(l4=level({"reviewer": {"kind": "command", "target": COMMAND}}))

@@ -16,7 +16,8 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import config
 import manifest
-from manifest import Module, SLOT_PATHS, UNSAFE
+from discover import INLINE
+from manifest import CORE, PUBLIC_MARKETPLACE, Module, SLOT_PATHS, UNSAFE
 
 KINDS = {
     "reviewer": ("agent", "command"),
@@ -40,6 +41,9 @@ ARG_MAX = 500
 MODEL_MAX = 60
 SOURCES = ("default", "personal", "project")
 EMPTY = "—"
+# Slots whose level-1 default plugin, when not enabled, gets an install line instead of D34's silence (D57).
+INSTALL_HINT_SLOTS = ("reviewer", "testing")
+GUARD_OFF = "; the commit-time weak-test guard is off"
 
 _NAMED = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 _PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -249,6 +253,31 @@ def _not_enabled(entry: object, problem: str) -> bool:
     return problem == "plugin %s is not enabled" % plugin
 
 
+def install_command(plugin: str, modules: List[Module]) -> str:
+    """`claude plugin install <plugin>@<rigger-core's marketplace>`; a --plugin-dir core names the public one."""
+    core = next((module for module in modules if module.name == CORE), None)
+    market = core.marketplace if core is not None else None
+    if not isinstance(market, str) or market == INLINE or not _PLUGIN.fullmatch(market):
+        market = PUBLIC_MARKETPLACE
+    return "claude plugin install %s@%s" % (plugin, market)
+
+
+def install_plugin(path: str, entry: object, modules: List[Module], enabled: FrozenSet[str]) -> Optional[str]:
+    """The plugin to install when `path` is an install-hint slot whose level-1 entry fails only because that
+    plugin is not enabled, else None."""
+    if path not in INSTALL_HINT_SLOTS or not isinstance(entry, dict):
+        return None
+    problem = entry_problem(path, entry, modules, enabled)
+    if problem is None or not _not_enabled(entry, problem):
+        return None
+    return entry["target"].split(":")[0]
+
+
+def _install_hint(path: str, plugin: str, modules: List[Module]) -> str:
+    hint = "install %s (%s)" % (plugin, install_command(plugin, modules))
+    return hint + GUARD_OFF if path == "testing" else hint
+
+
 def _walk(path: str, touches: list, modules: List[Module], enabled: FrozenSet[str],
           notices: List[str]) -> Tuple[Optional[dict], str]:
     """Validate the merge of levels 1-4, then 1-3, 1-2, 1 (D34); return (entry or None, source)."""
@@ -268,10 +297,17 @@ def _walk(path: str, touches: list, modules: List[Module], enabled: FrozenSet[st
         if failed is None:
             failed = (below[-1][2], problem, group, entry)
     if failed is not None:
+        hint = None
+        if chosen is None and groups[-1] == 1:  # the walk ended on level 1 alone, which `entry` holds
+            plugin = install_plugin(path, entry, modules, enabled)
+            hint = _install_hint(path, plugin, modules) if plugin else None
         where, problem, group, entry = failed
         if not (group == 1 and _not_enabled(entry, problem)):
             tail = "using %s" % _shown(chosen[2]) if chosen and chosen[0] is not None else "the slot is empty"
-            notices.append("rigger: slot %s from %s ignored: %s; %s" % (path, where, problem, tail))
+            notices.append("rigger: slot %s from %s ignored: %s; %s%s"
+                           % (path, where, problem, tail, "; " + hint if hint else ""))
+        elif hint:
+            notices.append("rigger: slot %s is empty: %s" % (path, hint))
     if chosen is None:
         return None, _source(touches)
     return chosen[0], chosen[1]

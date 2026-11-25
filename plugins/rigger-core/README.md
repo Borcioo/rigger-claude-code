@@ -18,8 +18,11 @@ the others' rules are printed by this plugin.
 ## Agents
 
 `rigger-core:mapper` (finds code locations), `rigger-core:implementer` (one mapped change),
-`rigger-core:worker` (implementation from a brief), `rigger-core:reviewer` (review and
-verification, no edits).
+`rigger-core:worker` (implementation from a brief). The reviewer agent comes with the review
+module and the testing skill with the testing module: `claude plugin install rigger-review@rigger`
+and `claude plugin install rigger-testing@rigger`. Without one of them its slot stays empty, and
+every session start, clear and compaction prints `rigger: slot <path> is empty: install <plugin>
+(<command>)`.
 
 ## Commands
 
@@ -35,7 +38,9 @@ verification, no edits).
   `leak_guard`), and these slot rows:
   - `slot <path>`: OK with what fills it and from which level; WARN when two plugins fill a hook slot
     (FIX `claude plugin disable <name>`); MISSING when the filler your config expects is not enabled
-    (FIX `claude plugin install <name>`); INFO `empty: <reason>` for an empty slot.
+    (FIX `claude plugin install <name>`), and when the `reviewer` or `testing` default's plugin is
+    not enabled (FIX `claude plugin install <plugin>@<marketplace>`); INFO `empty: <reason>` for
+    another empty slot.
   - `slot-checker shell-guard`: the rule checker of the shell-guard filler, or INFO when it has none.
   - `slot-order <id>`: WARN for a config trigger row that loads `process.tdd` without `testing`
     before it.
