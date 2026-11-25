@@ -1113,7 +1113,7 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
         if len(text) > TABLE_JSON_MAX:
             text = text[:TABLE_JSON_MAX] + " …"
         rows.append(("rules-d-table " + _shown("%s/%s" % (PERSONAL_DIR, name)), "INFO",
-                     "holds a trigger table; move its rows to triggers in %s: %s"
+                     "rules file still holds a skill-trigger table; its rows as triggers for %s: %s"
                      % (_shown(_personal_config(inputs), 300), text), None))
     return rows
 
