@@ -57,7 +57,8 @@ format. Releases are tagged `v<version>`.
 - **An empty `reviewer` or `testing` slot at its default names the install command** at `startup`,
   `clear` and `compact`, and doctor reports it as `MISSING` (see Migration). Every other level-1
   default whose plugin is not enabled stays silent, as before.
-- **`review_scope.py` gives skip reasons.** First match wins: `skip: deleted`; a `review.paths` skip,
+- **`review_scope.py` gives skip reasons.** First match wins: `review` for `.claude/rigger.json`
+  and every rules file it names at base or at head, whatever a skip says; `skip: deleted`; a `review.paths` skip,
   `skip: <reason> (review.paths)`; a file named like a test (`test_*`, `*_test.*`, `*.test.*`,
   `*.spec.*`) is `review`; `skip: binary` when the first 8,000 bytes hold a NUL byte at head and at
   base; `review: binary added` when only the head holds one (a binary file the diff adds or creates
@@ -78,8 +79,9 @@ format. Releases are tagged `v<version>`.
   `# rules <glob> <file> (level <n>)` line per entry that matched a path to review. A project rules
   file is written to `--rules-out` (`(not written: no --rules-out)` without it). `--session`
   defaults to `CLAUDE_CODE_SESSION_ID`.
-- **`slot_check.py reviewer` refuses a skipped test file** (`coverage-test-skipped`): a test file in
-  `coverage.skipped` whose `review_scope.py` verdict starts with `review`. It takes
+- **`slot_check.py reviewer` refuses a skipped test file** (`coverage-test-skipped`): a test file,
+  `.claude/rigger.json` or a rules file it names, in `coverage.skipped`, whose `review_scope.py`
+  verdict starts with `review`. It takes
   `--session ID` (default `CLAUDE_CODE_SESSION_ID`) to read the same personal and company
   `review.paths` entries; without a session, a test file only those entries skip is refused.
   `slot_run.py` checks a command reviewer's output without a session.

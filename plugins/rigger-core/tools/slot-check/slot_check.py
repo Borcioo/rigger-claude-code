@@ -331,19 +331,25 @@ def _snapshot(session):
 
 def rule_reviewer_coverage_test_skipped(ctx):
     """D62: a skipped path that review_scope lists for review (a verdict starting `review`, with the same
-    `review.paths` entries) and that is a test file is refused; the reply's reason is never read."""
-    tests = [item["file"] for item in ctx.obj["coverage"]["skipped"] if review_scope.is_test_file(item["file"])]
-    if not tests:
+    `review.paths` entries) and that is a test file, the project config or a rules file it names
+    (`review_scope.always_reviewed`) is refused; the reply's reason is never read."""
+    skipped = [item["file"] for item in ctx.obj["coverage"]["skipped"]]
+    if not skipped:
         return None
     repo = _repo(ctx)
     try:
+        trusted = review_scope.always_reviewed(repo, ctx.base_id, ctx.head_id)
+        checked = [path for path in skipped if review_scope.is_test_file(path) or path in trusted]
+        if not checked:
+            return None
         rules = review_scope.path_rules(_snapshot(ctx.session), repo, ctx.base_id)
         listed = dict(review_scope.scope(repo, ctx.base_id, ctx.head_id, rules))
     except review_scope.ScopeError as exc:
         return "review_scope: %s" % exc
-    for path in tests:
+    for path in checked:
         if listed[path].startswith(review_scope.REVIEW):
-            return "skipped test file %s is listed as %r by review_scope" % (path, listed[path])
+            kind = "project config or rules file" if path in trusted else "test file"
+            return "skipped %s %s is listed as %r by review_scope" % (kind, path, listed[path])
     return None
 
 

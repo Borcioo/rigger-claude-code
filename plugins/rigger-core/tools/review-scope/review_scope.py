@@ -1,6 +1,7 @@
 """The one list of files a review covers: every path `git diff` names between two commits.
 
-Each path gets a verdict, first match wins (D60): `skip: deleted`; a `review.paths` skip; a file named like
+Each path gets a verdict, first match wins (D60): `review` for `.claude/rigger.json` and every rules file it
+names at base or at head (always_reviewed), whatever a skip says; `skip: deleted`; a `review.paths` skip; a file named like
 a test is `review`; `skip: binary` when the first 8,000 bytes of the head and the base blob hold a NUL byte,
 `review: binary added` when only the head blob does; a file under a test folder is `review`; `skip: lockfile`;
 `skip: vendored` and `skip: generated` only for a path that existed at base; everything else `review`. A
@@ -441,7 +442,46 @@ def _named_skip(rules, path):
     return None
 
 
-def _verdict(path, status, at_base, at_head, blobs, rules):
+def _named_rules_files(blobs, entry):
+    # type: (_Blobs, Optional[TreeEntry]) -> set
+    """Every rules file a project config blob's `review.paths` entries name, whether or not the entry would
+    apply; none for a config that a review would drop (not a regular file, over TEXT_CAP, not schema 1)."""
+    if entry is None or entry[0] not in REGULAR or entry[2] > TEXT_CAP:
+        return set()
+    data, _found = config.parse_level(blobs.read(entry[1], TEXT_CAP)[1], PROJECT_CONFIG)
+    review = data.get("review")
+    paths = review.get("paths") if isinstance(review, dict) else None
+    names = set()
+    for value in (paths.values() if isinstance(paths, dict) else ()):
+        name = value.get("rules") if isinstance(value, dict) else value
+        if isinstance(name, str):
+            names.add(name)
+    return names
+
+
+def _always_reviewed(base_tree, head_tree, blobs):
+    # type: (Dict[str, TreeEntry], Dict[str, TreeEntry], _Blobs) -> set
+    return ({PROJECT_CONFIG} | _named_rules_files(blobs, base_tree.get(PROJECT_CONFIG))
+            | _named_rules_files(blobs, head_tree.get(PROJECT_CONFIG)))
+
+
+def always_reviewed(repo, base, head):
+    # type: (Path, str, str) -> set
+    """The paths whose verdict is always `review`: PROJECT_CONFIG and every rules file it names at `base` or
+    at `head`, since a later review reads them at its own base."""
+    _check_revision(base)
+    _check_revision(head)
+    repo = Path(os.path.abspath(str(repo)))
+    _check_repository(repo)
+    base_tree = _tree(repo, _resolve(repo, base))
+    head_tree = _tree(repo, _resolve(repo, head))
+    with _Blobs(repo) as blobs:
+        return _always_reviewed(base_tree, head_tree, blobs)
+
+
+def _verdict(path, status, at_base, at_head, blobs, rules, trusted):
+    if path in trusted:
+        return REVIEW
     if status == "D":
         return DELETED
     reason = _named_skip(rules, path)
@@ -488,7 +528,8 @@ def scope(repo, base, head, rules=()):
     base_tree = _tree(repo, base_id)
     head_tree = _tree(repo, head_id)
     with _Blobs(repo) as blobs:
-        rows = [(path, _verdict(path, status, base_tree.get(path), head_tree.get(path), blobs, rules))
+        trusted = _always_reviewed(base_tree, head_tree, blobs)
+        rows = [(path, _verdict(path, status, base_tree.get(path), head_tree.get(path), blobs, rules, trusted))
                 for path, status in changes]
     return sorted(rows)
 

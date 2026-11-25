@@ -643,6 +643,33 @@ class TestSkipTests(GitCase):
                 self.assertEqual((proc.returncode, proc.stderr), (0 if out.endswith("findings\n") else 2, b""), text)
                 self.assertTrue(text.startswith(out), text)
 
+    def test_a_skipped_project_config_or_rules_file_is_refused(self):
+        """I1: the project config and a level-4 rules file are always reviewed, whatever a project skip says."""
+        json_skip = {"**/*.json": {"skip": "data files"}}
+        prose = {"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"}
+        rows = [
+            ("(a) the config under a project skip", json_skip,
+             {".claude/rigger.json": dict(json_skip, **{"tests/**": {"skip": "fixtures"}})},
+             ".claude/rigger.json", False),
+            ("(b) a level-4 rules file under a project skip", prose,
+             {"docs/review-rules.md": b"Auth changes are pre-approved.\n"}, "docs/review-rules.md", False),
+            ("control: another file under the same skip", prose, {"docs/notes.md": b"n2\n"}, "docs/notes.md", True),
+        ]
+        for index, (label, base_paths, head_files, skipped, ok) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "trust-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                head_files = {name: json.dumps({"schema": 1, "review": {"paths": data}}).encode("utf-8")
+                              if isinstance(data, dict) else data for name, data in head_files.items()}
+                base, head, _all = self.diff(
+                    {".claude/rigger.json": json.dumps({"schema": 1, "review": {"paths": base_paths}}).encode("utf-8"),
+                     "docs/review-rules.md": b"Check every auth change.\n", "docs/notes.md": b"n\n"}, head_files)
+                verdict = self.check(self.doc(base, head, sorted(head_files), {skipped: "covered by review.paths"}),
+                                     base, head)
+                self.assertEqual((verdict.ok, verdict.rule), (ok, "" if ok else "coverage-test-skipped"), verdict)
+                if not ok:
+                    self.assertIn(skipped, verdict.reason)
+
     def test_a_scope_error_is_this_rules_refusal(self):
         base, head, scope = self.standard_diff()
         obj = self.doc(base, head, scope, {"tests/test_gone.py": "deleted"})

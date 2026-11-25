@@ -178,14 +178,16 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   `shell-guard`, `lessons`) and prints `slot-check: ok <slot>` or
   `slot-check: refused: <rule id>: <reason>`. A reviewer reply is the `rigger.reviewer/1` JSON object,
   alone or in the reply's last fenced `json` block; unknown keys are ignored. A reviewer reply that
-  skips a test file `review_scope.py` lists for review is refused (`coverage-test-skipped`);
+  skips a test file, `.claude/rigger.json` or a rules file it names, when `review_scope.py` lists it
+  for review, is refused (`coverage-test-skipped`);
   `--session` (default `CLAUDE_CODE_SESSION_ID`) supplies the personal and company `review.paths`
   entries, without which a test file only they skip is refused.
 - `tools/review-scope/review_scope.py --base REV [--head REV] [--repo DIR] [--session ID] [--rules-out DIR]`:
   the files a review covers, one `<verdict><TAB><path>` line each: `review`, `review: binary added`
   (every verdict that starts with `review` is to review), or `skip: <reason>` (deleted, binary,
   lockfile, vendored, generated, or a `review.paths` skip). A file named like a test is never skipped
-  unless `review.paths` names it. Then `# review.paths: …` notices, one
+  unless `review.paths` names it; `.claude/rigger.json` and every rules file it names at base or at
+  head are always `review`, whatever a skip says. Then `# review.paths: …` notices, one
   `# rules <glob> <file> (level <n>)` line per `review.paths` entry that matched a path to review (a
   project rules file is read at base and written to `--rules-out`), and
   `# review-scope: files <n>, review <r>, skipped <s>`. `--session` defaults to
