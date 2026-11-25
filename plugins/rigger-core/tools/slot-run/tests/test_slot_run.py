@@ -59,6 +59,23 @@ class RunTests(SlotRunCase):
         self.assertEqual(scope, ["skip: reviewed elsewhere (review.paths)\ta.py", "skip: deleted\tb.py", "skip: deleted\tc.py",
                                  "review\td.py"])
 
+    def test_session_falls_back_to_the_environment_variable(self):
+        self.write_snapshot([command_row(self.command("ok"))])
+        args = ["--base", self.base, "--head", self.head]
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": SESSION}):
+            code, lines = self.run_slot(args)
+            self.assertEqual((code, lines[-1]), (0, "slot-run: ok reviewer 1 findings"), lines)
+            other, lines = self.run_slot(["--session", "other-session"] + args)  # the option wins
+            self.assertEqual((other, lines[-1]), (2, "slot-run: refused: no snapshot for this session; start a new session"), lines)
+
+    def test_a_dropped_review_paths_entry_prints_its_line(self):
+        config = {"effective": {"review": {"paths": {"a.py": {"skip": "reviewed elsewhere"}}}}, "sources": []}
+        self.write_snapshot([command_row(self.command("ok"))], config=config)
+        code, lines = self.run_slot()
+        self.assertEqual((code, lines[-1]), (0, "slot-run: ok reviewer 1 findings"), lines)
+        self.assertEqual(lines[:-2], ["# review.paths: snapshot entry a.py dropped: its level is unknown"], lines)
+        self.assertTrue(lines[-2].startswith("slot-run: output "), lines)
+
     def test_refused_output_is_refused(self):
         self.write_snapshot([command_row(self.command("bad-status"))])
         code, lines = self.run_slot()

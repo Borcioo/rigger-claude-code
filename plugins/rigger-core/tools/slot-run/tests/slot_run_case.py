@@ -167,6 +167,7 @@ class SlotRunCase(unittest.TestCase):
             GIT_COMMITTER_NAME="test",
             GIT_COMMITTER_EMAIL="test",
         )
+        env.pop("CLAUDE_CODE_SESSION_ID", None)  # --session falls back to it; a test sets it where it matters
         for name in [name for name in env if name.upper() == SETTING.upper()]:  # Windows keeps names upper case
             del env[name]
         patcher = mock.patch.dict(os.environ, env, clear=True)
