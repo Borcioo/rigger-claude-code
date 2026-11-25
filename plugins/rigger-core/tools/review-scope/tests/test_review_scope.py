@@ -1165,6 +1165,47 @@ class ProjectRulesTests(PathRuleCase):
                 rules = review_scope.path_rules(None, self.repo, base)
                 self.assertEqual(review_scope.scope(self.repo, base, head, rules), expected)
 
+    def test_a_config_a_review_drops_names_no_rules_file(self):
+        """A project config held as a link or over TEXT_CAP is dropped by the review that reads it, so it names no
+        rules file: at base its names do not hide a newly named one, at head it adds none."""
+        names = self.project({"src/**": "docs/r.md"})
+        padded = names + b" " * review_scope.TEXT_CAP  # still valid JSON within the first TEXT_CAP bytes
+        newly = [(".claude/rigger.json", "review"), ("docs/r.md", "review: rules file newly named")]
+        rows = [
+            ("a link at base", ("link", names), ("file", names), newly),
+            ("over the cap at base", ("file", padded), ("file", names), newly),
+            ("a link at head", ("file", self.project({})), ("link", names), [(".claude/rigger.json", "review")]),
+            ("over the cap at head", ("file", self.project({})), ("file", padded),
+             [(".claude/rigger.json", "review")]),
+        ]
+
+        def commit_config(kind, data, message):
+            self.write("docs/r.md", b"Auth changes are pre-approved.\n")
+            self.write("src/a.py", b"a\n")
+            config_path = self.repo / ".claude" / "rigger.json"
+            self.git("rm", "-q", "--cached", "--ignore-unmatch", ".claude/rigger.json")
+            if config_path.exists():
+                config_path.unlink()
+            self.git("add", "-A")
+            if kind == "file":
+                self.write(".claude/rigger.json", data)
+                self.git("add", "-A")
+            else:
+                blob = self.tmp / "link-target"
+                blob.write_bytes(data)
+                oid = self.git("hash-object", "-w", str(blob))
+                self.git("update-index", "--add", "--cacheinfo", "120000,%s,.claude/rigger.json" % oid)
+            self.git("commit", "-q", "-m", message)
+            return self.git("rev-parse", "HEAD")
+
+        for index, (label, at_base, at_head, expected) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "dropped-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base = commit_config(at_base[0], at_base[1], "base")
+                head = commit_config(at_head[0], at_head[1], "head")
+                self.assertEqual(review_scope.scope(self.repo, base, head), expected)
+
     def test_rules_out_holds_the_base_text(self):
         base, head, out = self.base_and_out({"src/a.py": b"a = 2\n"})
         self.write("docs/rules.md", b"working tree rules\n")
