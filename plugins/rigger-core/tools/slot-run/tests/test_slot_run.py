@@ -32,6 +32,7 @@ REAL_RUN = subprocess.run
 REAL_POPEN = subprocess.Popen
 SESSION = "session-1"
 SETTING = "NoDefaultCurrentDirectoryInExePath"
+SAFE_PATH = "PYTHONSAFEPATH"
 NOT_FOUND = "slot-run: refused: reviewer-cli not found on PATH (entries inside the repository are not searched)"
 BARE_OR_ABSOLUTE = "slot-run: refused: the program must be a bare name or an absolute path"
 # The scope of the fixture: a.py edited, b.py renamed to d.py (a delete and an add), c.py deleted.
@@ -499,6 +500,51 @@ class ChildLookupTests(SlotRunCase):
         self.run_rows("slot-run: refused: the command wrote no output file")
 
 
+class ChildModuleTests(SlotRunCase):
+    """F2: a Python command started from the repository root never imports a module the repository plants."""
+
+    def setUp(self):
+        super().setUp()
+        self.marker = self.tmp / "planted-module-ran"
+        (self.repo / "review_tool.py").write_bytes(("open(%r, 'w').close()\n" % str(self.marker)).encode("utf-8"))
+
+    def control(self, argv):
+        """Known answer: the same argv from the repository root with only strip_env imports the plant."""
+        env = {name: value for name, value in slot_run.strip_env(os.environ).items()
+               if name.upper() != "PYTHONSAFEPATH"}
+        proc = REAL_RUN(argv, cwd=str(self.repo), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue(self.marker.exists(), "the control did not import the planted module")
+        self.marker.unlink()
+
+    def test_python_never_imports_a_module_planted_in_the_repository_root(self):
+        version = REAL_RUN([sys.executable, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                           stdout=subprocess.PIPE, timeout=60).stdout.decode("ascii").strip()
+        sys.stderr.write("python %s ... " % version)
+        self.assertGreaterEqual(tuple(int(part) for part in version.split(".")), (3, 11), "PYTHONSAFEPATH is 3.11+")
+        rows = [("python -m", [sys.executable, "-m", "review_tool"]),
+                ("python -c", [sys.executable, "-c", "import review_tool"])]
+        for row, argv in rows:
+            with self.subTest(row=row):
+                self.control(argv)
+                self.write_snapshot([command_row(argv + ["{out}"])])
+                code, lines = self.run_slot()
+                self.assertFalse(self.marker.exists(), "the planted module ran")
+                self.assertEqual((code, lines[-1]), (2, "slot-run: refused: the command exited 1"), lines)
+                console = Path(self.output_path(lines)).parent / "console.txt"
+                self.assertIn(b"No module named", console.read_bytes())
+
+    def test_python_still_imports_its_own_modules_and_a_missing_one_still_errors(self):
+        rows = [("a standard module", [sys.executable, "-c", "import json"], "the command wrote no output file"),
+                ("a missing module", [sys.executable, "-m", "no_such_module_xyz"], "the command exited 1")]
+        for row, argv, reason in rows:
+            with self.subTest(row=row):
+                self.write_snapshot([command_row(argv + ["{out}"])])
+                code, lines = self.run_slot()
+                self.assertEqual((code, lines[-1]), (2, "slot-run: refused: " + reason), lines)
+
+
 class ChildEnvTests(SlotRunCase):
     def test_child_path_keeps_only_absolute_entries_outside_the_repository_and_the_cwd(self):
         outside = str(self.tmp / "outbin")
@@ -536,7 +582,16 @@ class ChildEnvTests(SlotRunCase):
     def test_strip_env_applies_to_the_child(self):
         env = slot_run.child_env({"CLAUDE_X": "1", "git_dir": "1", "RIGGER_MODULE_DIRS": "1", "OTHER": "1"},
                                  self.repo, str(self.repo))
-        self.assertEqual(sorted(key for key in env if key.upper() != SETTING.upper()), ["OTHER"])
+        self.assertEqual(sorted(key for key in env if key.upper() not in (SETTING.upper(), SAFE_PATH)), ["OTHER"])
+
+    def test_python_child_leaves_its_working_directory_off_sys_path(self):
+        # An empty value turns the setting off; Windows reads the name in any case.
+        rows = [{}, {SAFE_PATH: ""}] + ([{SAFE_PATH.lower(): "", "PythonSafePath": "0"}] if NT else [])
+        for given in rows:
+            with self.subTest(given=given):
+                env = slot_run.child_env(dict(given, OTHER="1"), self.repo, str(self.repo))
+                self.assertEqual({key: value for key, value in env.items() if key.upper() == SAFE_PATH},
+                                 {SAFE_PATH: "1"})
 
     @unittest.skipUnless(NT, "the setting is read by the Windows program lookup only")
     def test_windows_child_never_searches_its_working_directory(self):
