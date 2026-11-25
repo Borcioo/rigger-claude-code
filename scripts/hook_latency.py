@@ -574,7 +574,7 @@ def case_lessons_start(ctx: Context, h: Handler) -> List[Variant]:
 
 
 def case_core_check(ctx: Context, h: Handler) -> List[Variant]:
-    # The current core holds part.sh, so the check runs its whole path and stays silent.
+    # The current core holds rules/skills.md, so the check runs its whole path and stays silent.
     return [Variant("match", ctx.stdin(h, {}), silent)]
 
 

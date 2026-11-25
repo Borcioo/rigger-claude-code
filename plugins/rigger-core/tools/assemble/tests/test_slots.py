@@ -240,6 +240,16 @@ class ResolutionTests(SlotsTestCase):
                 self.assertEqual("mapper" in order, kept)
                 self.assertEqual(notices, [])
 
+    def test_a_slot_dropped_by_its_own_requires_fills_no_other_slot(self):
+        # The default shell-guard row requires os:windows: elsewhere it is left out, so a slot that requires it is
+        # left out too, and so is one that requires that slot in turn.
+        l3 = level({"mapper": {"requires": ["slot:shell-guard"]}, "worker": {"requires": ["slot:mapper"]}})
+        for os_name, kept in (("windows", True), ("linux", False), ("macos", False)):
+            with self.subTest(os=os_name):
+                _, order, _, notices = self.resolve(l3=l3, os_name=os_name)
+                self.assertEqual(("shell-guard" in order, "mapper" in order, "worker" in order), (kept,) * 3)
+                self.assertEqual(notices, [])
+
 
 REVIEW_HINT = "install rigger-review (claude plugin install rigger-review@rigger)"
 TESTING_HINT = ("install rigger-testing (claude plugin install rigger-testing@rigger); "

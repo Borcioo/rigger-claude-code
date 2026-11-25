@@ -1,18 +1,21 @@
 #!/bin/sh
 # SessionStart hook of every plugin whose rules rigger-core prints: one visible line when the installed
-# rigger-core has no assembler. `claude plugin update <plugin>@<marketplace>` alone can leave an older
+# rigger-core is older than the contract below. `claude plugin update <plugin>@<marketplace>` alone can leave an older
 # rigger-core in the cache, and that plugin's rules would then be missing with no word about it.
 # Usage: sh core_check.sh <plugin name>; no name prints nothing. The same file ships in each of those
 # plugins (tests/test_repo.py checks the copies are equal); the name keeps their hooks.json commands
 # and their lines apart.
 #
-# Contract with rigger-core across releases: a core is current when it holds tools/assemble/part.sh.
+# Contract with rigger-core across releases: a core is current when it holds rules/skills.md, the shared
+# Skill triggers table every module trigger row targets (since 0.6.0). A 0.5.0 core already holds
+# tools/assemble/part.sh but not that table, so the modules' trigger rows would vanish with no notice. Move
+# the probe to a newer core file whenever these plugins start to need one.
 #
 # It reads <config dir>/plugins/installed_plugins.json and checks only when this plugin runs from one
 # of its own installPath folders (a cache install), compared after pwd -P on both. A directory
 # marketplace runs hooks from its source while installPath is a stale snapshot, so there a current core
 # would read as old: no check. Every installPath whose last or second-to-last path element is
-# rigger-core counts as a core; the line prints when at least one exists and none holds part.sh. A
+# rigger-core counts as a core; the line prints when at least one exists and none holds rules/skills.md. A
 # missing or unreadable file prints nothing. Known gaps: a current core loaded with --plugin-dir next
 # to an old cached core still prints the line, and when two scopes list rigger-core any current entry
 # keeps it silent, whichever one the session loaded. Keep this file POSIX (dash); it needs no Python.
@@ -72,7 +75,7 @@ while read -r kind path; do
   case $kind in
     core)
       cores=$((cores + 1))
-      [ ! -f "$path/tools/assemble/part.sh" ] || current=yes
+      [ ! -f "$path/rules/skills.md" ] || current=yes
       ;;
     mine)
       real=$(cd "$path" 2>/dev/null && pwd -P) || continue
