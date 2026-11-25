@@ -30,12 +30,14 @@ An earlier block that the check must not read:
       "src/app.txt",
       "src/gone.txt",
       "src/new_name.txt",
-      "src/old_name.txt"
+      "src/old_name.txt",
+      "tests/test_app.txt"
     ],
     "reviewed": [
       "data.bin",
       "src/app.txt",
-      "src/new_name.txt"
+      "src/new_name.txt",
+      "tests/test_app.txt"
     ],
     "skipped": [
       {
@@ -83,12 +85,14 @@ An earlier block that the check must not read:
       "src/app.txt",
       "src/gone.txt",
       "src/new_name.txt",
-      "src/old_name.txt"
+      "src/old_name.txt",
+      "tests/test_app.txt"
     ],
     "reviewed": [
       "data.bin",
       "src/app.txt",
-      "src/new_name.txt"
+      "src/new_name.txt",
+      "tests/test_app.txt"
     ],
     "skipped": [
       {

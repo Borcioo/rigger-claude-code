@@ -30,7 +30,7 @@ def scope_coverage(path):
         for line in handle.read().decode("utf-8").splitlines():
             verdict, name = line.split("\t", 1)
             in_scope.append(name)
-            if verdict == "review":
+            if verdict.startswith("review"):
                 reviewed.append(name)
             else:
                 skipped.append({"file": name, "reason": verdict[len("skip: "):]})
