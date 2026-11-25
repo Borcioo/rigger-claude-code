@@ -18,11 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "plugins" / "rigger-core"
 ASSEMBLE = CORE / "tools" / "assemble" / "assemble.py"
 MANIFEST = "rigger-module.json"
-MODULES = 9
+MODULES = 10
 SUMMARY = re.compile(r"^# check: modules (\d+), rules files (\d+), findings 0$")
 SLOT_CHECK_DIR = CORE / "tools" / "slot-check"
 ASSEMBLE_DIR = CORE / "tools" / "assemble"
 WINDOWS = ROOT / "plugins" / "rigger-windows"
+SHELLWISE = ROOT / "plugins" / "rigger-shellwise"
 LESSONS = ROOT / "plugins" / "rigger-lessons"
 # Written by the test into the reviewer's head tree: the sweep refuses a committed binary file.
 HEAD_EXTRA = {"reviewer": {"data.bin": b"\x00\x01binary\x00\xff\n"}}
@@ -298,6 +299,15 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(text.splitlines()[0].endswith(": 2 entries"), text)
         verdict = slot_check.check("lessons", text)
         self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
+
+    def test_shellwise_filler_manifest(self):
+        # the hook arrives with a later task; the rule checker key is added by Task 18
+        manifest = import_from(ASSEMBLE_DIR, "manifest")
+        module = manifest.load_manifest(SHELLWISE, None, "repository")
+        self.assertEqual(module.fills, "shell-guard")
+        self.assertEqual(module.failure_mode, "closed")
+        self.assertNotIn("rule_checker", module.provides["shell-guard"])
+        self.assertEqual(module.tests.get("contract"), ["shell-guard"])
 
     def test_testing_filler_ships_the_commit_guards(self):
         # D71: the default testing filler, found through the level-1 defaults and the manifest that provides it,

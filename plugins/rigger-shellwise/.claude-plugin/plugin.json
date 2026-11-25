@@ -1,0 +1,13 @@
+{
+  "name": "rigger-shellwise",
+  "description": "A pinned shellwise binary as the shell guard on Windows, macOS and Linux",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  },
+  "dependencies": [
+    "rigger-core"
+  ]
+}
