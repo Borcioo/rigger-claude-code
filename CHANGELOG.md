@@ -40,6 +40,14 @@ format. Releases are tagged `v<version>`.
 
 ### Changed
 
+- **Command slots run with `PYTHONSAFEPATH=1`.** A slot command started as `python -m <tool>` or
+  `python -c` no longer imports a module a repository plants at its root (Python 3.11+). A script's
+  own folder is off `sys.path` too: a reviewer script that imports a sibling module adds its folder
+  to `sys.path` itself.
+- **A module plugin now checks for a rigger-core that holds `rules/skills.md`.** An 0.5.0 core next
+  to newer modules lost the Skill triggers table without a notice; it now gets the "rigger-core is
+  older than" line.
+- **A slot dropped by its own `requires` no longer satisfies another slot's `slot:` requirement.**
 - **The reviewer and the testing skill moved out of rigger-core.** The `reviewer` slot defaults to
   `rigger-review:reviewer` and the `testing` slot to `rigger-testing:testing`. The reviewer agent and
   its contract fixtures come with the review module; the `testing` skill, the commit-time weak-test

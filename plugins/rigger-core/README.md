@@ -161,7 +161,13 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   program the command starts by bare name through the operating system's lookup is never one the
   repository holds (known limit: a lookup the command's own code does that searches the working
   directory first, as Python 3.11's `shutil.which` and npm's `which` do on Windows, can still find a
-  program in the repository root; trust only a command whose lookups you know). It stops the whole process tree past
+  program in the repository root; trust only a command whose lookups you know). The command also runs
+  with `PYTHONSAFEPATH=1`, so Python 3.11+ started with `-m` or `-c` never imports a module from the
+  repository root; a script's own folder is left off `sys.path` too, so a reviewer script that imports
+  a sibling module adds its folder to `sys.path` itself (known limit: an interpreter that resolves
+  modules from the working directory, Python before 3.11 among them, can still load the repository's
+  code, and on Windows the DLL search of the command's process can still read the working
+  directory). It stops the whole process tree past
   900 s or 1,000,000 bytes of console output, when a process the command started still holds the
   console 5 s after the command exits (`child process left running`), and after every run (known limit:
   on POSIX a process the command detaches with `setsid` leaves the tree and can outlive the run). It then
