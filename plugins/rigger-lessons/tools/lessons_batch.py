@@ -373,7 +373,8 @@ def render_rules(config: Path, run_dir: Path, env: dict, log) -> Path | None:
     counted: past RENDER_TIMEOUT seconds or RENDER_CAP bytes the whole process tree is stopped, and the call
     returns within RENDER_TIMEOUT plus twice RENDER_KILL_WAIT (plus the stop itself) even when a process outside
     the tree still holds the pipe. Known limit: on Windows a grandchild whose parent has already exited is not
-    in the tree `taskkill /T` finds, so it outlives the call. The hook's
+    in the tree `taskkill /T` finds, so it outlives the call. It runs from run_dir, a fresh temp folder, so the
+    folder the batch started in (a repository, perhaps) never stands in for the project. The hook's
     CLAUDE_PLUGIN_ROOT is left out of `env`: it names rigger-lessons, which the assembler would take for the core."""
     def unavailable(reason):
         log("rendered rules: unavailable (%s)" % reason)
@@ -388,7 +389,8 @@ def render_rules(config: Path, run_dir: Path, env: dict, log) -> Path | None:
     deadline = time.monotonic() + timeout
     try:
         proc = subprocess.Popen([sys.executable, "-I", "-X", "utf8", str(script), "--render"], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, **extra)
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=str(run_dir),
+                                **extra)
     except OSError as exc:
         return unavailable("start failed (%s)" % type(exc).__name__)
     chunks, size = [], [0]

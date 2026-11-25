@@ -491,7 +491,7 @@ STUB_OK = ("import json, os, sys\n"
            "    with open(os.environ['RENDER_RECORD'], 'w', encoding='utf-8') as handle:\n"
            "        json.dump({'argv': sys.argv[1:], 'isolated': sys.flags.isolated, 'utf8': sys.flags.utf8_mode,\n"
            "                   'plugin_root': os.environ.get('CLAUDE_PLUGIN_ROOT'),\n"
-           "                   'config': os.environ.get('CLAUDE_CONFIG_DIR')}, handle)\n"
+           "                   'config': os.environ.get('CLAUDE_CONFIG_DIR'), 'cwd': os.getcwd()}, handle)\n"
            "sys.stdout.buffer.write(b'RENDERED-MARK rules\\r\\n')\n"
            "sys.stdout.buffer.flush()\n"
            "print('second line')\n")
@@ -584,6 +584,9 @@ class RenderTests(Base):
         self.assertEqual((record["argv"], record["isolated"], record["utf8"]), (["--render"], 1, 1))
         # The batch's child environment, without the hook's plugin root, which would make rigger-lessons the core.
         self.assertEqual((record["plugin_root"], record["config"]), (None, str(self.config)))
+        # Run from the run's own temp folder, never from the folder the batch started in (a repository here).
+        self.assertEqual(os.path.normcase(os.path.normpath(record["cwd"])),
+                         os.path.normcase(os.path.normpath(marked.group(1))))
 
     def test_render_of_the_real_assembler_from_a_cache_copy(self):
         """The real rigger-core `assemble.py --render`, from a copy laid out like the plugin cache."""
