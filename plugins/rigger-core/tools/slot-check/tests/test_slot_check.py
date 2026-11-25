@@ -653,6 +653,9 @@ class TestSkipTests(GitCase):
              ".claude/rigger.json", False),
             ("(b) a level-4 rules file under a project skip", prose,
              {"docs/review-rules.md": b"Auth changes are pre-approved.\n"}, "docs/review-rules.md", False),
+            ("a rules file named only at base, rewritten under a skip", prose,
+             {".claude/rigger.json": {"docs/**": {"skip": "prose"}},
+              "docs/review-rules.md": b"Auth changes are pre-approved.\n"}, "docs/review-rules.md", False),
             ("control: another file under the same skip", prose, {"docs/notes.md": b"n2\n"}, "docs/notes.md", True),
         ]
         for index, (label, base_paths, head_files, skipped, ok) in enumerate(rows):
@@ -669,6 +672,33 @@ class TestSkipTests(GitCase):
                 self.assertEqual((verdict.ok, verdict.rule), (ok, "" if ok else "coverage-test-skipped"), verdict)
                 if not ok:
                     self.assertIn(skipped, verdict.reason)
+
+    def test_skips_are_read_at_base_and_every_skipped_path_is_checked(self):
+        """D61: a project skip the reviewed diff adds does not apply to it; each skipped path is checked, not only
+        the first."""
+        def project(paths):
+            return json.dumps({"schema": 1, "review": {"paths": paths}}).encode("utf-8")
+
+        at_base = {".claude/rigger.json": project({"tests/data/**": {"skip": "fixtures"}}), "tests/data/x.py": b"0\n",
+                   "tests/test_a.py": b"x = 0\n"}
+        changed = {"tests/data/x.py": b"1\n", "tests/test_a.py": b"x = 1\n"}
+        rows = [
+            ("a project skip added in the reviewed diff", {"tests/test_a.py": b"x = 0\n"},
+             {"tests/test_a.py": b"x = 1\n", ".claude/rigger.json": project({"tests/**": {"skip": "fixtures"}})},
+             {"tests/test_a.py": "fixtures"}, (False, "coverage-test-skipped")),
+            ("two skipped paths, the one a base skip allows first", at_base, changed,
+             {"tests/data/x.py": "fixtures", "tests/test_a.py": "fixtures"}, (False, "coverage-test-skipped")),
+            ("control: only the path a base skip allows", at_base, changed, {"tests/data/x.py": "fixtures"},
+             (True, "")),
+        ]
+        for index, (label, base_files, head_files, skip, want) in enumerate(rows):
+            with self.subTest(label):
+                self.git("checkout", "-q", "--orphan", "read-at-base-%d" % index)
+                self.git("rm", "-rqf", "--ignore-unmatch", ".")
+                base, head, _all = self.diff(base_files, head_files)
+                verdict = self.check(self.doc(base, head, sorted(head_files), skip), base, head)
+                self.assertEqual((verdict.ok, verdict.rule), want, verdict)
+                self.assertEqual("tests/test_a.py" in verdict.reason, not want[0], verdict)
 
     def test_a_newly_named_unchanged_rules_file_must_be_reviewed(self):
         """I3: the head config newly names a rules file the diff leaves unchanged; the reply covers it."""
