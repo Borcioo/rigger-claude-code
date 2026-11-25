@@ -61,8 +61,10 @@ LOCKFILES = frozenset(("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", 
                        "composer.lock", "Cargo.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "Gemfile.lock",
                        "go.sum"))
 VENDOR_SEGMENTS = frozenset(("vendor", "node_modules", "third_party", "third-party"))
-TEST_SEGMENTS = frozenset(("test", "tests", "__tests__", "spec"))
-TEST_NAMES = ("test_*", "*_test.*", "*.test.*", "*.spec.*")
+TEST_SEGMENTS = frozenset(("test", "tests", "__tests__", "spec"))  # compared in lower case
+TEST_SEGMENT_ENDS = (".tests", ".test")  # a .NET test project, compared in lower case
+TEST_NAMES = ("test_*", "*_test.*", "*.test.*", "*.spec.*", "*_spec.*", "*.tests.*", "test-*", "*Tests.*",
+              "*Test.*")  # compared case-sensitively
 REGULAR = (b"100644", b"100755")
 PROJECT_CONFIG = ".claude/rigger.json"
 OBJECT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
@@ -414,7 +416,8 @@ def _test_name(path):
 
 
 def _test_folder(path):
-    return any(segment in TEST_SEGMENTS for segment in path.split("/")[:-1])
+    return any(segment.lower() in TEST_SEGMENTS or segment.lower().endswith(TEST_SEGMENT_ENDS)
+               for segment in path.split("/")[:-1])
 
 
 def is_test_file(path):

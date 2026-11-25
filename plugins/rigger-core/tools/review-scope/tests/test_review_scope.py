@@ -868,6 +868,13 @@ class SkipReasonTests(GitCase):
             ("spec/a.rb", True), ("latest.py", False), ("contest.py", False), ("testing/a.py", False),
             ("tests_x/a.py", False), ("a/tests", False), ("Test_x.py", False), ("xtest.py", False),
             ("src/protest_x.py", False),
+            # M2: a test folder in any case, a .NET test project, and the spec, tests, test- and Tests names
+            ("Tests/a.swift", True), ("SPEC/a.rb", True), ("App.Tests/a.cs", True), ("App.Test/a.cs", True),
+            ("lib/login_spec.rb", True), ("src/login.tests.ts", True), ("src/test-login.js", True),
+            ("src/LoginTests.swift", True), ("src/LoginTest.java", True),
+            ("Tests/AppTests/LoginTests.swift", True), ("App.Tests/LoginTests.cs", True), ("src/latest.js", False),
+            ("src/Contest.py", False), ("src/attest-x.js", False), ("App.Testing/a.cs", False),
+            ("src/Tests", False), ("src/spec_x.rb", False),
         ]
         for path, expected in rows:
             with self.subTest(path=path):
