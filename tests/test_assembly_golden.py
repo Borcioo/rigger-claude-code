@@ -29,7 +29,7 @@ import golden_baseline as gb  # noqa: E402
 WORK_PLUGINS = gb.ROOT / "plugins"
 MARKET = "rigger"
 WINDOWS_MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-windows",
-                   "rigger-panel", "rigger-review")
+                   "rigger-panel", "rigger-review", "rigger-testing")
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
 SKIPPED_AGENTS = ("Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper")
@@ -74,7 +74,7 @@ SLOT_ROWS = [  # D36, written by hand: every slot at its default, superpowers en
     b"| worker | agent | rigger-core:worker | by-rule | default |\n",
     b"| implementer | agent | rigger-core:implementer | pinned | default |\n",
     b"| mapper | agent | rigger-core:mapper | pinned | default |\n",
-    b"| testing | skill | rigger-core:testing | \xe2\x80\x94 | default |\n",
+    b"| testing | skill | rigger-testing:testing | \xe2\x80\x94 | default |\n",
     b"SHELL-GUARD",
     b"| lessons | hook | rigger-lessons (failure mode: undeclared) | \xe2\x80\x94 | default |\n",
     b"| process.brainstorm | skill | superpowers:brainstorming | \xe2\x80\x94 | default |\n",
@@ -145,6 +145,18 @@ def _review_row_joins(scenario, roots, pieces) -> bool:
     return True
 
 
+def _testing_cell(scenario, roots, pieces) -> bool:
+    """The testing slot's cell in the merged table names the testing module's skill (phase 3a D57)."""
+    at = _piece(pieces, "rigger-core", SKILLS)
+    if at is None or "rigger-testing" not in scenario.modules():
+        return False
+    key, text = pieces["rigger-core"][at]
+    if text.count(b"`rigger-core:testing`") != 1:
+        raise AssertionError("the merged table names rigger-core:testing other than once: %r" % text[:300])
+    pieces["rigger-core"][at] = (key, text.replace(b"`rigger-core:testing`", b"`rigger-testing:testing`"))
+    return True
+
+
 def _windows_table_goes(scenario, roots, pieces) -> bool:
     at = _piece(pieces, "rigger-windows", WINDOWS_TABLE)
     if at is None:
@@ -197,6 +209,7 @@ def _plans_wording(scenario, roots, pieces) -> bool:
 ALLOWED = [
     ("the rigger-rules table moves to rigger-core and merges the three tables", _merged_table),
     ("the reviewer slot names the review module, whose trigger row joins the merged table", _review_row_joins),
+    ("the testing slot names the testing module", _testing_cell),
     ("the rigger-windows table section goes", _windows_table_goes),
     ("the rigger-wp section keeps its sentence under a new heading", _wp_sentence),
     ("rigger-core gains ## Slots for the main session", _slots_section),
@@ -658,6 +671,9 @@ class GoldenTest(unittest.TestCase):
                              ("rigger-wp", "wp-skills.md")):
             lines = (gb.FIXTURE / "plugins" / module / "rules" / name).read_bytes().splitlines(True)
             frozen[module] = [line for line in lines if line.startswith(b"| ") and line != b"| Before | Skill |\n"]
+        # The testing slot's cell names the testing module (ALLOWED).
+        frozen["rigger-rules"] = [line.replace(b"`rigger-core:testing`", b"`rigger-testing:testing`")
+                                  for line in frozen["rigger-rules"]]
         self.assertEqual([len(frozen[m]) for m in ("rigger-rules", "rigger-windows", "rigger-wp")], [8, 3, 2])
         every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"] + [REVIEW_ROW]
         core = [row for row in frozen["rigger-rules"] if b"`superpowers:" not in row]

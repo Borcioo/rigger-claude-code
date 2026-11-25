@@ -29,16 +29,23 @@ Each case also has a `tool_used` grader on `Skill` (`arm: with-only`) next to th
 | add-commit-push-chain | `git add` aborted on a stale pathspec and the push went out anyway | `git-workflow` (Commits) | chains add, commit and push with `&&` and reads `git status --short` first | `regex` | native |
 | clean-merge-claim | a "merges cleanly" claim hid a test the merge broke | `git-workflow` (Branches) | backs a "merges cleanly" claim with `git merge-tree` output | `regex` | native |
 | separate-agent-subagent | "a separate agent" was read as a new session | `orchestrating-subagents` | reads "a separate agent" as a subagent, not a new session | `regex` | native |
-| testing-skill-loads | test guidance lives only in the on-demand skill, so a missed load drops it | `testing` | loads `testing` before reviewing and rewriting a test, and asserts an exact value (two graders: the expected value, an equality assertion; a parametrized table passes) | `regex` | native |
 
-`add-commit-push-chain` is the negative control of `testing-skill-loads`: its second `tool_used`
-grader (`max: 0`) fails when `testing` loads on a git question. The proof that the Skill tool was
-live is `testing-skill-loads` loading `testing` in the same suite run, not the case's own
-`git-workflow` grader (that one measures whether `git-workflow` triggers). Run the suite with
-`--ablation none` as one result and read it with `eval_summary.py --with-only`: the control's
-`no-testing-skill` count counts only when the same output shows `testing-skill-loads | skill` above 0.
-The suite loads `rigger-core` alone, so the skill must load from its own description; the
-`rigger-rules` skills table is not in these sessions.
+## rigger-testing
+
+Both cases grade the `Skill` tool with `tool_used` (`arm: with-only`).
+
+| case | failure it came from | skill meant to prevent it | what a correct run does | grader type | tag |
+|---|---|---|---|---|---|
+| testing-skill-loads | test guidance lives only in the on-demand skill, so a missed load drops it | `testing` | loads `testing` before reviewing and rewriting a test, and asserts an exact value (two graders: the expected value, an equality assertion; a parametrized table passes) | `regex` | native |
+| git-question-no-testing | the negative control of `testing-skill-loads`: a skill that loads on every question proves nothing | `testing` (its description) | answers a git question (the `add-commit-push-chain` prompt of rigger-core) without loading `testing` | `tool_used` (`max: 0`) | native |
+
+`git-question-no-testing` is the negative control of `testing-skill-loads`: its `tool_used` grader
+(`max: 0`) fails when `testing` loads on a git question. The proof that the Skill tool was live is
+`testing-skill-loads` loading `testing` in the same suite run. Run the suite with `--ablation none`
+as one result and read it with `eval_summary.py --with-only`: the control's `no-testing-skill` count
+counts only when the same output shows `testing-skill-loads | skill` above 0. The suite loads
+`rigger-testing` with `rigger-core` as its dependency (staged by `scripts/eval_stage.py`), so the
+skill must load from its own description; the `rigger-rules` skills table is not in these sessions.
 
 ## rigger-windows
 

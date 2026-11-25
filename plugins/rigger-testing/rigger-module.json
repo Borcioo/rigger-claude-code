@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "name": "rigger-testing",
+  "layer": "general",
+  "fills": "testing",
+  "provides": {
+    "testing": { "kind": "skill", "target": "rigger-testing:testing" }
+  },
+  "rules": [],
+  "triggers": [],
+  "tests": {
+    "paths": [
+      "tools/*/tests/",
+      "tests/"
+    ],
+    "contract": []
+  }
+}

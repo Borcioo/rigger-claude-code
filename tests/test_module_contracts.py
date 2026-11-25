@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "plugins" / "rigger-core"
 ASSEMBLE = CORE / "tools" / "assemble" / "assemble.py"
 MANIFEST = "rigger-module.json"
-MODULES = 8
+MODULES = 9
 SUMMARY = re.compile(r"^# check: modules (\d+), rules files (\d+), findings 0$")
 SLOT_CHECK_DIR = CORE / "tools" / "slot-check"
 ASSEMBLE_DIR = CORE / "tools" / "assemble"
@@ -298,6 +298,24 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(text.splitlines()[0].endswith(": 2 entries"), text)
         verdict = slot_check.check("lessons", text)
         self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
+
+    def test_testing_filler_ships_the_commit_guards(self):
+        # D71: the default testing filler, found through the level-1 defaults and the manifest that provides it,
+        # ships the commit-time weak-test guard on both shells with these exact `if` filters.
+        defaults = json.loads((CORE / "rigger-defaults.json").read_bytes().decode("utf-8"))
+        target = defaults["slots"]["testing"]["target"]
+        plugin, skill = target.split(":")
+        roots = [d for d in module_dirs()
+                 if json.loads((d / MANIFEST).read_bytes().decode("utf-8")).get("name") == plugin]
+        self.assertEqual(len(roots), 1, "modules named %s" % plugin)
+        data = json.loads((roots[0] / MANIFEST).read_bytes().decode("utf-8"))
+        self.assertEqual(data.get("fills"), "testing")
+        self.assertEqual(data.get("provides", {}).get("testing"), {"kind": "skill", "target": target})
+        self.assertTrue((roots[0] / "skills" / skill / "SKILL.md").is_file(), target)
+        hooks = json.loads((roots[0] / "hooks" / "hooks.json").read_bytes().decode("utf-8"))["hooks"]
+        guards = sorted((group.get("matcher"), hook.get("if")) for group in hooks.get("PreToolUse", [])
+                        for hook in group.get("hooks", []) if "weak_test_guard.py" in hook.get("command", ""))
+        self.assertEqual(guards, [("Bash", "Bash(*commit*)"), ("PowerShell", "PowerShell(*commit*)")])
 
 
 if __name__ == "__main__":
