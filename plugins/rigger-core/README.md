@@ -193,7 +193,7 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   the files a review covers, one `<verdict><TAB><path>` line each: `review`, `review: binary added`,
   `review: rules file newly named` (a rules file the head's `.claude/rigger.json` names and the base's
   does not, listed even when the diff leaves it unchanged: it has no hunk, so read the whole file;
-  `(link)`, `(not a regular file)` or `(over <n> bytes)` after it means a later review drops that file,
+  `(link)`, `(not a regular file)`, `(object missing)` or `(over <n> bytes)` after it means a later review drops that file,
   so it is not to be opened; every verdict that starts with `review` is to review), or `skip: <reason>` (deleted, binary,
   lockfile, vendored, generated, or a `review.paths` skip). A file named like a test is never skipped
   unless `review.paths` names it; `.claude/rigger.json` and every rules file it names at base or at

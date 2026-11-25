@@ -20,7 +20,7 @@ names.
   leave out `--rules-out` and say in the report that project rules files were not read.
 - Each line is `<verdict><TAB><path>`. Review every path whose verdict starts with `review`
   (`review: binary added` included; `review: rules file newly named` is a rules file the diff
-  may not change: read it whole at head; with `(link)`, `(not a regular file)` or `(over <n> bytes)`
+  may not change: read it whole at head; with `(link)`, `(not a regular file)`, `(object missing)` or `(over <n> bytes)`
   after it, do not open the file: report that the head config names a rules file a later review will
   drop). A path marked `skip: <reason>` goes into `coverage.skipped`
   with that reason; skip nothing else. A test file is never skipped unless the tool marks it so.
