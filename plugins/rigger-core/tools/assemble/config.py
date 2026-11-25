@@ -2,7 +2,8 @@
 
 `triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4), `trust` (level 3) and `review`
 (levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base), `lessons` (levels 2-3, read
-by rigger-lessons' lint) and `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py) apply.
+by rigger-lessons' lint), `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py) and `load` (levels
+1-4, read by mem_check.py) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -33,10 +34,14 @@ KEYS = {
     "shell_guard": (dict, frozenset((3,))),
     "lessons": (dict, frozenset((2, 3))),
     "turn_guard": (dict, frozenset((2, 3, 4))),
+    "load": (dict, ALL_LEVELS),
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
-ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons", "turn_guard"))
+ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons", "turn_guard",
+                             "load"))
+LOAD_MIN_FREE_GB = (0, 1024)  # load.min_free_gb, a number (D80)
+LOAD_HEAVY_AGENTS = (1, 8)  # load.max_heavy_agents, a whole number (D80)
 REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
 REVIEW_TEXT_MAX = 200  # characters of a review.paths glob or skip reason
 LESSONS_PATHS_MAX = 50  # lessons.allowed_paths globs per config level (D97), each at most REVIEW_TEXT_MAX
@@ -246,6 +251,31 @@ def _turn_guard(value: dict, where: str) -> Tuple[dict, List[str]]:
     return clean, notices
 
 
+def _load(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """load.min_free_gb and load.max_heavy_agents (D80), read by mem_check.py; a bad value is dropped, so its
+    per-system default stays. Which level may loosen a limit is mem_check's rule, not this shape check."""
+    clean = {}
+    notices = []
+    for key, item in value.items():
+        if key == "min_free_gb":
+            low, high = LOAD_MIN_FREE_GB
+            good = item is None or (isinstance(item, (int, float)) and not isinstance(item, bool)
+                                    and low <= item <= high)
+            what = "a number from %d to %d" % LOAD_MIN_FREE_GB
+        elif key == "max_heavy_agents":
+            low, high = LOAD_HEAVY_AGENTS
+            good = item is None or (_is_int(item) and low <= item <= high)
+            what = "a whole number from %d to %d" % LOAD_HEAVY_AGENTS
+        else:
+            notices.append("rigger: config %s load key %s unknown; ignored" % (where, _shown(key)))
+            continue
+        if good:
+            clean[key] = item
+        else:
+            notices.append("rigger: config %s load.%s must be %s; ignored" % (where, key, what))
+    return clean, notices
+
+
 def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
     """The keys of one level's data that its level allows, each of the right shape, and a notice per drop."""
     clean = {}
@@ -290,6 +320,9 @@ def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]
             notices.extend(found)
         if key == "turn_guard":
             value, found = _turn_guard(value, where)
+            notices.extend(found)
+        if key == "load":
+            value, found = _load(value, where)
             notices.extend(found)
         clean[key] = value
     return clean, notices
