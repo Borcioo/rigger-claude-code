@@ -1094,7 +1094,11 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
     except OSError:
         return []
     effective = found.resolved.effective if found.resolved is not None else {}
-    shipped = {row.before: row.id for row in collect_rows(modules, effective)}
+    shipped_rows = collect_rows(modules, effective)
+    shipped = {row.before: row.id for row in shipped_rows}
+    by_load = {}  # type: Dict[tuple, List[str]]
+    for row in shipped_rows:
+        by_load.setdefault(tuple(row.load), []).append(row.id)
     rows = []  # type: List[_Row]
     for name in names:
         try:
@@ -1106,7 +1110,10 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
         stem = slug(name[:-len(".md")]) or "rules-d"
         triggers = {}
         for number, (before, load) in enumerate(table, 1):
-            row_id = shipped.get(before, "personal.%s-%d" % (stem, number))
+            # A shipped row whose wording changed is found by its load list, when only one row has that list.
+            same_load = by_load.get(tuple(load), [])
+            fallback = same_load[0] if len(same_load) == 1 else "personal.%s-%d" % (stem, number)
+            row_id = shipped.get(before, fallback)
             triggers[row_id] = {"before": before, "load": load}
         text = json.dumps({"triggers": triggers}, ensure_ascii=False)
         text = _shown(text, len(text) + 1)  # one line: _shown writes a control character as a JSON \u escape

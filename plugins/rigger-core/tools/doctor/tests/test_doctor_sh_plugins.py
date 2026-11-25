@@ -537,6 +537,20 @@ class DoctorShTests(DoctorShCase):
         })
         self.assertEqual(rows["rigger-core.debugging"]["before"], "a bug, a failing test or unexpected behaviour")
 
+    def test_a_row_whose_skills_two_shipped_rows_load_keeps_a_personal_id(self):
+        """A rules.d row whose `before` matches no shipped row takes a shipped id only by a load list one row has."""
+        self.personal_config({"triggers": {"personal.twin": {"before": "UI words of my own",
+                                                             "load": ["rigger-core:web-ui-traps"]}}})
+        self.write_file(self.config / "rigger" / "rules.d" / "mine.md", (
+            "| Before | Skill |\n|---|---|\n| old UI words | `rigger-core:web-ui-traps` |\n"
+            "| old git words | `rigger-core:git-workflow` |\n"))
+        result = self.run_assembly()
+        text = self.table_json(result.checks["rules-d-table rules.d/mine.md"][1], self.config / "rigger" / "config.json")
+        self.assertEqual(json.loads(text)["triggers"], {
+            "personal.mine-1": {"before": "old UI words", "load": ["rigger-core:web-ui-traps"]},
+            "rigger-core.git-workflow": {"before": "old git words", "load": ["rigger-core:git-workflow"]},
+        })
+
     def test_empty_slot_rows_say_why_above_level_one(self):
         self.personal_config({"slots": {"testing": None, "lessons": {"kind": "hook", "target": "rigger-rules"}}})
         result = self.run_assembly()

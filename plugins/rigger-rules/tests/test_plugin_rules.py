@@ -457,6 +457,40 @@ class TestingSkillTriggerTests(unittest.TestCase):
                                      "  Load BEFORE writing, changing or reviewing tests or a red run: a feature or bugfix test, a test"])
 
 
+def flat_file(path):
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+class PortedLessonTests(unittest.TestCase):
+    """General lessons ported from the source harness (D99), one pin each."""
+
+    def test_the_lo_fi_trap_moved_to_the_ui_skill_and_its_trigger(self):
+        skill = CORE / "skills" / "web-ui-traps" / "SKILL.md"
+        description = " ".join(skill.read_text(encoding="utf-8").split("\n---", 1)[0].split())
+        self.assertIn("lo-fi screens", description)
+        self.assertIn("**Lo-fi means no styling, not no design.** Design each screen from its role's task and "
+                      "decisions (what they must do, what they see, what comes next), with the UI that task needs: "
+                      "statuses, filters, history, empty and error states.", flat_file(skill))
+        self.assertNotIn("lo-fi", flat_file(PLUGINS / "rigger-rules" / "rules" / "plans-main.md").lower())
+        rows = [row for row in load_manifest(CORE)["triggers"] if row["id"] == "rigger-core.web-ui-traps"]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("lo-fi screens", rows[0]["before"])
+
+    def test_an_override_table_is_tested_where_it_differs_from_the_default(self):
+        self.assertIn("A table that overrides a default rule (holidays, closures) is tested only with inputs whose "
+                      "result differs from the default (a holiday on a weekday), so deleting the table turns it red.",
+                      flat_file(TESTING_SKILL))
+
+    def test_a_scratch_copy_of_a_worktree_drops_its_git_pointer(self):
+        self.assertIn("A scratch copy of a worktree deletes its `.git` first: the copied pointer makes git act on "
+                      "the real worktree.", flat_file(TESTING_SKILL))
+
+    def test_a_reviewer_re_measures_a_sample_of_visual_measurements(self):
+        self.assertIn("recount an agent's total, and have a read-only reviewer re-measure a sample of a builder's "
+                      "own visual measurements, before relaying it.",
+                      flat_file(CORE / "skills" / "orchestrating-subagents" / "SKILL.md"))
+
+
 class RulesSizeTests(unittest.TestCase):
     def test_rules_text_stays_under_the_ceiling(self):
         root = Path(os.environ.get("RIGGER_RULES_ROOT") or PLUGINS)
