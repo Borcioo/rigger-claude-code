@@ -524,10 +524,13 @@ class ChildModuleTests(SlotRunCase):
         sys.stderr.write("python %s ... " % version)
         if tuple(int(part) for part in version.split(".")) < (3, 11):
             self.skipTest("python %s ignores PYTHONSAFEPATH (3.11+): the documented known limit" % version)
-        rows = [("python -m", [sys.executable, "-m", "review_tool"]),
-                ("python -c", [sys.executable, "-c", "import review_tool"])]
-        for row, argv in rows:
-            with self.subTest(row=row):
+        rows = [("python -m", [sys.executable, "-m", "review_tool"], None),
+                ("python -c", [sys.executable, "-c", "import review_tool"], None),
+                ("python -m, inherited PYTHONPATH '.'", [sys.executable, "-m", "review_tool"], "."),
+                ("python -m, inherited PYTHONPATH with a trailing separator", [sys.executable, "-m", "review_tool"],
+                 str(self.tmp / "outlib") + os.pathsep)]
+        for row, argv, inherited in rows:
+            with self.subTest(row=row), mock.patch.dict(os.environ, {"PYTHONPATH": inherited} if inherited else {}):
                 self.control(argv)
                 self.write_snapshot([command_row(argv + ["{out}"])])
                 code, lines = self.run_slot()
@@ -579,6 +582,26 @@ class ChildEnvTests(SlotRunCase):
                                  self.repo, str(self.repo))
         self.assertEqual([key for key in env if key.upper() == "PATH"], [])
         self.assertEqual(env["OTHER"], "1")
+
+    def test_child_pythonpath_keeps_only_absolute_entries_outside_the_repository_and_the_cwd(self):
+        """I2: Python reads an empty or `.` PYTHONPATH entry as the cwd, which is the repository root."""
+        outside = str(self.tmp / "outlib")
+        rows = [
+            ("a dot entry", ".", outside),
+            ("a trailing separator (an empty entry)", "", outside),
+            ("a relative entry", "lib", outside),
+            ("an absolute entry inside the repository", str(self.repo / "lib"), outside),
+            ("only dropped entries", ".", None),
+        ]
+        names = ["PYTHONPATH", "PythonPath"] if NT else ["PYTHONPATH"]  # Windows reads the name in any case
+        for row, entry, kept in rows:
+            for name in names:
+                with self.subTest(row=row, name=name):
+                    given = os.pathsep.join([kept, entry] if kept else [entry, ""])
+                    env = slot_run.child_env({name: given, "OTHER": "1"}, self.repo, str(self.repo))
+                    self.assertEqual({key: value for key, value in env.items() if key.upper() == "PYTHONPATH"},
+                                     {name: kept} if kept else {})
+                    self.assertEqual(env["OTHER"], "1")
 
     def test_strip_env_applies_to_the_child(self):
         env = slot_run.child_env({"CLAUDE_X": "1", "git_dir": "1", "RIGGER_MODULE_DIRS": "1", "OTHER": "1"},

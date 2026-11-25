@@ -40,10 +40,15 @@ format. Releases are tagged `v<version>`.
 
 ### Changed
 
-- **Command slots run with `PYTHONSAFEPATH=1`.** A slot command started as `python -m <tool>` or
-  `python -c` no longer imports a module a repository plants at its root (Python 3.11+). A script's
-  own folder is off `sys.path` too: a reviewer script that imports a sibling module adds its folder
-  to `sys.path` itself.
+- **Command slots run with `PYTHONSAFEPATH=1`, and `PYTHONPATH` cut like `PATH`.** A slot command
+  started as `python -m <tool>` or `python -c` no longer imports a module a repository plants at its
+  root (Python 3.11+), through the working directory or an inherited `PYTHONPATH` entry: empty, `.`,
+  relative and in-repository entries are dropped, and the variable is removed when none is left. A
+  script's own folder is off `sys.path` too: a reviewer script that imports a sibling module adds its
+  folder to `sys.path` itself. Known limits: `-E` written in the slot's argv makes Python ignore
+  `PYTHONSAFEPATH` (`-I` keeps the working directory off `sys.path` by itself); Python before 3.11 and
+  other interpreters that resolve modules from the working directory can still load the repository's
+  code; on Windows the DLL search of the command's process can still read the working directory.
 - **A module plugin now checks for a rigger-core that holds `rules/skills.md`.** An 0.5.0 core next
   to newer modules lost the Skill triggers table without a notice; it now gets the "rigger-core is
   older than" line.
