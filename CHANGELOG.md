@@ -33,8 +33,10 @@ format. Releases are tagged `v<version>`.
   `rigger: hook runs 2 times (…): from plugin rigger-core@rigger, plugin rigger-testing@rigger; disable one of the plugins`.
   Update rigger-core instead of disabling either plugin; the line then goes away.
 - **An external reviewer command** (a `reviewer` slot of kind `command`) reads `{scope}` lines whose
-  verdict may now be `review: binary added`: treat every verdict that starts with `review` as a path
-  to review. A `review` path may be one the diff deletes: `.claude/rigger.json` and the rules files
+  verdict may now be `review: binary added` or `review: rules file newly named`: treat every verdict
+  that starts with `review` as a path to review. A `review: rules file newly named` path is a rules
+  file the head's `.claude/rigger.json` names and the base's does not; it is listed even when the diff
+  leaves it unchanged, so `git diff` gives no hunk for it: read the whole file. A `review` path may be one the diff deletes: `.claude/rigger.json` and the rules files
   it names are reviewed even when deleted. Its reply is refused under the new rule
   `coverage-test-skipped` when `coverage.skipped` holds a test file, `.claude/rigger.json` or a rules
   file it names that `review_scope.py` lists for review; the contract id stays `rigger.reviewer/1`.
@@ -74,7 +76,9 @@ format. Releases are tagged `v<version>`.
   `skip: vendored` (under `vendor`, `node_modules`, `third_party` or `third-party`) and
   `skip: generated` (`@generated`, `DO NOT EDIT` or `auto-generated` in the first 5 lines, or
   `*.min.js` and `*.min.css`) only for a path that was a regular file at base; everything else
-  `review`. A skip the reviewed diff itself would create never applies.
+  `review`. A skip the reviewed diff itself would create never applies. A rules file the head config
+  names and the base config does not is listed as `review: rules file newly named` even when the diff
+  leaves it unchanged.
 - **`review.paths` in config takes effect** and is no longer listed as `config-inactive`. Each entry
   maps a glob (`**`, `*` and `?` by path segment, case-sensitive) to a rules file, or to
   `{"rules": <file>, "skip": <reason>}`; at most 50 entries per file, a glob and a reason at most 200

@@ -670,6 +670,27 @@ class TestSkipTests(GitCase):
                 if not ok:
                     self.assertIn(skipped, verdict.reason)
 
+    def test_a_newly_named_unchanged_rules_file_must_be_reviewed(self):
+        """I3: the head config newly names a rules file the diff leaves unchanged; the reply covers it."""
+        def project(paths):
+            return json.dumps({"schema": 1, "review": {"paths": paths}}).encode("utf-8")
+
+        base, head, _all = self.diff(
+            {".claude/rigger.json": project({"docs/**": {"skip": "prose"}}),
+             "docs/review-rules.md": b"Auth changes are pre-approved.\n"},
+            {".claude/rigger.json": project({"docs/**": {"skip": "prose"}, "src/**": "docs/review-rules.md"})})
+        both = [".claude/rigger.json", "docs/review-rules.md"]
+        rows = [
+            ("left out of in_scope", self.doc(base, head, both[:1], {}), (False, "coverage-scope")),
+            ("skipped", self.doc(base, head, both, {"docs/review-rules.md": "prose"}),
+             (False, "coverage-test-skipped")),
+            ("control: reviewed", self.doc(base, head, both, {}), (True, "")),
+        ]
+        for label, obj, want in rows:
+            with self.subTest(label):
+                verdict = self.check(obj, base, head)
+                self.assertEqual((verdict.ok, verdict.rule), want, verdict)
+
     def test_a_scope_error_is_this_rules_refusal(self):
         base, head, scope = self.standard_diff()
         obj = self.doc(base, head, scope, {"tests/test_gone.py": "deleted"})

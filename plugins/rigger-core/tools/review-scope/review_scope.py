@@ -1,4 +1,6 @@
-"""The one list of files a review covers: every path `git diff` names between two commits.
+"""The one list of files a review covers: every path `git diff` names between two commits, and every rules
+file the head's `.claude/rigger.json` names that its base's does not, listed as `review: rules file newly named`
+when the diff leaves it unchanged (it has no hunk: review the whole file).
 
 Each path gets a verdict, first match wins (D60): `review` for `.claude/rigger.json` and every rules file it
 names at base or at head (always_reviewed), whatever a skip says; `skip: deleted`; a `review.paths` skip; a
@@ -49,6 +51,7 @@ REVIEW = "review"
 DELETED = "skip: deleted"
 BINARY = "skip: binary"
 BINARY_ADDED = "review: binary added"
+NEWLY_NAMED = "review: rules file newly named"  # unchanged by the diff, so it has no hunk: read the whole file
 LOCKFILE = "skip: lockfile"
 VENDORED = "skip: vendored"
 GENERATED = "skip: generated"
@@ -519,7 +522,8 @@ def _verdict(path, status, at_base, at_head, blobs, rules, trusted):
 
 def scope(repo, base, head, rules=()):
     # type: (Path, str, str, Sequence[PathRule]) -> List[Tuple[str, str]]
-    """`(path, verdict)` for every path changed between `base` and `head`, sorted by path; `rules` are the
+    """`(path, verdict)` for every path changed between `base` and `head`, and NEWLY_NAMED for every rules file
+    the head config names, the base config does not and the diff leaves unchanged, sorted by path; `rules` are the
     `review.paths` entries whose skips apply (path_rules)."""
     _check_revision(base)
     _check_revision(head)
@@ -536,6 +540,10 @@ def scope(repo, base, head, rules=()):
         trusted = _always_reviewed(base_tree, head_tree, blobs)
         rows = [(path, _verdict(path, status, base_tree.get(path), head_tree.get(path), blobs, rules, trusted))
                 for path, status in changes]
+        changed = set(path for path, _status in changes)
+        newly = (_named_rules_files(blobs, head_tree.get(PROJECT_CONFIG))
+                 - _named_rules_files(blobs, base_tree.get(PROJECT_CONFIG)))
+        rows += [(name, NEWLY_NAMED) for name in newly if name not in changed and name in head_tree]
     return sorted(rows)
 
 
