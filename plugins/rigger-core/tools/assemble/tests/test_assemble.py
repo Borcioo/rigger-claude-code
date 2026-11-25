@@ -1374,10 +1374,7 @@ class CheckTests(unittest.TestCase):
         # D22: a company file whose stem matches a general file overrides that file's sections.
         lay = self.layout
         good = lay.module("mod-a", {"rules/tests.md": ("## Tests\n\nx\n## Plans\n\np\n", "both")})
-        rows = [
-            ("renamed heading", {"rules/tests.md": ("## Testz\n\ny\n", "both")},
-             "orphan override tests.testz in acme/rules/tests.md: no lower section has that id; "
-             "closest general id tests.tests"),
+        rows = [  # a renamed heading in a file the general layer has is a stale override (StaleOverrideTests)
             ("empty section, new file", {"rules/fresh.md": ("## Fresh\n\n", "both")},
              "orphan override fresh.fresh in acme/rules/fresh.md: no lower section has that id"),
         ]
@@ -1476,6 +1473,107 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(len(pairs), 2)
         for (row, fix), name in zip(pairs, names):
             self.assertEqual(fix, "FIX\t%s\tclaude plugin install %s" % (row, name))
+
+
+class StaleOverrideTests(unittest.TestCase):
+    """D94: a company or personal section in a file whose stem a lower layer has, under an id that layer lacks."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.layout = Layout(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(str(self.tmp), ignore_errors=True)
+
+    def check(self, *roots):
+        return self.layout.cli("--check", "--modules", *[str(root) for root in roots])
+
+    def doctor_rows(self):
+        code, out, err = self.layout.cli("--doctor")
+        self.assertEqual(code, 0, out + err)
+        return [line.split("\t") for line in out.decode("utf-8").splitlines()
+                if line.startswith("CHECK\tstale-override")]
+
+    def lower(self):  # rigger-rules: the personal layer is read only with it enabled (D4)
+        return self.layout.module("rigger-rules", {"rules/tests.md": ("## Tests\n\nx\n## Plans\n\np\n", "both")})
+
+    def test_stale_override_names_the_id_and_both_files(self):
+        lay = self.layout
+        good = self.lower()
+        acme = lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        code, out, err = self.check(lay.core, good, acme)
+        self.assertEqual(code, 1, out + err)
+        lines = [l for l in out.decode("utf-8").splitlines() if " override " in l]
+        self.assertEqual(lines, ["stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no "
+                                 "such id, so both rules print; closest general id tests.tests"])
+
+    def test_matching_override_is_not_flagged(self):
+        lay = self.layout
+        good = self.lower()
+        # A second general file with that stem adds ids to the same layer: never an override.
+        more = lay.module("mod-b", {"rules/tests.md": ("## More tests\n\nm\n", "both")})
+        acme = lay.module("acme", {"rules/tests.md": ("## Plans\n\nours\n", "both"),
+                                   "rules/policy.md": ("## Policy\n\nnew\n", "both")}, layer="company")
+        lay.personal("tests.md", "## Tests\n\nmine\n")
+        lay.personal("notes.md", "## Notes\n\nmine\n")
+        code, out, err = self.check(lay.core, good, more, acme)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.doctor_rows(), [])
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [])
+
+    def test_personal_layer_too(self):
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/policy.md": ("## Policy\n\np\n", "both")}, layer="company")
+        lay.personal("tests.md", "## Tests\n\nmine\n## Testing notes\n\nmore\n")
+        lay.personal("policy.md", "## Policy rules\n\nmine\n")
+        self.assertEqual(self.doctor_rows(), [
+            ["CHECK", "stale-override policy.policy-rules", "WARN",
+             "stale override policy.policy-rules in rules.d/policy.md: acme/rules/policy.md has no such id, so both "
+             "rules print", "assemble.py --doctor"],
+            ["CHECK", "stale-override tests.testing-notes", "WARN",
+             "stale override tests.testing-notes in rules.d/tests.md: rigger-rules/rules/tests.md has no such id, so both "
+             "rules print", "assemble.py --doctor"]])
+
+    def test_doctor_shows_the_stale_override(self):
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        self.assertEqual(self.doctor_rows(), [
+            ["CHECK", "stale-override tests.testz", "WARN",
+             "stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no such id, so both "
+             "rules print", "assemble.py --doctor"]])
+        code, out, err = lay.cli("--doctor")
+        head = out.decode("utf-8").splitlines()[0].split("\t")
+        self.assertEqual(head[:3], ["CHECK", "rules-assembly", "OK"])  # the session notice has its own row
+
+    def test_session_notice_is_one_bounded_line(self):
+        # Nobody runs doctor daily: the session that gets both rules says so, in one line.
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        lay.personal("tests.md", "## Tests a\n\na\n## Tests b\n\nb\n## Tests c\n\nc\n## Tests d\n\nd\n")
+        line = ("rigger: stale override tests.testz in acme/rules/tests.md, tests.tests-a in rules.d/tests.md, "
+                "tests.tests-b in rules.d/tests.md +2 more: the lower rules file has no such id, so both rules "
+                "print (run /rigger-core:doctor)")
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n], [line])
+        self.assertIn(line.encode("utf-8") + b"\n", lay.part(1))
+
+    def test_check_without_modules_reads_the_modules_a_session_reads(self):
+        # The overlay's 0 findings: --check alone looked only next to itself, never at RIGGER_MODULE_DIRS.
+        lay = self.layout
+        self.lower()
+        lay.plugins = self.tmp / "elsewhere"  # not next to rigger-core, where --check alone already looks
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n", "both")}, layer="company")
+        code, out, err = lay.cli("--check")
+        self.assertEqual(code, 1, out + err)
+        # Only that line: a module both next to rigger-core and in RIGGER_MODULE_DIRS is read once.
+        self.assertEqual([l for l in out.decode("utf-8").splitlines() if not l.startswith("#")],
+                         ["stale override tests.testz in acme/rules/tests.md: rigger-rules/rules/tests.md has no such "
+                          "id, so both rules print; closest general id tests.tests"])
+        code, out, err = lay.cli("--check", RIGGER_MODULE_DIRS="")
+        self.assertEqual(code, 0, out + err)  # control: without the variable that module is not read
+        self.assertNotIn("acme", out.decode("utf-8"))
 
 
 if __name__ == "__main__":
