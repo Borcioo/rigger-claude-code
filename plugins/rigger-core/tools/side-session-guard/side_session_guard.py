@@ -10,7 +10,9 @@ the two ways out: archive it, or add it to that section with the reason. A denia
 a newer note arms it again.
 
 Also the Stop hook, for a turn that ends without wrap_up: the same decision as a block, and a block counts
-as a denial. A stop_hook_active that is not false allows, so a block never repeats in a row.
+as a denial. A stop_hook_active that is not false allows, so a block never repeats in a row. Before that,
+turn_guard.py holds the turn while the session's own gate or test command runs in the background (D89),
+with its own per-task cap; when it blocks, the transcript is not read.
 
 Also PreToolUse on `AskUserQuestion`: while the state file frontmatter has a top-level `plan:` not in NO_PLAN and no `stop:`
 from STOPS, that call and a `wrap_up` with a non-empty `ask` are denied, before the transcript is read.
@@ -42,7 +44,8 @@ SESSION = re.compile(r"local_[\w-]+")
 HEADING = re.compile(r"#{1,6}[ \t]+(.*)")
 KEPT_LINE = re.compile(r"\s*(?:[-*][ \t]+)?`?(local_[\w-]+)`?[ \t]*:[ \t]*\S")
 NEEDLES = (b"finished a turn", b"archive_session", b"SendMessage", PREFIX.encode("ascii"))   # a line without one is skipped unparsed
-CONTEXT_GUARD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "context-guard")
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONTEXT_GUARD = os.path.join(os.path.dirname(HERE), "context-guard")
 
 
 def _blocks(content):
@@ -251,25 +254,58 @@ def _asks(event):
         or (isinstance(ask, list) and ask != []) or (isinstance(ask, (int, float)) and ask != 0))
 
 
+def turn_end(event, state, guard):
+    """turn_guard.check's (block reason, note) for a Stop event; (None, None) on any error."""
+    try:
+        sys.path.insert(0, HERE)
+        import turn_guard
+        if state is None:
+            return None, None
+        coordinator = frontmatter(state).get("coordinator", "").strip().lower() == "true"
+        return turn_guard.check(event, state, coordinator, os.environ, guard.config_root())
+    except Exception:
+        return None, None
+
+
 def main():
     sys.path.insert(0, CONTEXT_GUARD)
     import context_guard as guard
-    # Fail open by raising: stdin that is not a JSON object, a missing or non-string transcript path and a
-    # session id with no state file path (None) all raise below, and the caller's try allows.
+    # Fail open by raising: stdin that is not a JSON object raises here, and the caller's try allows.
     event = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
     stop = event.get("hook_event_name") == "Stop"
-    if event.get("agent_id") is not None or (stop and event.get("stop_hook_active") is not False):
+    if event.get("agent_id") is not None:
         return 0
     state = guard.state_path(guard.default_state_dir(), event.get("session_id"))
+    note = None
+    if stop:
+        reason, note = turn_end(event, state, guard)
+        if reason:
+            sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
+            return 0
+    try:
+        output = side_sessions(event, state, stop)
+    except Exception:
+        output = None
+    if note:
+        output = dict(output or {}, systemMessage=note)
+    if output:
+        sys.stdout.write(json.dumps(output))
+    return 0
+
+
+def side_sessions(event, state, stop):
+    """The hook output of the side-session and plan checks, or None. Fails open by raising: a missing or
+    non-string transcript path and a session id with no state file path (None) raise below."""
+    if stop and event.get("stop_hook_active") is not False:
+        return None
     if _asks(event):
         keys = frontmatter(state)
         if keys.get("plan", "") not in NO_PLAN and keys.get("stop") not in STOPS:
-            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            return {"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "permissionDecision": "deny",
-                "permissionDecisionReason": plan_deny_reason(state)}}))
-            return 0
+                "permissionDecisionReason": plan_deny_reason(state)}}
     if event.get("tool_name") == "AskUserQuestion":
-        return 0
+        return None
     cache = state[:-len(".md")] + CACHE_SUFFIX
     transcript = event.get("transcript_path")
     size = os.path.getsize(transcript)
@@ -280,15 +316,15 @@ def main():
     open_sessions = tracker.pending()
     kept = kept_sessions(state) if open_sessions else None   # no open session: nothing to look up
     if kept is None:
-        return 0
+        return None
     unkept = [item for item in open_sessions if item[0] not in kept]
     if unkept and stop:
-        sys.stdout.write(json.dumps({"decision": "block", "reason": deny_reason(unkept, state)}))
-    elif unkept:
-        sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        return {"decision": "block", "reason": deny_reason(unkept, state)}
+    if unkept:
+        return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse", "permissionDecision": "deny",
-            "permissionDecisionReason": deny_reason(unkept, state)}}))
-    return 0
+            "permissionDecisionReason": deny_reason(unkept, state)}}
+    return None
 
 
 if __name__ == "__main__":
