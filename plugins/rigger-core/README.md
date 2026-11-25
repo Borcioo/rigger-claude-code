@@ -81,7 +81,7 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   `rigger: rules left out over the hook cap: <ids>` at the end of the last part.
 - **rigger-core older than another Rigger plugin:** rigger-rules, rigger-windows, rigger-wp,
   rigger-lessons and rigger-talk each run `hooks/core_check.sh <name>` on `startup|clear|compact`. When that
-  plugin runs from its cache install and no installed rigger-core holds `tools/assemble/part.sh`, it
+  plugin runs from its cache install and no installed rigger-core holds `rules/skills.md`, it
   prints `Rigger rules not loaded for <name>: rigger-core is older than <name> (run claude plugin update rigger-core)`.
   A plugin from a directory marketplace is not checked.
 - **`RIGGER_MODULE_DIRS`:** plugin roots separated by the OS path separator (`;` on Windows, `:`
@@ -121,7 +121,9 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   and two fillers give one notice line.
 - **Command slots:** the `reviewer` slot may be `{"kind": "command", "target": [<argv>]}`, with the
   placeholders `{base}`, `{head}`, `{scope}` (a file of `<verdict><TAB><path>` lines) and `{out}` (the
-  file the command writes its `rigger.reviewer/1` JSON to). `## Slots` then ends with one line for the
+  file the command writes its `rigger.reviewer/1` JSON to). `{scope}` carries no `review.paths` result
+  (no named skip and no rules file), and the output is checked without a session, so a test file that
+  only a personal or company entry skips is refused. `## Slots` then ends with one line for the
   Bash tool, `sh '<core root>/bin/py.sh' '<core root>/tools/slot-run/slot_run.py' <slot> --session <id> --base <base revision>`.
   The program, `target[0]`, is a bare name found on absolute `PATH` entries outside the repository
   and the working directory (an `.exe` or `.com` file on Windows) or an absolute path outside both; a

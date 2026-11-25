@@ -91,7 +91,9 @@ format. Releases are tagged `v<version>`.
   verdict starts with `review`. It takes
   `--session ID` (default `CLAUDE_CODE_SESSION_ID`) to read the same personal and company
   `review.paths` entries; without a session, a test file only those entries skip is refused.
-  `slot_run.py` checks a command reviewer's output without a session.
+  `slot_run.py` checks a command reviewer's output without a session. A command reviewer's
+  `{scope}` carries no `review.paths` result (no named skip and no rules file), and since its output
+  is checked without a session, a test file that only a personal or company entry skips is refused.
 - **A Risk-full change gets a second fresh review round** after the first review's fix round
   (`orchestrating-subagents`, `/rigger-core:coordinate`). The second reviewer gets the first
   review's findings with their outcomes and the fix diff and looks only for what the first missed;
