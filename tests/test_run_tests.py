@@ -4,6 +4,7 @@ import atexit
 import contextlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -444,6 +445,7 @@ class ChangedModulesTests(unittest.TestCase):
             "scripts/sweep.py": SWEEP_STUB,
             "plugins/zzz/x.py": "x = 1\n",
             "plugins/a/f.py": "f = 1\n",
+            "tests/read_by.json": '{"format": 1, "readers": {}}\n',
         }
         for name, deps in (("a", None), ("b", ["a"]), ("c", None), ("rigger-core", None), ("rigger-rules", None)):
             manifest = {"name": name}
@@ -643,6 +645,94 @@ class ChangedModulesTests(unittest.TestCase):
         lines = output.splitlines()
         count_at = lines.index("# changed-modules: sweep files 3, findings 2")
         self.assertEqual(lines[count_at - 2:count_at], finding_lines, output)
+
+    def commit(self, files, message="more"):
+        for rel, text in files.items():
+            if text is None:
+                (self.root / rel).unlink()
+            else:
+                self.write(rel, text)
+        fixture_git(self.root, "add", "-A")
+        fixture_git(self.root, "commit", "-q", "-m", message)
+
+    def read_by(self, readers):
+        return json.dumps({"format": 1, "readers": readers}) + "\n"
+
+    def test_known_readers_run_on_a_change_to_what_they_read(self):
+        self.commit({
+            "plugins/r/rigger-module.json": '{"name": "r"}\n',
+            "plugins/r/.claude-plugin/plugin.json": '{"name": "r"}\n',
+            "plugins/r/tests/stub.py": "STUB = 1\n",
+            "plugins/a/tests/test_s.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({"plugins/a/tests/test_s.py": ["r"]}),
+        })
+        self.write("plugins/r/tests/stub.py", "STUB = 2\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertEqual(set(self.ran), set(ALWAYS_RUN) | {"plugins/a/tests/test_s.py"}, output)
+
+    def test_a_wildcard_reader_runs_on_any_module_change(self):
+        self.commit({
+            "plugins/c/tests/test_w.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({"plugins/c/tests/test_w.py": ["*"]}),
+        })
+        self.write("plugins/a/tools/t/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("plugins/c/tests/test_w.py", self.ran, output)
+        self.assertNotIn("plugins/c/tests/test_x.py", self.ran, output)
+
+    def test_an_unlisted_repo_test_runs_on_any_module_change(self):
+        self.commit({
+            "tests/test_other.py": PASSING_TEST,
+            "tests/test_listed.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({"tests/test_listed.py": ["a"]}),
+        })
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("tests/test_other.py", self.ran, output)
+        self.assertNotIn("tests/test_listed.py", self.ran, output)   # a listed repo test reads only what it names
+
+    def test_folder_key_matches_by_segment(self):
+        self.commit({
+            "plugins/a/tools/t/tests/test_in.py": PASSING_TEST,
+            "plugins/a/tools/t_x/tests/test_out.py": PASSING_TEST,
+            "tests/read_by.json": self.read_by({
+                "plugins/a/tools/t/": ["c"],
+                "plugins/a/tools/t_x/tests/test_out.py": ["rigger-core"],
+            }),
+        })
+        self.write("plugins/c/tools/t.py", "t = 1\n")
+        code, output = self.main()
+        self.assertEqual(code, 0, output)
+        self.assertIn("plugins/a/tools/t/tests/test_in.py", self.ran, output)
+        self.assertNotIn("plugins/a/tools/t_x/tests/test_out.py", self.ran, output)
+
+    def test_a_broken_map_exits_two(self):
+        rows = (
+            ("missing", None, "tests/read_by.json: missing"),
+            ("format 2", json.dumps({"format": 2, "readers": {}}), "format"),
+            ("unknown module", self.read_by({"plugins/a/tests/test_x.py": ["nope"]}), "unknown module nope"),
+            ("dead key", self.read_by({"plugins/a/tests/test_gone.py": ["c"]}), "plugins/a/tests/test_gone.py matches no test file"),
+            ("not json", "{format: 1}\n", "unreadable"),
+            ("readers a list", json.dumps({"format": 1, "readers": []}), "format"),
+            ("reads a string", self.read_by({"plugins/a/tests/test_x.py": "c"}), "not a list of module names"),
+            ("reads empty", self.read_by({"plugins/a/tests/test_x.py": []}), "not a list of module names"),
+        )
+        for name, text, reason in rows:
+            with self.subTest(name):
+                fixture_git(self.root, "reset", "-q", "--hard")
+                (self.root / "plugins/c/tools/t.py").unlink(missing_ok=True)   # untracked: the change of the last row
+                self.commit({"tests/read_by.json": text}, message=name)
+                self.write("plugins/c/tools/t.py", "t = 1\n")
+                self.ran = []
+                code, output = self.main()
+                self.assertEqual(code, 2, output)
+                self.assertRegex(output, r"(?m)^changed-modules: read-by map: .*%s.*; run the gate$" % re.escape(reason))
+                self.assertEqual(self.ran, [])
+                if text is None:
+                    self.commit({"tests/read_by.json": self.read_by({})}, message="restore")
 
     def test_fix_round_control_or_agent_next_to_it_is_refused(self):
         for flag in ("--fix-round", "--control", "--agent"):
