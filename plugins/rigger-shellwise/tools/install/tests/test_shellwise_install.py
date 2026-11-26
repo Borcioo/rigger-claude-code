@@ -30,7 +30,7 @@ CORE = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", "rigger-core")
 import shellwise_install as si  # noqa: E402
 
 WINDOWS = os.name == "nt"
-TARGET = "x86_64-pc-windows-msvc" if WINDOWS else "x86_64-unknown-linux-gnu"
+TARGET = "x86_64-pc-windows-msvc" if WINDOWS else "x86_64-unknown-linux-musl"
 LAUNCH = (lambda path: [sys.executable, "-I", path]) if WINDOWS else None
 BOUND = 8.0
 
@@ -245,9 +245,9 @@ class Spawns:
 
 class TargetTests(Base):
     def test_target_table(self):
-        rows = [("win32", "AMD64", "x86_64-pc-windows-msvc"), ("linux", "x86_64", "x86_64-unknown-linux-gnu"),
+        rows = [("win32", "AMD64", "x86_64-pc-windows-msvc"), ("linux", "x86_64", "x86_64-unknown-linux-musl"),
                 ("darwin", "arm64", "aarch64-apple-darwin"), ("darwin", "x86_64", "x86_64-apple-darwin"),
-                ("linux", "aarch64", None), ("win32", "ARM64", None)]
+                ("linux", "aarch64", "aarch64-unknown-linux-musl"), ("linux", "riscv64", None), ("win32", "ARM64", None)]
         for plat, machine, target in rows:
             with self.subTest(plat=plat, machine=machine):
                 self.assertEqual(si.host_target(plat, machine), target)
@@ -260,6 +260,14 @@ class TargetTests(Base):
                                "commands run unguarded\n")
         self.assertEqual(spawns.calls, [])
         self.assertEqual(self.server.requests, [])
+
+    def test_every_host_target_has_a_pinned_asset(self):
+        """A host target the shipped pin has no asset for leaves that system unguarded ("no asset")."""
+        pin = si._load_pin(os.path.join(si.PLUGIN, "pin.json"))
+        self.assertEqual(sorted(set(si.TARGETS.values())), sorted(pin["assets"]))
+        for target, asset in pin["assets"].items():
+            with self.subTest(target=target):
+                self.assertEqual(asset["name"], asset_name(pin["version"], target, default_fmt(target)))
 
 
 class PlacementTests(Base):

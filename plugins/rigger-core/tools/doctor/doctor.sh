@@ -278,7 +278,7 @@ f3=
 # First, because tab and cr come from this run (printf would cost a process each, as when awk fails).
 out=$(json "$f1" "$f2" "$f3" \
   '^/(enabledPlugins(/[^/]*)?|autoCompactWindow|env/(CLAUDE_CODE_USE_POWERSHELL_TOOL|HARNESS_WORKTREE_ROOT))$' \
-  '^/plugins/[^/]*@(rigger|superpowers-marketplace)(/[0-9]+)?(/(scope|version|projectPath))?$' \
+  '^/plugins/([^/]*@(rigger|superpowers-marketplace)|shellwise@shellwise)(/[0-9]+)?(/(scope|version|projectPath))?$' \
   '^/rigger(/source(/(repo|path))?)?$')
 j1=
 j2=
@@ -529,6 +529,17 @@ for name in $removed; do
     fix "plugin $name" "claude plugin disable $name@rigger"
   fi
 done
+# shellwise's own plugin enabled next to rigger-shellwise: both hooks check every command. A file that is not
+# valid JSON reads as empty here, so it gives no row.
+plugin_state shellwise@shellwise
+standalone=$ver
+plugin_state rigger-shellwise@rigger
+if [ -n "$standalone" ] && [ -n "$ver" ] &&
+  get "$settings" /enabledPlugins/shellwise@shellwise && [ "$jtype" = n ] && [ "$jval" = true ] &&
+  get "$settings" /enabledPlugins/rigger-shellwise@rigger && [ "$jtype" = n ] && [ "$jval" = true ]; then
+  check shell-guard-double WARN "shellwise@shellwise $standalone is enabled next to rigger-shellwise: two shellwise hooks check every command" "$how_plugins"
+  fix shell-guard-double 'claude plugin disable shellwise@shellwise'
+fi
 if ! plugin_row superpowers superpowers@superpowers-marketplace WARN; then
   fix superpowers 'claude plugin marketplace add obra/superpowers-marketplace'
   fix superpowers 'claude plugin install superpowers@superpowers-marketplace'

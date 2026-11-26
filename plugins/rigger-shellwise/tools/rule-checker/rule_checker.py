@@ -19,7 +19,7 @@ import subprocess
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CONFIG = os.path.join(PLUGIN, "shellwise.toml")
-# The rule ids shellwise v0.1.1 documents (`explain <id>` exits 0 for each).
+# The rule ids shellwise v0.2.0 documents (`explain <id>` exits 0 for each).
 RULES = frozenset((
     "analysis-incomplete", "bash-backslash-collapse", "bash-cd-slash-d", "bash-crlf", "bash-msys-path-mangle",
     "bash-ps-call-operator", "bash-ps-cmdlet", "bash-unquoted-backslash-path", "bash-vendor-bin-shebang",

@@ -3,7 +3,7 @@
 The binary is a stub named on the line of `<plugin data>/shellwise/current`: on POSIX a real `#!/bin/sh` script
 run as itself; on Windows a Python script stored under the binary's name and run through `launch` (an argv prefix
 of sys.executable), as the installer's tests do. The stub appends its argv and stdin to files next to it and
-prints the reply set for its `--shell`. The replies are `check --json` stdout captured from the v0.1.1 binary
+prints the reply set for its `--shell`. The replies are `check --json` stdout captured from the v0.2.0 binary
 (a too-long fix names a per-user temp file; that path is shortened to `<temp>/command.sh`).
 """
 
@@ -29,7 +29,7 @@ LAUNCH = (lambda path: [sys.executable, "-I", path]) if WINDOWS else None
 CONFIG = os.path.join(str(PLUGIN), "shellwise.toml")
 ENV_KEYS = ("CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE")
 
-# The 54 rule ids of shellwise v0.1.1 (docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md, RULES).
+# The 54 rule ids of shellwise v0.2.0 (its docs/rules/ folder; the same as v0.1.1's).
 PINNED = """
 analysis-incomplete bash-backslash-collapse bash-cd-slash-d bash-crlf bash-msys-path-mangle
 bash-ps-call-operator bash-ps-cmdlet bash-unquoted-backslash-path bash-vendor-bin-shebang
@@ -44,7 +44,7 @@ ps-unix-command ps-var-colon pwsh-file-list-arg rg-follow-L stale-write-var too-
 wait-loop-unbounded walk-timeout walk-unreadable will-hang wsl-argv-rejoin
 """.split()
 
-# Real `check --json` replies of v0.1.1 (one line each, as printed).
+# Real `check --json` replies of v0.2.0 (one line each, as printed).
 CD_SLASH_D = (r'{"version":1,"level":"break","findings":[{"rule":"bash-cd-slash-d","level":"break","message":'
               r'"`cd /d` is cmd.exe syntax; bash reads `/d` as the folder and fails with too many arguments",'
               r'"fix":"cd \"x\"","span":{"start":3,"end":5}}]}')
