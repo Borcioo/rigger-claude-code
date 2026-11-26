@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c '[ -f \"$0\" ] || exit 0; exec sh \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/bin/shellwise.sh\"",
+            "command": "sh -c '[ -f \"$0\" ] || exit 0; . \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/bin/shellwise.sh\"",
             "timeout": 5
           }
         ]

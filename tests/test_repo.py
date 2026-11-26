@@ -228,7 +228,7 @@ ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"
 RULES_SCRIPTS = ("rules_start.sh", "rules_extra.sh", "talk_start.sh", "part.sh")
 # A PreToolUse script run only when present: `sh "<missing file>"` exits 2 under dash, which denies the call.
-GUARDED_PREFIX = """sh -c '[ -f "$0" ] || exit 0; exec sh "$0"' "%s/""" % ROOT_VAR
+GUARDED_PREFIX = """sh -c '[ -f "$0" ] || exit 0; . "$0"' "%s/""" % ROOT_VAR
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
 

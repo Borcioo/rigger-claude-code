@@ -21,7 +21,7 @@ PLUGIN = Path(__file__).resolve().parents[1]
 HOOKS = PLUGIN / "hooks" / "hooks.json"
 INSTALL_DIR = PLUGIN / "tools" / "install"
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
-GUARDED = """sh -c '[ -f "$0" ] || exit 0; exec sh "$0"' "${CLAUDE_PLUGIN_ROOT}/bin/shellwise.sh\""""
+GUARDED = """sh -c '[ -f "$0" ] || exit 0; . "$0"' "${CLAUDE_PLUGIN_ROOT}/bin/shellwise.sh\""""
 SESSION_START = ('sh "${CLAUDE_PLUGIN_ROOT}/bin/py.sh" -S "${CLAUDE_PLUGIN_ROOT}/tools/install/shellwise_install.py"'
                  " --session-start")
 EVENT = json.dumps({"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash",
@@ -127,6 +127,7 @@ class LauncherCase(unittest.TestCase):
     def assert_config(self, argv, root):
         self.assertEqual(argv[:3], ["hook", "claude-code", "--config"], argv)
         self.assertEqual(len(argv), 4, argv)
+        self.assertTrue(os.path.isfile(argv[3]), argv)
         self.assertTrue(os.path.samefile(argv[3], str(root / "shellwise.toml")), argv)
 
 

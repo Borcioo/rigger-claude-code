@@ -11,7 +11,8 @@ A reviewer reply is a JSON object, or a text whose last fenced `json` block hold
 ignored. Git is found and run by review_scope (absolute PATH entries outside the repository, no GIT_*
 variable), and only commit ids it resolved reach git: an anchor is read from the head commit, never from
 the working tree. Reply text is split and walked in code; the only regexes on it are the fence opener,
-the bracketed rule id and the inbox line.
+the rule id of a shell-guard deny (bracketed, or shellwise's `shellwise: <level> <id>:` prefix) and the
+inbox line.
 """
 
 import json
@@ -54,6 +55,8 @@ TEXT_CAP = 1000000
 
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
 RULE_ID = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9._-]*)\]")
+# The deny reason of shellwise v0.1.1: `shellwise: <break|danger> <rule id>: <message>`, at its start.
+SHELLWISE_RULE = re.compile(r"shellwise: (?:break|danger) ([a-z0-9][a-z0-9-]*):")
 INBOX_LINE = re.compile(r"Lessons inbox: .+: (\d+ entries|count unknown \(.+\))")
 
 _out = None  # the CLI's byte sink; None is sys.stdout.buffer
@@ -548,8 +551,9 @@ def rule_shell_guard_reply_shape(ctx):
 def rule_shell_guard_deny_reason(ctx):
     if ctx.obj is None:
         return None
-    if RULE_ID.search(ctx.obj["permissionDecisionReason"]) is None:
-        return "the deny reason names no [rule id]"
+    reason = ctx.obj["permissionDecisionReason"]
+    if RULE_ID.search(reason) is None and SHELLWISE_RULE.match(reason) is None:
+        return "the deny reason names no [rule id] and no `shellwise: <level> <rule id>:`"
     return None
 
 

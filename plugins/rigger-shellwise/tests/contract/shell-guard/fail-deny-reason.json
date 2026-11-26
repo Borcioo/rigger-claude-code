@@ -1,1 +1,1 @@
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "shell-guard: `git commit --no-verify` skips the repository's hooks. (False positive or intended? Add a trailing `# shell-guard: allow`.)"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"shellwise: break: `cd /d` is cmd.exe syntax; bash reads `/d` as the folder and fails with too many arguments\nFix: cd \"x\""}}
