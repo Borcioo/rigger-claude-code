@@ -372,7 +372,9 @@ class Clean(Case):
             self.assertLessEqual(os.path.getsize(os.path.join(self.state, "s1.log.md")), st.LOG_KEEP + 200)
             # the same log seen by another session's clean is a foreign file: never cut
             self.put("s1.log.md", "line of log text\n" * 4000)
-            self.assertEqual(self.run_main("clean", "--now", NOW), (0, "state: ok clean moved 0 deleted 0 rotated 0\n"))
+            code, text = self.run_main("clean", "--now", NOW)   # it may delete the part rotated above
+            self.assertEqual(code, 0, text)
+            self.assertTrue(text.endswith(" rotated 0\n"), text)
             self.assertEqual(os.path.getsize(os.path.join(self.state, "s1.log.md")), 68000)
         with self.subTest("an old archived file is deleted"):
             shutil.rmtree(self.state)
