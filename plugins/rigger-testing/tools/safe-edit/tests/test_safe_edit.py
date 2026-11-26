@@ -351,8 +351,8 @@ class SafeEditTests(unittest.TestCase):
             return None
 
         self.assertEqual(platform_shell(which=which, windows=True), ["sh", "-c"])
-        self.assertEqual(platform_shell(which=lambda name: "C:/p/pwsh.exe", windows=True),
-                         ["C:/p/pwsh.exe", "-NoProfile", "-Command"])
+        self.assertEqual(platform_shell(which=lambda name: "found-pwsh", windows=True),
+                         ["found-pwsh", "-NoProfile", "-Command"])
         self.assertEqual(platform_shell(which=which, windows=False), ["sh", "-c"])
         self.assertEqual(asked, ["pwsh"])
 
