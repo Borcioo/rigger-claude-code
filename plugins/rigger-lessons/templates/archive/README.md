@@ -12,8 +12,9 @@ python "<lessons plugin>/tools/lessons_lint.py" --archive <archive> [--classes <
 ```
 
 Test guards resolve against each `--repo` in turn, by default the archive's parent folder. Rule
-checkers are each `--rule-checker` file plus every repo's `plugins/*/tools/*/lessons_guard.py` (the
-rigger-windows plugin ships `tools/shell-guard/lessons_guard.py`).
+checkers are each `--rule-checker` file plus every repo's `plugins/*/tools/*/lessons_guard.py` and
+`plugins/*/tools/*/rule_checker.py` (a shell-guard filler names its checker in its `rigger-module.json`,
+`provides.shell-guard.rule_checker`).
 
 ## Frontmatter
 

@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "name": "rigger-shellwise",
+  "layer": "general",
+  "fills": "shell-guard",
+  "failure_mode": "closed",
+  "provides": {
+    "shell-guard": {
+      "kind": "hook",
+      "target": "rigger-shellwise",
+      "rule_checker": "tools/rule-checker/rule_checker.py"
+    }
+  },
+  "rules": [],
+  "tests": {
+    "paths": [
+      "tests/",
+      "tools/*/tests/"
+    ],
+    "contract": [
+      "shell-guard"
+    ]
+  }
+}

@@ -38,6 +38,10 @@ WORKERS = ["rigger-core:worker", "rigger-review:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-testing" / "skills" / "testing" / "SKILL.md"
 ROW_RE = re.compile(r"\| .+ \| `([a-z0-9-]+):([a-z0-9-]+)` \|")
 SID = "5b1f0c1e-7d3a-4c55-9a2e-0f6d1c2b3a49"
+# D75: Task 23 removes this allowance. While rigger-shellwise and rigger-windows both fill shell-guard, the
+# assembler prints this one notice per audience; it is the only notice allowed.
+D75_LINE = ("rigger: slot shell-guard is filled by rigger-shellwise and rigger-windows; disable one with "
+            "claude plugin disable <name>")
 FILL = 8400  # one fill section per part: two never share the 9,000-byte cap
 
 
@@ -53,6 +57,14 @@ def load_manifest(root):
 
 def module_dirs(root=PLUGINS):
     return [path.parent for path in sorted(Path(root).glob("*/rigger-module.json"))]
+
+
+def d75_notices(root=PLUGINS):
+    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []. Windows only: the
+    default shell-guard entry requires os:windows, so on other systems the slot, and its notice, is absent."""
+    fillers = sorted(load_manifest(d)["name"] for d in module_dirs(root) if load_manifest(d).get("fills") == "shell-guard")
+    both = fillers == ["rigger-shellwise", "rigger-windows"]
+    return [D75_LINE] if both and os.name == "nt" else []
 
 
 def part_command(index, subagent=False):
@@ -176,7 +188,7 @@ class HookRun(unittest.TestCase):
 class WiringTests(HookRun):
     def test_every_rules_file_of_a_module_is_in_its_manifest(self):
         dirs = module_dirs()
-        self.assertEqual(len(dirs), 9)
+        self.assertEqual(len(dirs), 10)
         files = 0
         for root in dirs:
             with self.subTest(module=root.name):
@@ -263,8 +275,10 @@ class SessionStartTests(HookRun):
                 lines = joined.decode("utf-8").split("\n")
                 for heading in self.expected_headings("main"):
                     self.assertEqual(lines.count(heading), 1, heading)
+                self.assertEqual([line for line in lines if line.startswith("rigger: ")], d75_notices())
                 for root in dirs:
-                    if root.name not in ("rigger-panel", "rigger-review", "rigger-testing"):  # no rules, no root line
+                    # no rules, no root line
+                    if root.name not in ("rigger-panel", "rigger-review", "rigger-shellwise", "rigger-testing"):
                         self.assertIn(root_line(root), joined)
 
     def test_resume_prints_nothing(self):
@@ -433,7 +447,8 @@ class TestingSkillTriggerTests(unittest.TestCase):
     def test_the_testing_skill_rides_every_tdd_trigger(self):
         # In the row data (manifests and the level-1 defaults), every row that loads the TDD slot loads the
         # testing slot before it (D47).
-        rows = [row for root in module_dirs() for row in load_manifest(root)["triggers"]]
+        # `triggers` is optional (manifest.py `_triggers`: absent reads as [])
+        rows = [row for root in module_dirs() for row in load_manifest(root).get("triggers", [])]
         with open(CORE / "rigger-defaults.json", encoding="utf-8") as handle:
             rows += list(json.load(handle)["triggers"].values())
         tdd = [row["load"] for row in rows if "slot:process.tdd" in row["load"]]
@@ -495,7 +510,9 @@ class RulesSizeTests(unittest.TestCase):
     def test_rules_text_stays_under_the_ceiling(self):
         root = Path(os.environ.get("RIGGER_RULES_ROOT") or PLUGINS)
         found = Assembled(root)
-        self.assertEqual(found.main.notices + found.subagent.notices, [], "rules assembled from %s" % root)
+        expected = d75_notices(root)
+        self.assertEqual((found.main.notices, found.subagent.notices), (expected, expected),
+                         "rules assembled from %s" % root)
         main_ids = {section["id"] for section in found.main.sections}
         blocks = list(found.main.blocks) + [block for block, section in zip(found.subagent.blocks, found.subagent.sections)
                                             if section["id"] not in main_ids]

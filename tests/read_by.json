@@ -17,7 +17,7 @@
     "plugins/rigger-core/tools/token-audit/tests/test_archive.py": ["rigger-lessons", "rigger-rules", "rigger-windows"],
     "plugins/rigger-lessons/tests/test_batch_apply.py": ["rigger-rules"],
     "plugins/rigger-lessons/tests/test_lessons_batch.py": ["rigger-core", "rigger-rules"],
-    "plugins/rigger-lessons/tests/test_lessons_lint.py": ["rigger-core", "rigger-rules"],
+    "plugins/rigger-lessons/tests/test_lessons_lint.py": ["rigger-core", "rigger-rules", "rigger-shellwise"],
     "plugins/rigger-lessons/tests/test_lessons_rules.py": ["rigger-core"],
     "plugins/rigger-lessons/tests/test_proposal_check.py": ["rigger-rules"],
     "plugins/rigger-review/tests/test_review_module.py": ["rigger-core"],
@@ -25,6 +25,7 @@
     "plugins/rigger-rules/tests/test_plugin_rules.py": ["*"],
     "plugins/rigger-rules/tests/test_reinject.py": ["*"],
     "plugins/rigger-rules/tests/test_rules_hooks.py": ["*"],
+    "plugins/rigger-shellwise/tools/install/tests/test_shellwise_install.py": ["rigger-core"],
     "plugins/rigger-talk/tests/test_talk.py": ["rigger-core"],
     "plugins/rigger-testing/tests/test_testing_wiring.py": ["rigger-core", "rigger-rules"],
     "plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py": ["*"]

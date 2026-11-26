@@ -36,6 +36,7 @@ case, a case whose proof fails, or n below total prints `# hook latency failed: 
 
 import argparse
 import datetime
+import importlib.util
 import json
 import math
 import os
@@ -654,6 +655,55 @@ def case_shell_guard(ctx: Context, h: Handler) -> List[Variant]:
     return variants
 
 
+SHELLWISE_DENIED = "git checkout -- ."
+SHELLWISE_STUB = ("#!/bin/sh\ncase $(cat) in *'%s'*) printf '%%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":"
+                  "\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"stub\"}}' ;; esac\n"
+                  % SHELLWISE_DENIED)
+
+
+def _shellwise_install(ctx: Context, h: Handler):
+    path = ctx.roots[h.plugin] / "tools" / "install" / "shellwise_install.py"
+    spec = importlib.util.spec_from_file_location("latency_shellwise_install", str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def case_shellwise_launcher(ctx: Context, h: Handler) -> List[Variant]:
+    # The launcher execs the binary `current` names: here a sh stub that denies one command and allows the rest.
+    stub = ctx.tmp / "shellwise-stub" / "shellwise"
+    if not stub.exists():
+        _write(stub, SHELLWISE_STUB)
+        os.chmod(str(stub), 0o755)
+    current = ctx.data(h.plugin) / "shellwise" / "current"
+
+    def prepare() -> None:
+        _write(current, str(stub) + "\n")
+    return [Variant("match", ctx.stdin(h, {"tool_input": {"command": SHELLWISE_DENIED}}), expect(b'"deny"'),
+                    prepare=prepare),
+            Variant("non-match", ctx.stdin(h, {"tool_input": {"command": "ls"}}), silent, prepare=prepare)]
+
+
+def case_shellwise_install(ctx: Context, h: Handler) -> List[Variant]:
+    # The pinned binary in place and announced before: the session-start check finds it ready, prints the ready
+    # line once `announced` is gone, and starts no download (a fresh lock as a net). A host without an asset
+    # prints its no-asset line.
+    install = _shellwise_install(ctx, h)
+    root = Path(install._root(str(ctx.data(h.plugin))))
+    pin = json.loads((ctx.roots[h.plugin] / "pin.json").read_bytes().decode("utf-8"))
+    target = install.host_target()
+
+    def prepare() -> None:
+        if target:
+            binary = _write(Path(install._binary_path(str(root), pin["version"], target)), "placed\n")
+            _write(root / "current", str(binary) + "\n")
+        _write(root / "lock", json.dumps({"pid": 1, "start": time.time()}))
+        if (root / "announced").exists():
+            (root / "announced").unlink()
+    found = expect(b"shellwise: v%s ready" % pin["version"].encode("ascii") if target else b"no asset for")
+    return [Variant("match", ctx.stdin(h, {}), found, prepare=prepare)]
+
+
 def case_stop_shadow(ctx: Context, h: Handler) -> List[Variant]:
     ctx.state()
     rows = ctx.data(h.plugin) / "turn-gate" / "rows"
@@ -682,6 +732,8 @@ CASES = {
     ("rigger-lessons", "inbox_guard.py"): case_inbox_guard,
     ("rigger-lessons", "skill_lessons.py"): case_skill_lessons,
     ("rigger-rules", "worktree_root.sh"): case_worktree_root,
+    ("rigger-shellwise", "shellwise.sh"): case_shellwise_launcher,
+    ("rigger-shellwise", "shellwise_install.py"): case_shellwise_install,
     ("rigger-review", "core_check.sh"): case_core_check,
     ("rigger-rules", "core_check.sh"): case_core_check,
     ("rigger-talk", "core_check.sh"): case_core_check,

@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/install/shellwise_install.py\" --session-start",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c '[ -f \"$0\" ] || exit 0; . \"$0\"' \"${CLAUDE_PLUGIN_ROOT}/bin/shellwise.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

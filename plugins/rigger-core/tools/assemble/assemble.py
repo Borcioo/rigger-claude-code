@@ -13,6 +13,7 @@ Modes, all reading CLAUDE_CONFIG_DIR, RIGGER_MODULE_DIRS, HARNESS_RULES_DROP and
   --doctor                    tab-separated CHECK lines in doctor.sh's format
 """
 
+import glob
 import json
 import os
 import re
@@ -946,8 +947,35 @@ def _empty_reason(row: slots.Row, level_one: dict, modules: List[Module], enable
     return _shown(problem, 300) if problem else "no default"
 
 
-def _slot_rows(found: Assembly, modules: List[Module], own: Set[str]) -> List[_Row]:
-    """One `slot` row per slot of the session, and `slot-checker` for a filled shell-guard (Task 18)."""
+SHELLWISE = "rigger-shellwise"
+UNGUARDED = "; commands run unguarded"
+
+
+def _shellwise_state(config_dir: Path) -> Tuple[str, str]:
+    """(status, text) from the shellwise installer's status.json (design section 1), found in its plugin data
+    folder (plugins/data/rigger-shellwise-<marketplace>/shellwise/) under the config dir; a state it cannot
+    read is a WARN, never OK."""
+    data = str(config_dir / "plugins" / "data")
+    hits = sorted(glob.glob(os.path.join(glob.escape(data), SHELLWISE + "-*", "shellwise", "status.json")))
+    if len(hits) > 1:
+        return "WARN", "state unknown: %d %s-* data folders hold a status.json%s" % (len(hits), SHELLWISE, UNGUARDED)
+    if not hits:
+        return "WARN", "state missing: no shellwise status.json" + UNGUARDED
+    row = _json_or_none(Path(hits[0]))
+    row = row if isinstance(row, dict) else {}
+    state, version, reason = row.get("state"), _shown(row.get("version")), _shown(row.get("reason"), 300)
+    if state in ("ready", "override"):
+        return "OK", "state %s, v%s" % (state, version)
+    if state == "downloading":
+        return "INFO", "state downloading, v%s%s" % (version, UNGUARDED)
+    if state in ("failed", "no-asset"):
+        return "WARN", "state %s, v%s: %s%s" % (state, version, reason, UNGUARDED)
+    return "WARN", "state unknown: status.json holds no known state" + UNGUARDED
+
+
+def _slot_rows(found: Assembly, modules: List[Module], own: Set[str], config_dir: Path) -> List[_Row]:
+    """One `slot` row per slot of the session, and `slot-checker` for a filled shell-guard (Task 18); the
+    shellwise filler's row also names its installer state."""
     enabled = found.discovery.enabled
     level_one = found.resolved.levels[0][1] if found.resolved is not None and found.resolved.levels else {}
     l1_slots = level_one.get("slots") if isinstance(level_one.get("slots"), dict) else {}
@@ -969,6 +997,9 @@ def _slot_rows(found: Assembly, modules: List[Module], own: Set[str]) -> List[_R
             own.update(n for n in found.notices if n.startswith("rigger: slot %s: expected " % row.path))
             rows.append((name, "MISSING", "expected %s is not enabled" % _shown(row.target),
                          "claude plugin install " + row.target if _FIX_NAME.fullmatch(row.target) else None))
+        elif row.filled and row.kind == "hook" and row.path == "shell-guard" and row.fillers == (SHELLWISE,):
+            status, state = _shellwise_state(config_dir)
+            rows.append((name, status, "%s; %s" % (slots._target_cell(row), state), None))
         elif row.filled and row.kind == "hook":
             rows.append((name, "OK", slots._target_cell(row), None))
         elif row.filled:
@@ -1155,7 +1186,7 @@ def _doctor(environ: Mapping[str, str]) -> bytes:
         where = _shown(source.partition(":")[2], 300)  # L3/L4: the file; L2: the company module
         rows.append(("config-inactive " + key, "INFO", "%s in %s: no effect in this release" % (key, where)))
     plain = [m for m in found.discovery.modules if m.origin != PERSONAL]
-    for name, status, detail, fix in (_slot_rows(found, plain, own) + _order_rows(found)
+    for name, status, detail, fix in (_slot_rows(found, plain, own, inputs.config_dir) + _order_rows(found)
                                       + _rules_d_rows(inputs, found, plain) + _dependency_rows(inputs)):
         rows.append((name, status, detail))
         if fix is not None:

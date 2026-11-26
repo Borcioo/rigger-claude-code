@@ -60,6 +60,8 @@ change: `CONTRIBUTING.md`.
 - **A plan's "base unchanged" check names the `rules/` and `hooks/` paths it is about,** never a whole plugin folder that an earlier task may add a file to.
 - **A path that only has to be absolute is made with `abspath`, not a Path's `resolve()`,** which rewrites a symlinked temp folder (`/var` to `/private/var` on macOS) and breaks a comparison with the temp path only there.
 - **A doctor test with a stub interpreter cannot see what the real one writes:** run the real interpreter once on a copy of the plugin and assert the copy is unchanged (`__pycache__` appeared where doctor promises no file).
+- **A test comparing a path the code got from `os.getcwd()` builds its expected value with `getcwd` inside that folder** (macOS `/var` becomes `/private/var`); a path check compares file identity or realpath on both sides, never strings.
+- **macOS awk (BWK) `split(s, a, "c")` with a one-character separator also cuts at newlines:** use a regex separator, and write shell scripts that run under BWK awk, mawk and gawk.
 - **Gate:** `python -I scripts/gate.py` in the background (every input optional; `CONTRIBUTING.md`
   lists them); its first line names `status.txt`, read that instead of rerunning. A leg whose output
   has no count, or a count of 0, fails ("printed no count matching …" / "count 0 from …"); a PASS

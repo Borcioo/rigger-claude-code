@@ -34,7 +34,7 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
   with the module and section counts, or WARN with the first problem), one `rule-override` per
   `rules.d` section that replaces a Rigger one, one `expects` per plugin the project file expects
   that is not installed and enabled (FIX `claude plugin install <name>`), one `config-inactive`
-  per config key that is read but has no effect yet (`shell_guard`, `company`, `leak_guard`), one
+  per config key that is read but has no effect yet (`company`, `leak_guard`), one
   `stale-override <id>` WARN per company section whose file stem matches a general file but whose
   id matches no general section there (both rules print), one `dependency <plugin@marketplace>` per
   `plugin.json` dependency of an enabled plugin (OK, or MISSING with FIX
@@ -103,8 +103,10 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   of plugin names) take effect, and so does `review.paths` (a glob mapped to a rules file or to
   `{"rules": <file>, "skip": <reason>}`, read by `review_scope.py`; project entries are read at the
   reviewed diff's base). A config file or company module holds at most 50 trigger rows; the rows
-  after the 50th are ignored with one notice. `shell_guard`, `company` and `leak_guard` are read and
-  listed by doctor as `config-inactive`, with no effect yet.
+  after the 50th are ignored with one notice. `shell_guard.shellwise_path` (personal file only, an
+  absolute path) replaces the downloaded shellwise binary when its `--version` is at or above the pin;
+  a refused one leaves the shell-guard slot unfilled with the reason. `company` and `leak_guard` are
+  read and listed by doctor as `config-inactive`, with no effect yet.
 - **Skill triggers:** one table, `## Skill triggers` (`rules/skills.md`), for the session and for
   subagents: the rows of every module's manifest in module order, then the config rows. A `load`
   entry whose plugin is not enabled, or whose slot is empty, is dropped, and so is a row with no

@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"shellwise: break bash-cd-slash-d: `cd /d` is cmd.exe syntax; bash reads `/d` as the folder and fails with too many arguments\nFix: cd \"x\""}}

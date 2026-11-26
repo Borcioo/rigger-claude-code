@@ -30,6 +30,10 @@ TALK_CONFIG = {
     "report_lines": {"type": "number", "default": 15},
 }
 TALK_TEXT = "## Talking to me\n\n- Reply in {{reply_language}}; ~{{reply_lines}} lines, ~{{var:report_lines}} report.\n"
+# D75: Task 23 removes this allowance. While rigger-shellwise and rigger-windows both fill shell-guard, the
+# assembler prints this one notice; it is the only notice allowed.
+D75_LINE = ("rigger: slot shell-guard is filled by rigger-shellwise and rigger-windows; disable one with "
+            "claude plugin disable <name>")
 LANGUAGE_DEFAULT = ("the language of Claude Code's `language` setting (the user's language when it is "
                     "unset)")
 
@@ -653,8 +657,16 @@ class SnapshotTests(Base):
         self.assertFalse((self.layout.config / "rigger" / "state").exists())
 
 
+def d75_notices():
+    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []. Windows only: the
+    default shell-guard entry requires os:windows, so on other systems the slot, and its notice, is absent."""
+    fillers = sorted(json.loads(path.read_bytes())["name"] for path in (REPO / "plugins").glob("*/rigger-module.json")
+                     if json.loads(path.read_bytes()).get("fills") == "shell-guard")
+    return [D75_LINE] if fillers == ["rigger-shellwise", "rigger-windows"] and os.name == "nt" else []
+
+
 class FullLayoutTests(unittest.TestCase):
-    """All 9 repository modules plus a full rules.d."""
+    """All 10 repository modules plus a full rules.d."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -669,9 +681,9 @@ class FullLayoutTests(unittest.TestCase):
         shutil.rmtree(str(self.tmp), ignore_errors=True)
 
     def test_full_repo_layout_fits_with_full_rules_d(self):
-        self.assertEqual(len(self.layout.dirs), 8)
+        self.assertEqual(len(self.layout.dirs), 9)
         found = self.layout.assemble()
-        self.assertEqual(found.notices, [])
+        self.assertEqual(found.notices, d75_notices())
         session = [self.layout.part(i) for i in range(1, 7)]
         stdin = self.layout.hook_input(hook_event_name="SubagentStart", agent_type="general-purpose")
         sub = [self.layout.part(i, subagent=True, stdin=stdin) for i in range(1, 5)]
@@ -1430,7 +1442,7 @@ class CheckTests(unittest.TestCase):
         code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(REPO_CORE), RIGGER_MODULE_DIRS="")
         lines = out.decode("utf-8").splitlines()
         self.assertEqual(code, 0, out + err)
-        self.assertRegex(lines[-1], r"^# check: modules 9, rules files (1[89]|[2-9]\d), findings 0$")
+        self.assertRegex(lines[-1], r"^# check: modules 10, rules files (1[89]|[2-9]\d), findings 0$")
         self.assertIn("# external: superpowers", lines)
 
     def test_check_without_modules_in_a_cache_layout_says_it_saw_one_module(self):
@@ -1687,6 +1699,73 @@ class DependencyRowTests(unittest.TestCase):
                 self.marketplace("core-fx")
                 self.plugin("mod-b@core-fx", deps)
                 self.assertEqual(self.rows(), [])
+
+
+class ShellwiseSlotRowTests(Base):
+    """Design section 1: the `slot shell-guard` row of the shellwise filler names its status.json state and the
+    failure mode closed; a state that leaves commands unguarded says so."""
+
+    CELL = "rigger-shellwise (fails closed); "
+
+    def setUp(self):
+        super().setUp()
+        root = self.layout.module("rigger-shellwise", {})
+        self.layout.manifest_set(root, fills="shell-guard", failure_mode="closed")
+        write_json(self.layout.config / "rigger" / "config.json",
+                   {"schema": 1, "slots": {"shell-guard": {"requires": []}}})
+
+    def status(self, row, folder="rigger-shellwise-inline"):
+        path = self.layout.config / "plugins" / "data" / folder / "shellwise" / "status.json"
+        write(path, row if isinstance(row, bytes) else json.dumps(dict(
+            {"version": "0.1.1", "target": "x86_64-unknown-linux-gnu", "reason": "", "at": "2026-11-26T10:00:00Z"},
+            **row)))
+
+    def slot_row(self):
+        code, out, err = self.layout.cli("--doctor")
+        self.assertEqual(code, 0, out + err)
+        rows = [line.split("\t") for line in out.decode("utf-8").splitlines()
+                if line.startswith("CHECK\tslot shell-guard\t")]
+        self.assertEqual(len(rows), 1, out)
+        return rows[0][2], rows[0][3]
+
+    def test_ready(self):
+        self.status({"state": "ready"})
+        self.assertEqual(self.slot_row(), ("OK", self.CELL + "state ready, v0.1.1"))
+
+    def test_override(self):
+        self.status({"state": "override", "version": "0.2.0"})
+        self.assertEqual(self.slot_row(), ("OK", self.CELL + "state override, v0.2.0"))
+
+    def test_downloading(self):
+        self.status({"state": "downloading"})
+        self.assertEqual(self.slot_row(), ("INFO", self.CELL + "state downloading, v0.1.1; commands run unguarded"))
+
+    def test_failed(self):
+        self.status({"state": "failed", "reason": "hash mismatch for a.zip\nnext"})
+        self.assertEqual(self.slot_row(), ("WARN", self.CELL + "state failed, v0.1.1: hash mismatch for a.zip\\u000anext; "
+                                                   "commands run unguarded"))
+
+    def test_no_asset(self):
+        self.status({"state": "no-asset", "reason": "no asset for riscv64"})
+        self.assertEqual(self.slot_row(), ("WARN", self.CELL + "state no-asset, v0.1.1: no asset for riscv64; "
+                                                   "commands run unguarded"))
+
+    def test_missing(self):
+        self.assertEqual(self.slot_row(), ("WARN", self.CELL + "state missing: no shellwise status.json; "
+                                                   "commands run unguarded"))
+
+    def test_unknown(self):
+        for name, write_rows in (("unknown state", lambda: self.status({"state": "bogus"})),
+                                 ("not JSON", lambda: self.status(b"{nope")),
+                                 ("two data folders", lambda: (self.status({"state": "ready"}),
+                                                               self.status({"state": "ready"}, "rigger-shellwise-b")))):
+            with self.subTest(name):
+                shutil.rmtree(str(self.layout.config / "plugins"), ignore_errors=True)
+                write_rows()
+                status, detail = self.slot_row()
+                self.assertEqual(status, "WARN")
+                self.assertTrue(detail.startswith(self.CELL + "state unknown: "), detail)
+                self.assertTrue(detail.endswith("; commands run unguarded"), detail)
 
 
 if __name__ == "__main__":

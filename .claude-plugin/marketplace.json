@@ -46,6 +46,11 @@
       "description": "Native Windows only: shell guards, red-run and drift tools, and Windows, PHP (Herd) and Node skills"
     },
     {
+      "name": "rigger-shellwise",
+      "source": "./plugins/rigger-shellwise",
+      "description": "A pinned shellwise binary as the shell guard on Windows, macOS and Linux"
+    },
+    {
       "name": "rigger-panel",
       "source": "./plugins/rigger-panel",
       "description": "Panes beside the chat: session context and cost, your GitHub issues (read-only, via gh), the task list and the project's environments; /harness opens them"
