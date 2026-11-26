@@ -207,6 +207,40 @@ class DoctorShTests(DoctorShCase):
                     self.assertEqual(result.checks.get("plugin rigger-windows", (None, None))[:2], row or (None, None))
                     self.assertEqual(result.fixes.get("plugin rigger-windows"), fixes)
 
+    def test_shellwise_plugin_next_to_rigger_shellwise_is_one_warn(self):
+        # Both installed for the user and enabled: one WARN row and no FIX; any other state: no row.
+        warn = ("WARN", "shellwise@shellwise 0.2.0 is enabled next to rigger-shellwise: two shellwise hooks check "
+                        "every command")
+        cases = (
+            ("both enabled", True, entry("0.2.0"), True, True, warn),
+            ("standalone disabled", False, entry("0.2.0"), True, True, None),
+            ("standalone not installed", True, None, True, True, None),
+            ("standalone for a project only", True, entry("0.2.0", scope="local", project="/work/p"), True, True, None),
+            ("rigger-shellwise disabled", True, entry("0.2.0"), False, True, None),
+            ("rigger-shellwise not installed", True, entry("0.2.0"), True, False, None),
+        )
+        for name, enabled, item, ours_enabled, ours_installed, row in cases:
+            with self.subTest(state=name):
+                settings, installed = self.good_settings(), self.good_installed()
+                settings["enabledPlugins"]["shellwise@shellwise"] = enabled
+                if item is not None:
+                    installed["plugins"]["shellwise@shellwise"] = [item]
+                settings["enabledPlugins"]["rigger-shellwise@rigger"] = ours_enabled
+                if not ours_installed:
+                    del installed["plugins"]["rigger-shellwise@rigger"]
+                self.write_config(settings, installed, self.good_marketplaces())
+                result = self.run_doctor()
+                self.assertEqual(result.checks.get("shell-guard-double", (None, None))[:2], row or (None, None))
+                self.assertNotIn("shell-guard-double", result.fixes)
+        for broken in ("settings.json", "plugins/installed_plugins.json"):
+            with self.subTest(not_valid_json=broken):
+                settings, installed = self.good_settings(), self.good_installed()
+                settings["enabledPlugins"]["shellwise@shellwise"] = True
+                installed["plugins"]["shellwise@shellwise"] = [entry("0.2.0")]
+                self.write_config(settings, installed, self.good_marketplaces())
+                self.write_file(self.config / broken, "{")
+                self.assertNotIn("shell-guard-double", self.run_doctor().checks)
+
     def test_one_line_json_reads_the_same(self):
         settings = self.good_settings()
         settings["enabledPlugins"]["rigger-lessons@rigger"] = False
