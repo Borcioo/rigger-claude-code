@@ -55,6 +55,9 @@ claude plugin marketplace add Borcioo/rigger-claude-code
 claude plugin install rigger-core@rigger
 claude plugin install rigger-rules@rigger
 claude plugin install rigger-lessons@rigger
+claude plugin install rigger-shellwise@rigger
+claude plugin install rigger-testing@rigger
+claude plugin install rigger-review@rigger
 ```
 
 Opt-in plugins install the same way:
@@ -91,7 +94,8 @@ An agent asked to install Rigger from a link can do it in one go:
    Windows `py -3 --version`), and on native Windows Git Bash where Claude Code finds it. Name what
    is missing and how to get it; install nothing without the user's yes.
 2. Ask once what to leave out (`rigger-talk`, `rigger-wp`, `rigger-panel`, the separate
-   `superpowers` plugin, plugin auto-update). `rigger-core`, `rigger-rules` and `rigger-lessons`
+   `superpowers` plugin, plugin auto-update). `rigger-core`, `rigger-rules`, `rigger-lessons`,
+   `rigger-shellwise` (the shell guard), `rigger-testing` (the commit and Stop shadows) and `rigger-review`
    are always installed; `rigger-platform` goes on native Windows and never elsewhere.
 3. Install what is kept with the commands above. Superpowers, unless left out:
    `claude plugin marketplace add obra/superpowers-marketplace`, then
@@ -185,6 +189,9 @@ it for one repo only.
 | lessons rules and the inbox count | `claude plugin disable rigger-lessons@rigger` |
 | reply-format rules | `claude plugin disable rigger-talk@rigger` |
 | Windows rules and skills | `claude plugin disable rigger-platform@rigger` |
+| the shell guard | `claude plugin disable rigger-shellwise@rigger` |
+| the testing skill, weak-test guard and shadows | `claude plugin disable rigger-testing@rigger` |
+| the reviewer agent | `claude plugin disable rigger-review@rigger` |
 | WordPress rule and skills | `claude plugin disable rigger-wp@rigger` |
 | the side panel and `/harness` | `claude plugin disable rigger-panel@rigger` |
 | skills, agents, guards and the state-file rule | `claude plugin disable rigger-core@rigger` (disable the rules plugins first: they depend on `rigger-core`) |
@@ -198,8 +205,8 @@ claude plugin marketplace remove rigger
 ```
 
 `--keep-data` keeps a plugin's data directory. Uninstall the plugins before removing the
-marketplace, and **uninstall `rigger-rules`, `rigger-lessons`, `rigger-talk`, `rigger-platform` and `rigger-wp` before
-`rigger-core`**: `claude plugin uninstall rigger-core` succeeds with only a warning, and those plugins then fail to load.
+marketplace, and **uninstall `rigger-rules`, `rigger-lessons`, `rigger-talk`, `rigger-platform`, `rigger-shellwise`,
+`rigger-testing`, `rigger-review` and `rigger-wp` before `rigger-core`**: `claude plugin uninstall rigger-core` succeeds with only a warning, and those plugins then fail to load.
 `claude plugin uninstall rigger-rules@rigger --prune -y` also removes `rigger-core` when it came in
 as a dependency.
 

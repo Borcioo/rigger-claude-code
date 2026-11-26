@@ -772,9 +772,6 @@ class TurnGuardSessionTests(unittest.TestCase):
         for entrypoint, held in (("claude-desktop", True), (None, False)):
             with self.subTest(entrypoint=entrypoint):
                 label = "guard-%s" % (entrypoint or "sdk-cli")
-                # The block count is written beside <config>/state/<session>.md; a fresh config has no state folder
-                # and then the guard allows (reported in exit-criteria.md), so the folder is made here.
-                (self.tmp / ("cfg-" + label) / "state").mkdir(parents=True)
                 extra = {"CLAUDE_CODE_ENTRYPOINT": entrypoint} if entrypoint else {}
                 requests, debug = scripted_session(self, self.tmp, label, ("rigger-core",), [use], self.cwd, extra)
                 self.assertIsNotNone(tool_result(requests, "toolu_gate"), "the background run did not start")
@@ -785,6 +782,8 @@ class TurnGuardSessionTests(unittest.TestCase):
                 self.assertTrue([line for line in stops if "side_session_guard.py" in line], "Stop handler runs")
                 blocked = [line for line in debug.splitlines() if '"decision":"block"' in line and "turn-guard:" in line]
                 self.assertEqual(bool(blocked), held, "the Stop block in the debug log")
+                counts = list((self.tmp / ("cfg-" + label) / "state").glob("*.turn-guard.json"))
+                self.assertEqual(bool(counts), held, "the block count in the fresh config's state folder")
 
 
 if __name__ == "__main__":

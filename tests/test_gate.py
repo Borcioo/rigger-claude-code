@@ -15,8 +15,10 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import gate  # noqa: E402
+from test_repo import git_env  # noqa: E402
 
 
 def python(code):
@@ -490,6 +492,7 @@ def git(repo, *args):
     done = subprocess.run(
         ["git", *map(str, args)],
         cwd=str(repo),
+        env=git_env(Path(repo)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding="utf-8",

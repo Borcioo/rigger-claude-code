@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_repo import tracked_files  # noqa: E402
+from test_repo import git_env, tracked_files  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PREFIXES = "rigger"
@@ -64,8 +64,8 @@ class PluginRefs(unittest.TestCase):
                 (root / folder_name).mkdir(parents=True, exist_ok=True)
                 (root / folder_name / "d.md").write_text("see %s/x\n" % removed, encoding="utf-8")
             import subprocess
-            subprocess.run(["git", "init", "-q"], cwd=folder, check=True)
-            subprocess.run(["git", "add", "-A"], cwd=folder, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=folder, env=git_env(root), check=True)
+            subprocess.run(["git", "add", "-A"], cwd=folder, env=git_env(root), check=True)
             read, found = findings(root, plugin_names(root))
         self.assertEqual(read, 6)
         # A removed plugin passes in the history folders only.

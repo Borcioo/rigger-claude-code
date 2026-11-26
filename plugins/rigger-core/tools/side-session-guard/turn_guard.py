@@ -10,9 +10,12 @@ CAP times (the next Stop allows with one line), and every session when config `t
 false (levels 2-4). No env variable marks a side session (docs/superpowers/spikes/phase-3b/
 side-session-marker.md), so every other session is held too.
 
-The block count lives in `<state dir>/<session id>.turn-guard.json`, written before the block; a count
-that cannot be written allows, so the cap always holds. Fails open: a missing field, a task with no
-output file or any error holds nothing.
+The block count lives in `<state dir>/<session id>.turn-guard.json`, written before the block; the state
+folder is made when it is missing. A count that cannot be written still holds the first Stop of a chain
+and allows the next one (`stop_hook_active` true) with one line, so a Stop chain is held at most once
+without a count. Fails open: a missing or malformed `background_tasks`, task or session id field, a task with no
+output file, and an exception inside the check (side_session_guard.py then allows) hold nothing; a config
+that does not load keeps the guard on.
 """
 import glob
 import json
@@ -149,7 +152,7 @@ def _load_counts(path):
     try:
         with open(path, "rb") as fh:
             data = json.loads(fh.read().decode("utf-8"))
-    except (OSError, ValueError):   # rewritten whole by the next block, or a write that fails allows
+    except (OSError, ValueError):   # rewritten whole by the next block
         return {}
     blocks = data.get("blocks") if isinstance(data, dict) else None
     if not isinstance(blocks, dict):
@@ -162,6 +165,7 @@ def _save_counts(path, counts):
     """Write the counts atomically; False when they could not be written."""
     temporary = "%s.%d" % (path, os.getpid())
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)   # a fresh config has no state folder
         with open(temporary, "w", encoding="utf-8", newline="\n") as fh:
             json.dump({"format": 1, "blocks": counts}, fh)
         os.replace(temporary, path)
@@ -207,7 +211,9 @@ def check(event, state, coordinator, environ, config_dir, clock=time.monotonic, 
     for task_id, description in open_gates:
         if task_id in still:
             count = counts.get(task_id, 0) + 1
-            if not _save_counts(count_path, dict(counts, **{task_id: count})):
-                return None, note
+            if not _save_counts(count_path, dict(counts, **{task_id: count})) and event.get("stop_hook_active") is True:
+                return None, ("%s background run %s (\"%s\") still runs, but its block count cannot be written "
+                              "(%s); the turn ends without holding again."
+                              % (PREFIX, task_id, one_line(description), count_path))
             return block_reason(task_id, description, count), None
     return None, note

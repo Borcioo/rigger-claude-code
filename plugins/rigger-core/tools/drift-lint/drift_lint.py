@@ -175,10 +175,10 @@ def frontmatter_name(path, lenient=False):
 
 
 def plugin_inventory(plugins_dir):
-    """(skills, agents, folders) of installed plugins: skills bare and as `plugin:name`, agents as
-    `plugin:name`, and each plugin's folder: installPath, else cache/<market>/<plugin>/<version>; also
-    every <dir>/<plugin> (rules only)."""
-    skills, agents = set(), set()
+    """(skills, qualified, agents, folders) of installed plugins: skills bare and as `plugin:name`, the
+    `plugin:name` form alone, agents as `plugin:name`, and each plugin's folder: installPath, else
+    cache/<market>/<plugin>/<version>; also every <dir>/<plugin> (rules only)."""
+    skills, qualified, agents = set(), set(), set()
     installs = []
     try:
         with open(os.path.join(plugins_dir, "installed_plugins.json"), encoding="utf-8") as fh:
@@ -195,22 +195,24 @@ def plugin_inventory(plugins_dir):
                 for version in os.listdir(pdir) if os.path.isdir(pdir) else []:
                     installs.append((plugin, os.path.join(pdir, version)))
     for plugin, path in installs:
-        add_plugin(plugin, path, skills, agents)
+        add_plugin(plugin, path, skills, qualified, agents)
     folders = [path for _, path in installs]
     try:  # the flat layout <dir>/<plugin>: rules only, as in a marketplace's plugins folder
         flat = sorted(n for n in os.listdir(plugins_dir) if n != "cache" and not n.startswith("."))
     except OSError:
         flat = []
-    return skills, agents, folders + [os.path.join(plugins_dir, n) for n in flat
+    return skills, qualified, agents, folders + [os.path.join(plugins_dir, n) for n in flat
                                       if os.path.isdir(os.path.join(plugins_dir, n))]
 
 
-def add_plugin(plugin, path, skills, agents):
-    """One plugin folder's skills, bare and as `plugin:name`, and its agents as `plugin:name`."""
+def add_plugin(plugin, path, skills, qualified, agents):
+    """One plugin folder's skills, bare and as `plugin:name` into `skills` and as `plugin:name` alone into
+    `qualified`, and its agents as `plugin:name`."""
     sdir = os.path.join(path, "skills")
     for name in os.listdir(sdir) if os.path.isdir(sdir) else []:
         if os.path.isfile(os.path.join(sdir, name, "SKILL.md")):
             skills.update({name, f"{plugin}:{name}"})
+            qualified.add(f"{plugin}:{name}")
     adir = os.path.join(path, "agents")
     for name in os.listdir(adir) if os.path.isdir(adir) else []:
         if name.endswith(".md"):
@@ -348,15 +350,15 @@ class Linter:
         added, self.config_notices = config_names(args.config_dir, os.getcwd(), os.environ)
         self.remote_commands = REMOTE_COMMANDS | added["remote_commands"]
         self.project_bins = PROJECT_BINS | added["project_bins"]
-        self.known_skills, self.known_agents, self.installed_roots = plugin_inventory(args.plugins_dir)
+        # module_skills: the plugin:skill names modules have (installed plugins, then the repos' plugins), never bare
+        (self.known_skills, self.module_skills, self.known_agents,
+         self.installed_roots) = plugin_inventory(args.plugins_dir)
         self.known_agents |= BUILTIN_AGENTS
-        self.module_skills = set(self.known_skills)  # the skills modules have: installed plugins, then the repos' plugins
         self.commands = CommandIndex(args.path)
         self.plugin_roots = []
         for repo in args.repo:
             for name, path in repo_plugins(repo).items():
-                add_plugin(name, path, self.known_skills, self.known_agents)
-                add_plugin(name, path, self.module_skills, set())
+                add_plugin(name, path, self.known_skills, self.module_skills, self.known_agents)
                 self.plugin_roots.append(path)
         self.file, self.upstream, self.plugin_root, self.heading = None, False, None, ""
         self.keys = {}  # scanned file -> its baseline key

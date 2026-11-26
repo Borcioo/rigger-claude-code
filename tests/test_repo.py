@@ -593,8 +593,9 @@ WINDOWS_GIT_DIR_RE = re.compile(r"gitdir: ([A-Za-z]):/(.*)")
 
 
 def git_env(root):
-    """The environment for git in `root`; a worktree made on Windows needs explicit paths under WSL."""
-    env = dict(os.environ)
+    """The environment for git in `root`: no inherited GIT_* variable, so a caller's GIT_DIR cannot aim a test's git at
+    another repository; a worktree made on Windows needs explicit paths under WSL."""
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     dot_git = root / ".git"
     if os.name != "nt" and dot_git.is_file():
         match = WINDOWS_GIT_DIR_RE.fullmatch(dot_git.read_text(encoding="utf-8").strip())
@@ -655,7 +656,7 @@ class DiscoveryCheckTests(unittest.TestCase):
     def test_undiscovered_files_are_named(self):
         repo = Path(tempfile.mkdtemp(prefix="discovery-"))
         self.addCleanup(shutil.rmtree, repo, True)
-        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True, timeout=60)
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), env=git_env(repo), check=True, timeout=60)
         names = (
             "tests/test_a.py",
             "plugins/p/tools/t/test_d.py",
@@ -670,7 +671,7 @@ class DiscoveryCheckTests(unittest.TestCase):
         for name in names:
             write_text(repo / name, "")
         (repo / "tests" / "test_untracked.py").write_bytes(b"")
-        subprocess.run(["git", "add", "--", *names], cwd=str(repo), check=True, timeout=60)
+        subprocess.run(["git", "add", "--", *names], cwd=str(repo), env=git_env(repo), check=True, timeout=60)
         self.assertEqual(
             undiscovered_tests(repo),
             (5, ["plugins/p/tools/t/test_d.py", "tests/control/test_f.py", "tools/t/e.tests.ps1"]),
@@ -681,12 +682,12 @@ class ZeroWidthTests(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp(prefix="invisible-"))
         self.addCleanup(shutil.rmtree, self.repo, True)
-        subprocess.run(["git", "init", "-q"], cwd=str(self.repo), check=True, timeout=60)
+        subprocess.run(["git", "init", "-q"], cwd=str(self.repo), env=git_env(self.repo), check=True, timeout=60)
 
     def track(self, name, data):
         path = self.repo / name
         path.write_bytes(data)
-        subprocess.run(["git", "add", "--", name], cwd=str(self.repo), check=True, timeout=60)
+        subprocess.run(["git", "add", "--", name], cwd=str(self.repo), env=git_env(self.repo), check=True, timeout=60)
 
     def test_repo_is_clean(self):
         read, findings = invisible_findings(ROOT)
@@ -736,6 +737,56 @@ class ZeroWidthTests(unittest.TestCase):
         (tree / ".git").write_text("gitdir: %s:%s\n" % (letter.upper(), tail), encoding="utf-8")
         env = git_env(tree)
         self.assertEqual((env.get("GIT_DIR"), env.get("GIT_WORK_TREE")), ("/mnt/%s%s" % (letter, tail), str(tree)))
+
+
+# One case per place in this file that starts git, run by ChildGitEnvTests in a child that inherits GIT_* variables.
+CHILD_GIT_CASES = (
+    "DiscoveryCheckTests.test_undiscovered_files_are_named",
+    "ZeroWidthTests.test_repo_is_clean",
+    "ZeroWidthTests.test_a_no_break_space_is_caught_with_its_line",
+    "RunTestsMainTests.test_fix_round_runs_the_changed_test_and_the_repo_test",
+)
+UNITTEST_RESULT_RE = re.compile(r"^Ran (\d+) tests? in [^\n]*\n\n(\S[^\n]*)$", re.M)
+
+
+def without_git_variables():
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+
+
+def files_under(folder):
+    return {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+
+
+class ChildGitEnvTests(unittest.TestCase):
+    def test_child_gits_ignore_an_inherited_git_dir(self):
+        tmp = Path(tempfile.mkdtemp(prefix="child-git-env-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        other, work = tmp / "other", tmp / "work"
+        other.mkdir()
+        work.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(other), env=without_git_variables(), check=True, timeout=60)
+        git_dir = other / ".git"
+        before = files_under(git_dir)
+        env = dict(os.environ, HARNESS_NO_CLAUDE="1", GIT_DIR=str(git_dir), GIT_WORK_TREE=str(work),
+                   GIT_INDEX_FILE=str(git_dir / "stray-index"))
+        proc = subprocess.run(
+            [sys.executable, "-I", "-X", "utf8", str(Path(__file__).resolve()), *CHILD_GIT_CASES],
+            cwd=str(ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=600,
+        )
+        output = proc.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+        worktree = subprocess.run(["git", "config", "--file", str(git_dir / "config"), "--get", "core.worktree"],
+                                  cwd=str(tmp), env=without_git_variables(), capture_output=True, timeout=60)
+        self.assertEqual((worktree.returncode, worktree.stdout), (1, b""), output)
+        self.assertEqual(files_under(git_dir).get("config"), before["config"], output)
+        self.assertEqual(files_under(git_dir), before, output)
+        match = UNITTEST_RESULT_RE.search(output)
+        self.assertIsNotNone(match, output)
+        self.assertEqual(match.groups(), (str(len(CHILD_GIT_CASES)), "OK"), output)
 
 
 class ClaudeMdTests(unittest.TestCase):
@@ -1107,6 +1158,12 @@ class RunTestsMainTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="run-tests-"))
         self.addCleanup(shutil.rmtree, self.root, True)
+        # run_tests runs git in this process: an inherited GIT_DIR would aim it, and the fixture's git, at another repo.
+        scrub = mock.patch.dict(os.environ)
+        scrub.start()
+        self.addCleanup(scrub.stop)
+        for key in [key for key in os.environ if key.upper().startswith("GIT_")]:
+            del os.environ[key]
 
     def set_env(self, key, value):
         old = os.environ.get(key)

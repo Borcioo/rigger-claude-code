@@ -66,8 +66,20 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
 | SessionStart (startup, clear, compact), SubagentStart | the rules of every Rigger plugin, through 6 and 4 part handlers (`tools/assemble/part.sh`; "Rules assembly" below); the state-file rule goes to the main session only. On `startup`, `harness_start` warns about hooks that run twice (in both `settings.json` and a plugin) and about `## ` sections of your user `CLAUDE.md` that an enabled plugin already injects |
 | UserPromptSubmit, PreCompact, PostCompact, SessionStart (compact) | the context guard: reminds a long session to keep its state file and holds automatic compaction until the state file says `safe_to_compact: true`, then puts the file back after compaction (`tools/context-guard/INSTALL.md`) |
 | PostToolUse (Write, Edit of `.claude/environments.json`) | `tools/env-check` returns the reason the rigger-panel Environments pane would refuse the file |
+| SessionStart (startup, clear, compact, resume) | `tools/state/state.py hook`: on startup archives idle sessions' state files and rotates logs, on resume gives the session its files back, and names stale work items (a merged PR, a branch that is gone) |
+| Stop | the turn guard (`tools/side-session-guard/turn_guard.py`, run first by the Stop handler): holds a turn while the session's own background gate or test command runs; see "Turn guard" below |
 | PreToolUse (`wrap_up`, `AskUserQuestion`), Stop | the side-session guard, desktop app only: a main session cannot end its turn while a side session it started has delivered a result it has neither archived nor listed under `## Side sessions kept` in its state file; the denial says both ways out. While the state file frontmatter has `plan:` and no allowed `stop:`, it also denies `AskUserQuestion` and a `wrap_up` with an `ask`: an approved plan runs without mid-plan questions |
 | SubagentStop | `report_shadow` records, without blocking, whether each subagent's report opens with `STATUS: <word>` and, for an agent that fills a slot, whether the reply's shape meets that slot's contract (`tools/report-gate/INSTALL.md`) |
+
+## Turn guard
+
+When a session tries to end its turn while a background `shell` task of its own still runs a gate or test command
+(`gate.py`, `run_tests.py`, `safe_edit`, `pytest`, `python -m unittest`, `npm test`, `vitest`, `jest`, `phpunit`,
+`playwright`, `go test`, `cargo test`), the Stop hook waits up to 4 s for it and then blocks the stop with one line
+naming the run. At most 3 blocks per task; the count is `<config dir>/state/<session id>.turn-guard.json`, and the
+folder is made when missing. When the count cannot be written, the first Stop of a chain is held and the chained
+one is allowed with a one-line note. Never held: a `claude -p` run, a session whose state file says
+`coordinator: true`. Config key `turn_guard.enabled` (levels 2 to 4, default `true`) turns it off.
 
 ## Rules assembly
 
@@ -159,6 +171,14 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
 
 - `tools/token-audit/token_audit.py`: where tokens go, from local transcripts (`report`), the cost
   of an A/B run (`runs`) or of one job's agents (`job`).
+- `tools/state/state.py`: the `## Items` section of a session's state file (`add`, `set`, `note`, `done`, `show`),
+  `check` and `clean`; its header lists them.
+- `tools/mem-check/mem_check.py`: memory headroom before a heavy job on Windows, Linux and macOS; exit 0 OK, 1 busy,
+  2 no usable reading. Limits come from config `load.min_free_gb` and `load.max_heavy_agents` (a project file may only
+  tighten them).
+- `tools/drift-lint/drift_lint.py`: finds references in rules and skills that point at things that no longer exist,
+  a trigger `load` that names a missing skill included (`tools/drift-lint/INSTALL.md`). Config keys
+  `drift_lint.remote_commands` and `drift_lint.project_bins` (levels 2 and 3) extend its command lists.
 - `tools/variant-run/variant_run.py`: runs a command or an eval with a modified copy of your global
   `CLAUDE.md` instead of the live one.
 - `tools/session-watch/session_watch.py`: the background watcher `/rigger-core:coordinate` uses
