@@ -40,7 +40,8 @@ lists, so no language is fixed in code.
 
 `tools/safe-edit/safe_edit.py` breaks one file on purpose, runs your test command and always puts the file
 back: `python safe_edit.py --path FILE --find TEXT --replace TEXT [--count N] [--run COMMAND --expect-ran REGEX]
-[--working-directory DIR]`, or `--path FILE --restore` after a killed run. Its header lists the exit codes.
+[--working-directory DIR]`, or `--path FILE --restore` after a killed run. A value that starts with `-`
+goes with `=` (`--find=-X`). Its header lists the exit codes.
 
 ## Tests
 
