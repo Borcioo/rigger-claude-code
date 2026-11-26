@@ -3,6 +3,13 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
+## [Unreleased]
+
+### Fixed
+
+- 0.8.0 notes misdescribed which plugins print the rigger-core-missing line: not every plugin that needs
+  rigger-core (rigger-shellwise prints none), but every plugin whose rules or skills rigger-core loads.
+
 ## [0.8.0] - 2026-11-26
 
 ### Migration
@@ -96,7 +103,7 @@ format. Releases are tagged `v<version>`.
 - `rigger-windows` is gone (phase 3b): its Windows rule and skills are `rigger-platform`, its shell guard is
   `rigger-shellwise`, `mem-check` is a `rigger-core` tool, and `safe-edit.ps1` is `safe_edit.py` in
   `rigger-testing`. The rules and skills name those modules.
-- Every plugin whose rules or skills rigger-core loads, the review and testing modules included, prints one line at session
+- Every plugin that needs rigger-core, the review and testing modules included, prints one line at session
   start when it is installed from the marketplace and no rigger-core is installed:
   `Rigger rules not loaded for <plugin>: rigger-core is not installed (run claude plugin install rigger-core)`.
   A `--plugin-dir` or directory-marketplace run stays silent.
