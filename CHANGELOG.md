@@ -96,7 +96,7 @@ format. Releases are tagged `v<version>`.
 - `rigger-windows` is gone (phase 3b): its Windows rule and skills are `rigger-platform`, its shell guard is
   `rigger-shellwise`, `mem-check` is a `rigger-core` tool, and `safe-edit.ps1` is `safe_edit.py` in
   `rigger-testing`. The rules and skills name those modules.
-- Every plugin that needs rigger-core, the review and testing modules included, prints one line at session
+- Every plugin whose rules or skills rigger-core loads, the review and testing modules included, prints one line at session
   start when it is installed from the marketplace and no rigger-core is installed:
   `Rigger rules not loaded for <plugin>: rigger-core is not installed (run claude plugin install rigger-core)`.
   A `--plugin-dir` or directory-marketplace run stays silent.
