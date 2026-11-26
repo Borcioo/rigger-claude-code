@@ -253,13 +253,17 @@ def limits(environ, core_root, default_min):
                  3: os.path.join(config_dir, "rigger", "config.json"),
                  4: os.path.join(project_dir, ".claude", "rigger.json")}
         found = discover.discover(Path(config_dir), Path(project_dir), environ, Path(core_root))
-        levels = {level: _only_load(config.load_level(Path(path), level)[0]) for level, path in paths.items()}
+        levels, unread = {}, []
+        for level, path in paths.items():
+            data, found_notices = config.load_level(Path(path), level)
+            levels[level] = _only_load(data)
+            unread.extend(found_notices)   # a config that does not load says so, not silently the defaults
         company = [(m.name, _only_load(m.config)) for m in found.modules
                    if m.layer == "company" and isinstance(m.config, dict)]
         resolved = config.resolve(levels[1], company, levels[3], levels[4], paths)
     except Exception:   # a config that does not load keeps the defaults
         return default_min, DEFAULT_AGENTS, []
-    lines = list(resolved.notices)
+    lines = unread + list(resolved.notices)
     below, project = {}, {}
     for source, data in resolved.levels:
         block = data.get("load") if isinstance(data.get("load"), dict) else {}
