@@ -1,6 +1,6 @@
 """turn_evidence: what a Claude Code transcript proves about a commit or a turn.
 
-A pure reader shared by the commit rule, the Stop gate and the gate lab. Stdlib only. shell_guard imports it on a
+A pure reader shared by the commit rule, the Stop gate and the gate lab. Stdlib only. commit_shadow imports it on a
 hot path, so importing does no I/O and compiles nothing: patterns stay strings and `re` compiles them on first use.
 
 A stream is one transcript file: the session's main file or a subagent's. Timestamps are compared as text, which

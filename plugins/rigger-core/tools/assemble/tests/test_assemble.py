@@ -685,11 +685,11 @@ class FullLayoutTests(unittest.TestCase):
         self.assertIn(b"## a.md", b"".join(session))
 
     def test_slots_section_for_the_default_layout_is_under_1200_bytes(self):
-        # D50: ## Slots has its own cap of 1,200 bytes for the default set (11 rows on Windows, 10 elsewhere).
+        # D50: ## Slots has its own cap of 1,200 bytes for the default set (11 rows on every system).
         block = [b for b in self.layout.assemble().blocks if b[2] == "slots.slots"]
         self.assertEqual(len(block), 1)
         rows = [line for line in block[0][1].splitlines() if line.startswith(b"| ") and not line.startswith(b"| Slot ")]
-        self.assertEqual(len(rows), 11 if os.name == "nt" else 10)
+        self.assertEqual(len(rows), 11)
         self.assertLessEqual(len(block[0][1]), 1200)
 
     def test_emitted_part_stays_under_the_hook_cap(self):

@@ -146,6 +146,31 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(got, expected[root.name])
                 self.assertIn("fills", load_json(root / "rigger-module.json"))
 
+    def test_rigger_windows_manifest_names_only_its_files(self):
+        # Each task of PR C moves files out of rigger-windows: whatever its manifest, hooks.json commands and README
+        # still name must be in the plugin.
+        plugin = ROOT / "plugins" / "rigger-windows"
+        data = load_json(plugin / "rigger-module.json")
+        named = [("rules", item["file"]) for item in data["rules"]]
+        named += [("rule_checker", entry["rule_checker"]) for entry in data.get("provides", {}).values()
+                  if "rule_checker" in entry]
+        named += [("trigger", "skills/%s/SKILL.md" % skill.split(":", 1)[1])
+                  for trigger in data["triggers"] for skill in trigger["load"]]
+        named += [("hooks.json", target) for _, _, handler in hook_handlers(plugin / "hooks" / "hooks.json")
+                  for target in ROOT_PATH_RE.findall(handler["command"])]
+        readme = (plugin / "README.md").read_bytes().decode("utf-8")
+        named += [("README", path) for path in re.findall(r"`([\w.-]+(?:/[\w.*-]+)+/?)`", readme)]
+        self.assertGreaterEqual(len(named), 6, named)
+        for source, path in named:
+            with self.subTest(source=source, path=path):
+                self.assertTrue((plugin / path).exists(), path)
+        for pattern in data["tests"]["paths"]:
+            with self.subTest(source="tests.paths", path=pattern):
+                self.assertTrue(list(plugin.glob(pattern.rstrip("/"))), pattern)
+        for slot in data["tests"].get("contract", []):
+            with self.subTest(source="tests.contract", path=slot):
+                self.assertTrue((plugin / "tests" / "contract" / slot).is_dir(), slot)
+
     def test_rules_lists_every_rules_file_once(self):
         checked = 0
         for root in sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json")):
@@ -222,7 +247,7 @@ HOOK_EVENTS = frozenset(
 )
 # Exit 2 from a command hook stops the tool call, the prompt or the compaction.
 EXIT_2_BLOCKS = ("PreToolUse", "UserPromptSubmit", "PreCompact")
-FAIL_OPEN_PLUGINS = ("rigger-core",)
+FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-testing")
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"

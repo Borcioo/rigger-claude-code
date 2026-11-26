@@ -27,7 +27,8 @@ with a claim it opens the transcript and removes its row again, in the backgroun
   `--from-shadow` at it to read them.
 - A commit holding `# shellwise: allow` gets the verdict `marker`. `TEST_EVIDENCE=off` in the environment turns the two
   commit handlers off.
-- Optional, to measure the gates: `python -I "<rigger-testing root>/tools/gate-lab/report.py" --data <the plugin's data folder>`
+- Optional, to measure the gates: `report.py` in rigger-testing's `tools/gate-lab/` (run from the installed
+  plugin, as `replay.py`'s docstring says) with `--data <the plugin's data folder>`
   copies `trials.template.json` to `trials.json` on its first run; `--due` lists the trials whose review date has come. The
   trials are yours to define; see `tools/gate-lab/replay.py` and `report.py` for the commands.
 - `same_call` and `unknown/hidden` are not credit. Credit is `fresh` and `verified`.

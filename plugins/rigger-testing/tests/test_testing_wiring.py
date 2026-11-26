@@ -1,5 +1,7 @@
 """The weak-test guard (D70) and the commit rule's shadow handlers (D79) are wired from this module.
 
+`CommitShadowHandlerTests` runs both commit_shadow.py handlers the same way, on a commit in a temp repo that opts in
+through `.claude/gates.json`, and pins their `if` filters and timeout.
 
 `CommitHandlerTests` runs both PreToolUse handlers of this module's hooks.json the way Claude Code starts a hook
 command: on Windows `<Git>/bin/bash.exe -c <command>`, on Linux and macOS `/bin/sh -c <command>` (Task 17 (c)),
@@ -139,6 +141,65 @@ class CommitHandlerTests(unittest.TestCase):
                 self.assertEqual(out["permissionDecision"], "deny", out)
                 self.assertIn(REMOVED, out["permissionDecisionReason"])
                 self.assertEqual(self.run_handler(matcher, hook, stronger), b"")
+
+
+SHADOW = "commit_shadow.py"
+GATES = {"commit": "shadow", "checks": ["pytest"], "scope_commit": ["src/**/*.py"]}
+
+
+class CommitShadowHandlerTests(unittest.TestCase):
+    """The commit rule's shadow handlers (D79) write one row per commit in a repo that opts in, on every system."""
+
+    def shadow_handlers(self):
+        groups = json.loads(HOOKS.read_bytes().decode("utf-8"))["hooks"].get("PreToolUse", [])
+        return [(group.get("matcher"), hook) for group in groups for hook in group.get("hooks", [])
+                if SHADOW in hook.get("command", "")]
+
+    def run_shadow(self, matcher, hook, repo, extra=None):
+        """Runs the handler's command as Claude Code does; returns (process, the rows it wrote)."""
+        env = {k: v for k, v in repo.env().items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "TEST_"))}
+        data = Path(tempfile.mkdtemp(prefix="testing shadow data "))
+        self.addCleanup(shutil.rmtree, str(data), True)
+        env.update(CLAUDE_PLUGIN_ROOT=MODULE.as_posix(), CLAUDE_PLUGIN_DATA=data.as_posix(), **(extra or {}))
+        event = {"session_id": str(uuid.uuid4()), "hook_event_name": "PreToolUse", "tool_name": matcher,
+                 "tool_use_id": "toolu_" + uuid.uuid4().hex[:24], "transcript_path": str(repo.root / "none.jsonl"),
+                 "tool_input": {"command": "git commit -m change"}, "cwd": str(repo.root)}
+        proc = subprocess.run(launcher() + [hook["command"]], input=json.dumps(event).encode("utf-8"), env=env,
+                              cwd=str(repo.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        rows = data / "commit-gate" / "rows"
+        return proc, [json.loads(path.read_bytes().decode("utf-8")) for path in sorted(rows.iterdir())
+                      ] if rows.is_dir() else []
+
+    def opted_in_repo(self):
+        repo = Repo(self, STRONGER)
+        repo.write(".claude/gates.json", json.dumps(GATES))
+        repo.write("src/parser.py", CODE + "\n")
+        repo.git("add", "src/parser.py")
+        return repo
+
+    def test_both_handlers_fire_on_a_commit_with_twenty_seconds(self):
+        found = sorted((matcher, hook.get("if"), hook.get("timeout")) for matcher, hook in self.shadow_handlers())
+        self.assertEqual(found, [("Bash", "Bash(*commit*)", 20), ("PowerShell", "PowerShell(*commit*)", 20)])
+
+    def test_each_handler_writes_one_row_for_a_commit(self):
+        found = self.shadow_handlers()
+        self.assertEqual(len(found), 2)
+        repo = self.opted_in_repo()
+        for matcher, hook in found:
+            with self.subTest(matcher=matcher):
+                proc, rows = self.run_shadow(matcher, hook, repo)
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"", b""))
+                self.assertEqual(len(rows), 1, rows)
+                # Both staged files (the test and the code) count; the reader found no passing check at all.
+                self.assertEqual((rows[0]["op"], rows[0]["staged"]), ("commit", 2), rows[0])
+                self.assertNotIn(rows[0]["verdict"], ("error", "out-of-scope"), rows[0])
+
+    def test_the_switch_off_writes_no_row(self):
+        repo = self.opted_in_repo()
+        for matcher, hook in self.shadow_handlers():
+            with self.subTest(matcher=matcher):
+                proc, rows = self.run_shadow(matcher, hook, repo, extra={"TEST_EVIDENCE": "off"})
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr, rows), (0, b"", b"", []))
 
 
 def strings(value):
