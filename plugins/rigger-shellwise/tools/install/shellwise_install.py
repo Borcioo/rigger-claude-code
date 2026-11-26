@@ -9,8 +9,9 @@ Layout under the plugin data folder (`CLAUDE_PLUGIN_DATA`, or `--data`):
 ready line printed, so it is printed once).
 
 Override: `shell_guard.shellwise_path` (personal config, level 3), read through rigger-core's config module
-found by its installPath. An accepted override is what `current` names (status `override`); a refused one
-leaves `current` absent, so the launcher runs nothing, never the downloaded binary.
+found by its installPath; a config or core that cannot be read changes nothing. An accepted override is what
+`current` names (status `override`); a refused one leaves `current` absent, so the launcher runs nothing, never the
+downloaded binary.
 
 Trust: only the SHA-256 committed in pin.json is compared, never a hash fetched with the archive;
 only the one expected member is streamed out; the binary runs (`--version`) only after the hash
@@ -52,12 +53,17 @@ TARGETS = {
 BINARY_NAMES = ("shellwise", "shellwise.exe")
 VERSION_LINE = re.compile(r"shellwise (\d+\.\d+\.\d+)")
 NO_BINARY = "shellwise: no binary (%s); commands run unguarded"
+UNREADABLE = "shellwise: override not read (%s); nothing changed"
 
 Status = collections.namedtuple("Status", "state version target path reason")
 
 
 class Refused(Exception):
     """A check refused the download or the binary; the message is the reason."""
+
+
+class Unreadable(Exception):
+    """The override cannot be known (a broken personal config or rigger-core); the message is the reason."""
 
 
 def host_target(plat=None, machine=None):
@@ -430,7 +436,8 @@ def _core_assemble_dir(config_dir):
 
 def read_override(environ=None):
     """shell_guard.shellwise_path as rigger-core's config module resolves the personal config (the one level
-    that may set it); None when unset or when rigger-core cannot be found or loaded."""
+    that may set it); None when unset or when no rigger-core is installed. Raises Unreadable when the override
+    cannot be known: the personal config is refused by load_level, or the listed rigger-core does not load."""
     environ = os.environ if environ is None else environ
     config_dir = environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     folder = _core_assemble_dir(config_dir)
@@ -442,16 +449,19 @@ def read_override(environ=None):
     try:
         config = importlib.import_module("config")
         path = os.path.join(config_dir, "rigger", "config.json")
-        data, _ = config.load_level(pathlib.Path(path), 3)
+        data, notices = config.load_level(pathlib.Path(path), 3)
         block = {"shell_guard": data["shell_guard"]} if "shell_guard" in data else {}
         guard = config.resolve({}, [], block, {}, {3: path}).effective.get("shell_guard")
-    except Exception:   # a core that does not load reads no config
-        return None
+    except Exception as exc:
+        raise Unreadable("rigger-core config module did not load: %s: %s" % (type(exc).__name__, _one_line(exc)))
     finally:
         sys.path.remove(folder)
         for name in names:
             sys.modules.pop(name, None)
         sys.modules.update(saved)
+    if notices:   # load_level refused a personal config that exists: its override is unknown, not unset
+        notice = _one_line(notices[0])
+        raise Unreadable(notice[len("rigger: "):] if notice.startswith("rigger: ") else notice)
     return guard.get("shellwise_path") if isinstance(guard, dict) else None   # config.py checks the shape
 
 
@@ -494,7 +504,10 @@ def _session_start(args, spawn, launch=None):
     child = [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--child", "--data", data,
              "--pin", pin_path, "--base-url", base] + (["--target", args.target] if args.target else [])
     root = _root(data)
-    override = read_override()
+    try:
+        override = read_override()
+    except Unreadable as exc:   # unknown is not unset: keep `current` and the status, start nothing
+        return UNREADABLE % exc
     if not override and _override_left(root):   # the override is gone: back to the download
         _remove(os.path.join(root, "current"))
         _remove(os.path.join(root, "status.json"))

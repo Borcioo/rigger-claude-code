@@ -207,12 +207,20 @@ class WiringTests(LauncherCase):
         self.assertTrue(HOOKS.is_file(), "no hooks/hooks.json")
         hooks = json.loads(HOOKS.read_bytes().decode("utf-8"))
         self.assertEqual(hooks, {"hooks": {
-            "SessionStart": [{"matcher": "startup|clear|compact", "hooks": [
+            "SessionStart": [{"matcher": "startup|clear|compact|resume", "hooks": [
                 {"type": "command", "command": SESSION_START, "timeout": 10}]}],
             "PreToolUse": [{"matcher": "Bash|PowerShell", "hooks": [
                 {"type": "command", "command": GUARDED, "timeout": 5}]}],
         }})
         self.assertNotIn("|| true", GUARDED)
+
+    def test_shipped_launcher_and_hooks_hold_no_cr(self):
+        """A CRLF launcher fails open under dash (`: not found`, exit 0): the shipped files are LF only."""
+        for path in (PLUGIN / "bin" / "shellwise.sh", HOOKS):
+            with self.subTest(path=path.name):
+                data = path.read_bytes()
+                self.assertGreater(len(data), 0, "read no bytes from %s" % path)
+                self.assertTrue(b"\r" not in data, "%s holds a CR byte" % path)
 
     def test_session_start_command_reports_a_ready_binary(self):
         """The SessionStart command reaches the installer's --session-start through py.sh: with the pinned binary

@@ -570,16 +570,21 @@ class ConfigOverrideTests(Base):
         self.assertIsNone(self.current())
 
     def test_removed_override_goes_back_to_the_download(self):
-        path = self.override("shellwise 0.2.0")
-        self.set_override(path)
-        self.assertEqual(self.start(self.pin_for("0.1.1"), Spawns()), "shellwise: v0.2.0 ready\n")
-        os.remove(os.path.join(self.config, "rigger", "config.json"))
-        spawns = Spawns()
-        self.assertEqual(self.start(self.pin_for("0.1.1"), spawns),
-                         "shellwise: no binary (downloading); commands run unguarded\n")
-        self.assertIsNone(self.current())
-        self.assertFalse(os.path.exists(os.path.join(self.root, "status.json")))   # no stale override row
-        self.assertEqual(len(spawns.calls), 1)
+        personal = os.path.join(self.config, "rigger", "config.json")
+        for removal, remove in (("file deleted", lambda: os.remove(personal)),
+                                ("key dropped", lambda: self.write_json(personal, {"schema": 1}))):
+            with self.subTest(removal):
+                shutil.rmtree(self.root, ignore_errors=True)
+                path = self.override("shellwise 0.2.0")
+                self.set_override(path)
+                self.assertEqual(self.start(self.pin_for("0.1.1"), Spawns()), "shellwise: v0.2.0 ready\n")
+                remove()
+                spawns = Spawns()
+                self.assertEqual(self.start(self.pin_for("0.1.1"), spawns),
+                                 "shellwise: no binary (downloading); commands run unguarded\n")
+                self.assertIsNone(self.current())
+                self.assertFalse(os.path.exists(os.path.join(self.root, "status.json")))   # no stale override row
+                self.assertEqual(len(spawns.calls), 1)
 
     def test_removed_refused_override_goes_back_to_the_download(self):
         self.set_override(self.override("shellwise 0.1.0"))
@@ -591,17 +596,73 @@ class ConfigOverrideTests(Base):
         self.assertFalse(os.path.exists(os.path.join(self.root, "status.json")))
         self.assertEqual(len(spawns.calls), 1)
 
-    def test_override_is_not_read_without_a_loadable_rigger_core(self):
+    def break_core(self):
+        """rigger-core listed at an installPath whose config.py raises on import."""
+        broken = os.path.join(self.data, "broken-core")
+        os.makedirs(os.path.join(broken, "tools", "assemble"), exist_ok=True)
+        with open(os.path.join(broken, "tools", "assemble", "config.py"), "wb") as fh:
+            fh.write(b"raise RuntimeError('broken')\n")
+        self.write_json(os.path.join(self.config, "plugins", "installed_plugins.json"),
+                        {"version": 2, "plugins": {"rigger-core@rigger": [{"installPath": broken}]}})
+
+    def snapshot(self):
+        """Every file under the slot with its bytes."""
+        found = {}
+        for folder, _, names in os.walk(self.root):
+            for name in names:
+                with open(os.path.join(folder, name), "rb") as fh:
+                    found[os.path.relpath(os.path.join(folder, name), self.root)] = fh.read()
+        return found
+
+    def test_unreadable_config_changes_nothing(self):
+        """A personal config that is not valid JSON, or a rigger-core whose config module does not load, leaves an
+        override unknown: `current` and the status stay as they are, no download starts, and one line says why. A
+        refused override on record therefore never turns into the downloaded binary."""
+        personal = os.path.join(self.config, "rigger", "config.json")
         listing = os.path.join(self.config, "plugins", "installed_plugins.json")
+        with open(listing, "rb") as fh:
+            good_listing = fh.read()
 
-        def break_core():
-            broken = os.path.join(self.data, "broken-core")
-            os.makedirs(os.path.join(broken, "tools", "assemble"), exist_ok=True)
-            with open(os.path.join(broken, "tools", "assemble", "config.py"), "wb") as fh:
-                fh.write(b"raise RuntimeError('broken')\n")
-            self.write_json(listing, {"version": 2, "plugins": {"rigger-core@rigger": [{"installPath": broken}]}})
+        def bad_json():
+            with open(personal, "wb") as fh:
+                fh.write(b'{"schema": 1, "shell_guard": ')
 
-        for name, change in (("no plugin list", lambda: os.remove(listing)), ("config.py does not load", break_core)):
+        causes = (("not valid JSON", bad_json, "not valid JSON"),
+                  ("import fails", self.break_core, "RuntimeError: broken"))
+        for cause, breaks, word in causes:
+            for record in ("refused", "accepted", "none"):
+                with self.subTest(cause=cause, record=record):
+                    shutil.rmtree(self.root, ignore_errors=True)
+                    with open(listing, "wb") as fh:
+                        fh.write(good_listing)
+                    pin = self.serve()
+                    self.assertEqual(self.download(pin).state, "ready")   # a downloaded binary to fall back to
+                    if record == "none":
+                        self.write_json(personal, {"schema": 1})
+                    else:
+                        self.set_override(self.override("shellwise 0.2.0" if record == "accepted"
+                                                        else "shellwise 0.1.0"))
+                        self.start(pin, Spawns())
+                        self.assertEqual(self.status_file()["state"],
+                                         "override" if record == "accepted" else "failed")
+                    before = self.snapshot()
+                    self.assertIn("status.json", before)
+                    breaks()
+                    spawns = Spawns()
+                    out = self.start(pin, spawns)
+                    self.assertEqual(self.snapshot(), before, out)
+                    self.assertEqual(spawns.calls, [], out)
+                    self.assertTrue(out.startswith("shellwise: override not read (") and out.endswith(
+                        "); nothing changed\n") and out.count("\n") == 1, out)
+                    self.assertIn(word, out)
+
+    def test_override_is_not_read_without_rigger_core(self):
+        """No rigger-core to read the config with is no override (the download proceeds); a rigger-core that is
+        listed but does not load is test_unreadable_config_changes_nothing."""
+        listing = os.path.join(self.config, "plugins", "installed_plugins.json")
+        gone = {"version": 2, "plugins": {"rigger-core@rigger": [{"installPath": os.path.join(self.data, "gone")}]}}
+        for name, change in (("no plugin list", lambda: os.remove(listing)),
+                             ("installPath missing", lambda: self.write_json(listing, gone))):
             with self.subTest(name):
                 shutil.rmtree(self.root, ignore_errors=True)
                 self.set_override(self.override("shellwise 0.2.0"))
