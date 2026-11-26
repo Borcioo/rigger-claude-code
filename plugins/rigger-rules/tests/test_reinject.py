@@ -23,7 +23,7 @@ from stub_api import StubApi  # noqa: E402
 from test_plugin_rules import Assembled  # noqa: E402
 
 PLUGINS = Path(__file__).resolve().parent.parent.parent
-INJECTED = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-windows", "rigger-wp")
+INJECTED = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-platform", "rigger-wp")
 ANCESTOR_SENTINEL = "ancestor-claude-md-sentinel"
 # A --plugin-dir plugin is in no Claude Code state file, so rigger-core's assembler finds it through this list.
 MODULE_DIRS = os.pathsep.join(str(PLUGINS / plugin) for plugin in INJECTED)

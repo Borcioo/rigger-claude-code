@@ -1,5 +1,3 @@
-The `Plugin root:` line above is `<rigger-windows root>`.
-
 ## Windows shell
 
 - On native Windows (not WSL), **the PowerShell tool is the default shell** (missing from your tools:

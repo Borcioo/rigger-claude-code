@@ -115,10 +115,11 @@ description: >-
 - **pwsh wraps exception text to the console width:** match a long error message after collapsing whitespace.
 - **`shutil.rmtree` over a git repo fails on read-only object files:** pass an error handler that `chmod`s the path and retries.
 
-The shell-guard hook (this plugin's `tools/shell-guard/`) refuses `git commit -F -` from PowerShell
+The shell guard (the shellwise module) refuses `git commit -F -` from PowerShell
 without a pipe and `git checkout -- <path>` / `git checkout <file>` / `git restore <path>` (they
-discard every uncommitted edit in the file). Escape one command with a trailing `# shell-guard: allow` (a probe of the guard's own spellings goes in a script file, never inline); rules in its
-`tools/shell-guard/INSTALL.md`.
+discard every uncommitted edit in the file). Escape one command with a trailing `# shellwise: allow` (a probe of the guard's own spellings goes in a script file, never inline); its rules and config
+are in rigger-shellwise's `README.md` and `shellwise.toml`, and the commit gate's use of the marker in the
+test-evidence README of rigger-testing.
 
 ## Git Bash (MSYS2) failure modes — recognise, don't debug
 
@@ -228,9 +229,9 @@ browser pane also refuses `file:///` URLs — serve the folder instead, `python 
 
 Where installed (`Get-Command <name>` tells): node, npm, npx, git, gh, docker, mysql/mysqldump (on a
 machine with Herd its bundled MySQL client, in Git Bash through shims in `~/bin` if you made them; PATH
-order in `rigger-windows:php-herd-tooling`), python (possibly the Microsoft Store build), pip, curl,
+order in `rigger-platform:php-herd-tooling`), python (possibly the Microsoft Store build), pip, curl,
 ssh (Windows OpenSSH), rg, jq. PHP tooling: see
-`rigger-windows:php-herd-tooling`; Node versions: see `rigger-windows:node-versions`.
+`rigger-platform:php-herd-tooling`; Node versions: see `rigger-platform:node-versions`.
 
 **jq** (winget `jqlang.jq`), where installed, is on PATH in both shells: before using it, read `references/jq.md`.
 
@@ -255,15 +256,15 @@ another program reads, `Test-Path` it from PowerShell once.
 
 `Microsoft.Coreutils` (winget) puts `grep`, `head`, `tail` and other GNU-style tools in
 `%ProgramFiles%\coreutils\bin` (on PATH; a new terminal/session is needed to see it). They work
-in pipelines from PowerShell (`... | grep -n x`). The shell-guard hook still denies such a command (`ps-unix-command`); end the command with `# shell-guard: allow` when you mean it. **Not included: `sed`** — use
+in pipelines from PowerShell (`... | grep -n x`). The shell guard still denies such a command (`ps-unix-command`); end the command with `# shellwise: allow` when you mean it. **Not included: `sed`** — use
 `-replace` / `rg -r` instead. **Aliases win:** `ls`, `cat`, `rm`, `cp`, `mv` still resolve to
 PowerShell cmdlets (`Get-ChildItem`…); call `ls.exe` / `cat.exe` when you need GNU flags.
 For searching code prefer `rg` (where installed) or the Grep tool.
 
 ## Missing tool or unknown version
 
-Look in this order: the PATH list above, `rigger-windows:node-versions`,
-`rigger-windows:php-herd-tooling`; then
+Look in this order: the PATH list above, `rigger-platform:node-versions`,
+`rigger-platform:php-herd-tooling`; then
 `winget search <name>` / `winget show <id>` or the official source; only then a workaround.
 Versions: `npm view <pkg> version`, `composer show -a <pkg>`, `pip index versions <pkg>`; library
 docs: the Context7 MCP server, if you have installed it (`resolve-library-id` → `query-docs`); a version from memory is a labelled
@@ -280,7 +281,7 @@ A move silently drops local-scope MCP servers and folder trust: before moving, r
 - Light agents (reviews, Python or pwsh unit tests, docs) have no count limit.
 - An agent that builds or tests starts only while (ceiling − committed) ≥ the minimum, min(30 GiB,
   25% of the ceiling), which mem-check prints. Before dispatching one, run
-  `pwsh -NoProfile -File "<rigger-windows root>/tools/mem-check/mem-check.ps1"` and wait while it
+  `pwsh -NoProfile -File "<the rigger-windows plugin folder>/tools/mem-check/mem-check.ps1"` and wait while it
   exits 1 (re-check every 2 min); after 30 minutes report it as a blocker. Exit 2 = no reading,
   report it. The ceiling is the largest SystemCommitLimit among the Event 2004 entries, the current CommitLimit if there are
   none: the system-managed pagefile grows, so the current limit under-states it.

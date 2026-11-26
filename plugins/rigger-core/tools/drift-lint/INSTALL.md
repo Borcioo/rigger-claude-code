@@ -69,6 +69,8 @@ Each class has a test that it is skipped and that a planted fake beside it is st
 | project-local tool | `wp-env`, `biome`, `astro`, `knip`, `mago`, `vue-tsc`, `playwright` (`PROJECT_BINS`) |
 | shell block bodies | heredoc bodies, PowerShell here-strings, multi-line quoted strings, `#` comments; a pipe without spaces around it is part of a word |
 
+The two command lists are extended, never replaced, by the config keys `drift_lint.remote_commands` and `drift_lint.project_bins` (levels 2-3; lists of command names).
+
 ## Baseline
 
 Accepted false positives live in a baseline file of your own, read only when `--baseline <file>`

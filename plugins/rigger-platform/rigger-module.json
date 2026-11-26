@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "name": "rigger-platform",
+  "layer": "general",
+  "fills": null,
+  "rules": [
+    {
+      "file": "rules/windows.md",
+      "audience": "both",
+      "requires": [
+        "os:windows"
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "id": "rigger-platform.windows-dev-env",
+      "before": "a shell script, loop or pipeline, an `[IO.File]` call, a PowerShell commit message, parallel test runs; a command failing oddly, a script writing non-ASCII text, a missing tool or an unknown tool version, a crash",
+      "load": [
+        "rigger-platform:windows-dev-env"
+      ],
+      "section": "skills.skill-triggers",
+      "requires": [
+        "os:windows"
+      ]
+    },
+    {
+      "id": "rigger-platform.php-herd-tooling",
+      "before": "PHP, Composer, WP-CLI, Herd or a specific PHP version",
+      "load": [
+        "rigger-platform:php-herd-tooling"
+      ],
+      "section": "skills.skill-triggers",
+      "requires": [
+        "os:windows"
+      ]
+    },
+    {
+      "id": "rigger-platform.node-versions",
+      "before": "Node/npm version questions or switching",
+      "load": [
+        "rigger-platform:node-versions"
+      ],
+      "section": "skills.skill-triggers",
+      "requires": [
+        "os:windows"
+      ]
+    }
+  ],
+  "tests": {
+    "paths": [
+      "tests/"
+    ],
+    "contract": []
+  }
+}

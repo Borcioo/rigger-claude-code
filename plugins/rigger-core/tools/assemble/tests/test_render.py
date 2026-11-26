@@ -226,7 +226,7 @@ LEFT_OUT = re.compile(r"^rigger: left out (\d+) of the trigger rows from (.+): t
 def _real_rows(project_rows):
     """Rows as a session with the four rule modules and a cloned repository's file would merge them."""
     modules = [manifest.load_manifest(PLUGINS / name, "inline", "dirs")
-               for name in ("rigger-core", "rigger-rules", "rigger-windows", "rigger-wp")]
+               for name in ("rigger-core", "rigger-rules", "rigger-platform", "rigger-wp")]
     defaults = json.loads((PLUGINS / "rigger-core" / "rigger-defaults.json").read_bytes().decode("utf-8"))
     triggers = dict(defaults["triggers"])
     triggers.update(project_rows)
@@ -252,7 +252,7 @@ class FitTests(unittest.TestCase):
 
     # Every module row stays visible (superpowers enabled), and the project rows' plugin `x` is enabled,
     # so only the size check can remove a row.
-    ENABLED = frozenset({"rigger-core", "rigger-rules", "rigger-testing", "rigger-windows", "rigger-wp", "superpowers",
+    ENABLED = frozenset({"rigger-core", "rigger-rules", "rigger-platform", "rigger-testing", "rigger-wp", "superpowers",
                          "x"})
 
     def test_probe_scenarios_keep_the_table_in_a_part(self):
