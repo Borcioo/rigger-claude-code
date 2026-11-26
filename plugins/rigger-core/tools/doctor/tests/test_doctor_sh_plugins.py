@@ -16,6 +16,7 @@ from doctor_sh_harness import (  # noqa: E402
     PooledSuite,
     DRIVE,
     PLUGIN,
+    RECOMMENDED,
     REPO_PLUGINS,
     REQUIRED,
     STAMP,
@@ -73,9 +74,9 @@ class DoctorShTests(DoctorShCase):
     def test_plugins_installed_and_enabled_ok(self):
         self.good_config()
         result = self.run_doctor()
-        for name in REQUIRED:
+        for name in REQUIRED + RECOMMENDED:
             self.assertRow(result, "plugin " + name, "OK", VERSION)
-        for name in WINDOWS_RECOMMENDED + ("rigger-windows",):
+        for name in ("rigger-platform", "rigger-windows"):
             self.assertNotIn("plugin " + name, result.checks)
 
     def test_plugin_not_installed(self):
@@ -157,22 +158,33 @@ class DoctorShTests(DoctorShCase):
         self.write_config(settings, installed, self.good_marketplaces())
         result = self.run_doctor()
         self.assertRow(result, "plugin rigger-wp", "OK", "7wp77777")
-        self.assertEqual(result.order.index("plugin rigger-wp"), result.order.index("plugin rigger-lessons") + 1)
+        self.assertEqual(result.order.index("plugin rigger-wp"), result.order.index("plugin rigger-shellwise") + 1)
 
     def test_other_rigger_plugin_absent_gives_no_row(self):
         self.good_config()
         result = self.run_doctor()
-        self.assertEqual([name for name in result.checks if name.startswith("plugin ")], ["plugin " + n for n in REQUIRED])
+        self.assertEqual([name for name in result.checks if name.startswith("plugin ")],
+                         ["plugin " + n for n in REQUIRED + RECOMMENDED])
 
-    def test_windows_recommends_the_platform_module_and_a_shell_guard_filler(self):
-        # D84: rigger-windows is gone; on Windows the platform module and the shell-guard filler are recommended.
-        self.good_config(windows=False)
-        result = self.run_doctor("MINGW64_NT-10.0-26100")
-        self.assertNotIn("plugin rigger-windows", result.checks)
-        for name in ("rigger-platform", "rigger-shellwise"):
-            with self.subTest(name):
-                self.assertRow(result, "plugin " + name, "WARN", "not installed")
-                self.assertEqual(result.fixes["plugin " + name], ["claude plugin install %s@rigger" % name])
+    def test_every_system_recommends_a_shell_guard_filler_and_windows_the_platform_module(self):
+        # D84, prC1 M-1: without rigger-shellwise no shell guard runs on any system; rigger-platform is Windows only.
+        settings, installed = self.good_settings(), self.good_installed()
+        del settings["enabledPlugins"]["rigger-shellwise@rigger"]
+        del installed["plugins"]["rigger-shellwise@rigger"]
+        for kernel, warned in (("MINGW64_NT-10.0-26100", ("rigger-platform", "rigger-shellwise")),
+                               ("Linux", ("rigger-shellwise",)), ("Darwin", ("rigger-shellwise",))):
+            with self.subTest(kernel=kernel):
+                self.write_config(settings, installed, self.good_marketplaces())
+                self.stub_uname(kernel)   # run_doctor writes the uname stub only once
+                result = self.run_doctor(kernel)
+                self.assertEqual(result.checks["os"][1], "Windows" if kernel.startswith("MINGW") else
+                                 {"Linux": "Linux", "Darwin": "macOS"}[kernel])
+                self.assertNotIn("plugin rigger-windows", result.checks)
+                for name in warned:
+                    self.assertRow(result, "plugin " + name, "WARN", "not installed")
+                    self.assertEqual(result.fixes["plugin " + name], ["claude plugin install %s@rigger" % name])
+                if "rigger-platform" not in warned:
+                    self.assertNotIn("plugin rigger-platform", result.checks)
 
     def test_a_still_installed_rigger_windows_is_only_ever_disabled(self):
         # D84: enabled, it gets a WARN whose FIX disables it; disabled or another scope's install gets no row,
@@ -292,7 +304,7 @@ class DoctorShTests(DoctorShCase):
         self.assertEqual(result.fixes, {}, result.stdout)
 
     def test_settings_not_valid_json(self):
-        plugins = tuple("plugin " + name for name in REQUIRED) + ("superpowers",)
+        plugins = tuple("plugin " + name for name in REQUIRED + RECOMMENDED) + ("superpowers",)
         self.check_invalid_file("settings.json", "settings-file", plugins + ("autoCompactWindow", "worktree-root"))
 
     def test_settings_not_valid_json_on_windows(self):
@@ -301,7 +313,7 @@ class DoctorShTests(DoctorShCase):
         self.check_invalid_file("settings.json", "settings-file", rows, kernel="MINGW64_NT-10.0-26100")
 
     def test_installed_plugins_not_valid_json(self):
-        plugins = tuple("plugin " + name for name in REQUIRED) + ("superpowers",)
+        plugins = tuple("plugin " + name for name in REQUIRED + RECOMMENDED) + ("superpowers",)
         self.check_invalid_file("plugins/installed_plugins.json", "installed-plugins-file", plugins)
 
     def test_marketplaces_not_valid_json(self):
