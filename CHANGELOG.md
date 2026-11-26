@@ -5,6 +5,12 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Changed
+
+- Stop shadow: a personal `test_evidence.phrases` list now replaces a company module's list of the same
+  category instead of extending it, a personal `null` removes it, and two company modules that set the same
+  category apply neither. The shipped lists stay.
+
 ### Fixed
 
 - 0.8.0 notes misdescribed which plugins print the rigger-core-missing line: not every plugin that needs
