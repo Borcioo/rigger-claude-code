@@ -147,6 +147,38 @@ class HarnessStartTests(unittest.TestCase):
         self.settings({"UserPromptSubmit": [group(GUARD_HANDLER)]})
         self.assertEqual(self.run_hook(), "")
 
+    def test_enabled_rigger_windows_gets_one_line(self):
+        # D84: the removed plugin, still installed from some marketplace and enabled, gets one line per startup.
+        key = "rigger-windows@my-market"
+        line = ("rigger: rigger-windows is still enabled; disable it "
+                "(claude plugin disable rigger-windows@my-market)\n")
+
+        def listed(entries=2, enabled=True, install_path=True):
+            for _ in range(entries):
+                self.install(key, {}, enabled=enabled)
+            if not install_path:
+                for entry in self.installed[key]:
+                    del entry["installPath"]
+
+        def not_listed():
+            self.install(PLUGIN, {})
+            self.enabled[key] = True
+
+        cases = (
+            ("listed twice and enabled", lambda: listed(), line),
+            ("enabled, its folder gone from the cache", lambda: listed(1, install_path=False), line),
+            ("not listed, enabled in settings", not_listed, ""),
+            ("listed and disabled", lambda: listed(1, enabled=False), ""),
+            ("listed for a project only", lambda: self.install(key, {}, scope="project"), ""),
+        )
+        for name, arrange, expected in cases:
+            with self.subTest(name):
+                self.installed.clear()
+                self.enabled.clear()
+                arrange()
+                self.settings({})
+                self.assertEqual(self.run_hook(), expected)
+
     def test_two_plugins_with_one_handler(self):
         hooks = {"UserPromptSubmit": [group(plugin_handler())]}
         self.install(PLUGIN, hooks)

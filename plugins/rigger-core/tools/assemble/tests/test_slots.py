@@ -603,7 +603,7 @@ class EntryRuleTests(SlotsTestCase):
             ("reviewer", dict(cmd, target=["reviewer-cli", "--base={base}", "--head", "{head}", "{scope}", "-o{out}",
                                            "{", "}{", "a}"])),
             ("lessons", {"kind": "hook", "target": "my.lessons_2"}),
-            ("shell-guard", {"kind": "hook", "target": "rigger-windows", "requires": ["os:windows"]}),
+            ("shell-guard", {"kind": "hook", "target": "win-guard", "requires": ["os:windows"]}),
         ]
         for path, entry in rows:
             with self.subTest(path=path, entry=entry):
@@ -625,7 +625,7 @@ FIVE_ROWS = [
     row("worker", "agent", "rigger-core:worker", "by-rule", "default"),
     row("testing", "skill", "rigger-core:testing", None, "personal"),
     row("process.tdd", None, None, None, "default", filled=False),
-    row("shell-guard", "hook", "rigger-windows", None, "default", ("rigger-windows", "other-guard"), "open"),
+    row("shell-guard", "hook", "win-guard", None, "default", ("win-guard", "other-guard"), "open"),
     row("reviewer", "command", ["review-tool", "{out}"], "opus", "project"),
 ]
 FIVE_ROWS_BYTES = (
@@ -636,7 +636,7 @@ FIVE_ROWS_BYTES = (
     "| worker | agent | rigger-core:worker | by-rule | default |\n"
     "| testing | skill | rigger-core:testing | — | personal |\n"
     "| process.tdd | — | — | — | default |\n"
-    "| shell-guard | hook | rigger-windows + other-guard (fails open) | — | default |\n"
+    "| shell-guard | hook | win-guard + other-guard (fails open) | — | default |\n"
     "| reviewer | command | review-tool … | opus | project |\n"
 ).encode("utf-8")
 
@@ -653,7 +653,7 @@ class TableTests(unittest.TestCase):
              "| shell-guard | hook | x (fails closed) | — | default |\n"),
             (row("shell-guard", "hook", "x", None, "default", ("a", "b"), "closed", differ=True),
              "| shell-guard | hook | a + b (failure mode: closed (fillers disagree)) | — | default |\n"),
-            (row("shell-guard", "hook", "rigger-windows", None, "default", (), None, False),
+            (row("shell-guard", "hook", "win-guard", None, "default", (), None, False),
              "| shell-guard | hook | — | — | default |\n"),
         ]
         for item, line in cases:
@@ -752,7 +752,7 @@ class TargetsAndSnapshotTests(SlotsTestCase):
             ("model a number", with_row(model=5)),
             ("source unknown", with_row(source="Project")),
             ("source a number", with_row(source=5)),
-            ("fillers a string", with_row(fillers="rigger-windows")),
+            ("fillers a string", with_row(fillers="win-guard")),
             ("fillers of numbers", with_row(fillers=[5])),
             ("failure mode unknown", with_row(failure_mode="maybe")),
             ("modes differ a number", with_row(modes_differ=1, failure_mode="closed")),

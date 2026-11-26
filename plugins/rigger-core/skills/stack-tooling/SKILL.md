@@ -69,8 +69,8 @@ tests need PHPUnit <= 9.6), or when a claim here needs its source.
 ## Shell, CI and data files
 
 Run `actionlint` before committing a workflow change, `shellcheck` on bash scripts and hooks, and
-`jq`/`yq` for JSON/YAML; on Windows with rigger-windows installed, details in
-`rigger-windows:windows-dev-env`.
+`jq`/`yq` for JSON/YAML; on Windows with rigger-platform installed, details in
+`rigger-platform:windows-dev-env`.
 
 ## Test guards (set once per project; how to test is in the testing skill the Skill triggers table names)
 

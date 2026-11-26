@@ -46,8 +46,8 @@ findings fixed once at the phase's end.
   building on either; offer the simpler one first.
 - While a question waits for the user, start the read-only work that follows; ask independent
   questions together in one card.
-- Keep to the machine's load rule (on Windows with rigger-windows installed:
-  `rigger-windows:windows-dev-env` "Machine load") and the e2e lock rules in
+- Keep to the machine's load rule (on Windows with rigger-platform installed:
+  `rigger-platform:windows-dev-env` "Machine load") and the e2e lock rules in
   `rigger-core:e2e-playwright-speed` §9. Light agents (reviews, Python or pwsh unit tests, docs)
   have no count limit; a build or test agent starts only while `mem-check` exits 0 on Windows with
   rigger-windows installed (it prints the minimum); elsewhere check free memory with the OS's tool.

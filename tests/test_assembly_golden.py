@@ -681,6 +681,16 @@ class GoldenTest(unittest.TestCase):
 
     # --- named tests ---------------------------------------------------------------------------
 
+    def test_windows_layout_is_every_shipped_plugin_but_the_shell_guard_filler(self):
+        """D84: rigger-windows is gone, so the Windows layout is the marketplace's list and the plugin folders without
+        rigger-shellwise, which no golden layout installs (its shell-guard row stays empty)."""
+        market = json.loads((gb.ROOT / ".claude-plugin" / "marketplace.json").read_bytes().decode("utf-8"))
+        listed = sorted(entry["name"] for entry in market["plugins"])
+        folders = sorted(path.parent.parent.name for path in WORK_PLUGINS.glob("*/.claude-plugin/plugin.json"))
+        layout = sorted(WINDOWS_MODULES + ("rigger-shellwise",))
+        self.assertEqual(listed, layout)
+        self.assertEqual(folders, layout)
+
     def test_baseline_ran_every_handler(self):
         """Control: the windows startup baseline holds 19 handler outputs; rigger-rules' 12 share one root line."""
         baseline = FIXTURE.baselines[SCENARIOS[0].baseline_key()]
@@ -820,7 +830,7 @@ for _scenario in SCENARIOS:
 
 
 if __name__ == "__main__":
-    print("# scenarios %d, named tests 8" % len(SCENARIOS))
+    print("# scenarios %d, named tests 9" % len(SCENARIOS))
     sys.stdout.flush()
     started = time.time()
     try:

@@ -149,7 +149,7 @@ When two runs share one backend (two branches, two agents, a stream and a checkp
 ## 9. Shared machine
 
 Budget (how many agents and workers): `workers=2` while other agents are busy; on Windows with
-rigger-windows installed, `rigger-windows:windows-dev-env` "Machine load" adds the watchdog and
+rigger-platform installed, `rigger-platform:windows-dev-env` "Machine load" adds the watchdog and
 crash diagnosis. This section owns how one-run-at-a-time is enforced.
 
 - **One run at a time is enforced by the run, not by a check.** Global setup takes a machine-wide

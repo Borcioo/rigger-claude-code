@@ -492,8 +492,12 @@ else
 fi
 
 required='rigger-core rigger-rules rigger-lessons'
-[ "$os" != Windows ] || required="$required rigger-windows"
-names=$required
+# Recommended on Windows (WARN when absent): the Windows rule and skills, and the shell-guard filler.
+recommended=
+[ "$os" != Windows ] || recommended='rigger-platform rigger-shellwise'
+# Removed from the marketplace (D84): never installed or enabled by a FIX.
+removed=rigger-windows
+names="$required $recommended"
 rest=$installed$nl
 while [ -n "$rest" ]; do
   line=${rest%%"$nl"*}
@@ -504,13 +508,26 @@ while [ -n "$rest" ]; do
       name=${name%%@*}
       # The name reaches FIX lines a person pastes into a shell.
       case $name in *[!a-z0-9-]*) continue ;; esac
+      case " $removed " in *" $name "*) continue ;; esac
       case " $names " in *" $name "*) ;; *) names="$names $name" ;; esac
       ;;
   esac
 done
 for name in $names; do
-  plugin_row "plugin $name" "$name@rigger" MISSING ||
+  absent=MISSING
+  case " $recommended " in *" $name "*) absent=WARN ;; esac
+  plugin_row "plugin $name" "$name@rigger" "$absent" ||
     fix "plugin $name" "claude plugin install $name@rigger"
+done
+# A removed plugin installed for the user and enabled: one WARN whose FIX disables it.
+for name in $removed; do
+  [ -z "$plugins_bad" ] || continue
+  plugin_state "$name@rigger"
+  [ -n "$ver" ] || continue
+  if get "$settings" "/enabledPlugins/$name@rigger" && [ "$jtype" = n ] && [ "$jval" = true ]; then
+    check "plugin $name" WARN "$ver, removed from the marketplace and still enabled" "$how_plugins"
+    fix "plugin $name" "claude plugin disable $name@rigger"
+  fi
 done
 if ! plugin_row superpowers superpowers@superpowers-marketplace WARN; then
   fix superpowers 'claude plugin marketplace add obra/superpowers-marketplace'

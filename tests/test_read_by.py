@@ -155,7 +155,7 @@ class ReadByTests(unittest.TestCase):
             ("plugins/rigger-core/tools/assemble/tests/test_stub_session.py", {"rigger-rules"}),
             ("plugins/rigger-core/tools/coord-state/tests/test_coordinate_host_stub.py", {"rigger-rules"}),
             ("plugins/rigger-core/tools/doctor/tests/test_doctor_sh_plugins.py",
-             {"rigger-rules", "rigger-lessons", "rigger-windows"}),
+             {"rigger-rules", "rigger-lessons", "rigger-platform", "rigger-shellwise"}),
             ("plugins/rigger-rules/tests/test_core_check.py", {"rigger-platform"}),
         )
         for rel, expected in rows:
