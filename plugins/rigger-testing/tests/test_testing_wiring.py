@@ -1,4 +1,5 @@
-"""The weak-test guard is wired from this module (D70).
+"""The weak-test guard (D70) and the commit rule's shadow handlers (D79) are wired from this module.
+
 
 `CommitHandlerTests` runs both PreToolUse handlers of this module's hooks.json the way Claude Code starts a hook
 command: on Windows `<Git>/bin/bash.exe -c <command>`, on Linux and macOS `/bin/sh -c <command>` (Task 17 (c)),

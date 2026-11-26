@@ -1,6 +1,5 @@
 """python -I test_archive.py - the lessons archive: the rigger-lessons lint with a stub rule checker
-module, the rigger-windows shell-guard rule checker, `token_audit.py archive` and the history files, on transcripts and a
-lessons repo built in temp folders.
+module, `token_audit.py archive` and the history files, on transcripts and a lessons repo built in temp folders.
 """
 import calendar
 import importlib.util

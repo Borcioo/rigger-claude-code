@@ -22,7 +22,6 @@ MODULES = 10
 SUMMARY = re.compile(r"^# check: modules (\d+), rules files (\d+), findings 0$")
 SLOT_CHECK_DIR = CORE / "tools" / "slot-check"
 ASSEMBLE_DIR = CORE / "tools" / "assemble"
-WINDOWS = ROOT / "plugins" / "rigger-windows"
 SHELLWISE = ROOT / "plugins" / "rigger-shellwise"
 LESSONS = ROOT / "plugins" / "rigger-lessons"
 # Written by the test into the reviewer's head tree: the sweep refuses a committed binary file.
@@ -243,35 +242,17 @@ class ContractTests(unittest.TestCase):
     def test_default_fillers_meet_their_contracts(self):
         slot_check = import_from(SLOT_CHECK_DIR, "slot_check")
         manifest = import_from(ASSEMBLE_DIR, "manifest")
-        # shell-guard (a): the one PowerShell handler, run through sh as Claude Code runs it
-        hooks = json.loads((WINDOWS / "hooks" / "hooks.json").read_bytes().decode("utf-8"))
-        commands = [hook["command"] for group in hooks["hooks"]["PreToolUse"] for hook in group["hooks"]
-                    if "--pwsh-all" in hook["command"]]
-        self.assertEqual(len(commands), 1, commands)
-        # the command starts `sh` by name, as the hook does: its folder is on PATH
-        env = plain_env(CLAUDE_PLUGIN_ROOT=str(WINDOWS), POWERSHELL_TELEMETRY_OPTOUT="1",
-                        PATH=os.path.dirname(find_sh()) + os.pathsep + os.environ.get("PATH", ""))
-
-        def guard(command):
-            event = json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command},
-                                "cwd": str(self.tmp)}).encode("utf-8")
-            proc = subprocess.run([find_sh(), "-c", commands[0]], input=event, env=env, cwd=str(self.tmp),
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-            self.assertEqual((proc.returncode, proc.stderr), (0, b""), command)
-            return proc.stdout.decode("utf-8")
-
-        self.assertEqual(guard("Get-ChildItem"), "")
-        self.assertTrue(slot_check.check("shell-guard", guard("Get-ChildItem")).ok)
-        reply = guard("git commit --no-verify -m x")
-        self.assertEqual(json.loads(reply)["hookSpecificOutput"]["permissionDecision"], "deny", reply)
-        verdict = slot_check.check("shell-guard", reply)
-        self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
-        self.assertIn("[git-no-verify]", json.loads(reply)["hookSpecificOutput"]["permissionDecisionReason"])
-        # shell-guard (b) and (d): the declared failure mode and the rule checker the manifest names
-        windows = manifest.load_manifest(WINDOWS, None, "repository")
-        self.assertEqual(windows.fills, "shell-guard")
-        self.assertIn(windows.failure_mode, manifest.FAILURE_MODES)
-        checker_path = WINDOWS / windows.provides["shell-guard"]["rule_checker"]
+        # shell-guard (a) is test_shellwise_filler_meets_its_contract. (b) and (d): the default filler, found
+        # through the level-1 defaults, declares a failure mode and names a rule checker that loads.
+        defaults = json.loads((CORE / "rigger-defaults.json").read_bytes().decode("utf-8"))
+        target = defaults["slots"]["shell-guard"]["target"]
+        roots = [d for d in module_dirs()
+                 if json.loads((d / MANIFEST).read_bytes().decode("utf-8")).get("name") == target]
+        self.assertEqual(len(roots), 1, "modules named %s" % target)
+        guard = manifest.load_manifest(roots[0], None, "repository")
+        self.assertEqual(guard.fills, "shell-guard")
+        self.assertIn(guard.failure_mode, manifest.FAILURE_MODES)
+        checker_path = roots[0] / guard.provides["shell-guard"]["rule_checker"]
         saved_path, saved_modules = list(sys.path), set(sys.modules)
         try:
             sys.path.insert(0, str(checker_path.parent))

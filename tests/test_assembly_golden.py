@@ -97,25 +97,19 @@ SLOT_ROWS = [  # D36, written by hand: every slot at its default, superpowers en
     b"| implementer | agent | rigger-core:implementer | pinned | default |\n",
     b"| mapper | agent | rigger-core:mapper | pinned | default |\n",
     b"| testing | skill | rigger-testing:testing | \xe2\x80\x94 | default |\n",
-    b"SHELL-GUARD",
+    # The default names rigger-shellwise on every system; no golden layout installs it, so the row is empty.
+    b"| shell-guard | hook | \xe2\x80\x94 | \xe2\x80\x94 | default |\n",
     b"| lessons | hook | rigger-lessons (failure mode: undeclared) | \xe2\x80\x94 | default |\n",
     b"| process.brainstorm | skill | superpowers:brainstorming | \xe2\x80\x94 | default |\n",
     b"| process.plans | skill | superpowers:writing-plans | \xe2\x80\x94 | default |\n",
     b"| process.tdd | skill | superpowers:test-driven-development | \xe2\x80\x94 | default |\n",
     b"| process.debug | skill | superpowers:systematic-debugging | \xe2\x80\x94 | default |\n",
 ]
-SHELL_GUARD_FILLED = b"| shell-guard | hook | rigger-windows (fails open) | \xe2\x80\x94 | default |\n"
-SHELL_GUARD_EMPTY = b"| shell-guard | hook | \xe2\x80\x94 | \xe2\x80\x94 | default |\n"
 
 
 def expected_slots(layout: str) -> bytes:
-    """`## Slots` for this system: 11 rows on Windows (shell-guard filled only with rigger-windows), else 10."""
-    if os.name != "nt":
-        shell_guard = b""
-    else:
-        shell_guard = SHELL_GUARD_FILLED if layout == "windows" else SHELL_GUARD_EMPTY
-    rows = b"".join(shell_guard if line == b"SHELL-GUARD" else line for line in SLOT_ROWS)
-    return b"## Slots\n\n| Slot | Kind | Target | Model | From |\n|---|---|---|---|---|\n" + rows
+    """`## Slots`: the same 11 rows on every system and layout."""
+    return b"## Slots\n\n| Slot | Kind | Target | Model | From |\n|---|---|---|---|---|\n" + b"".join(SLOT_ROWS)
 
 
 def split_table(piece: bytes) -> Tuple[bytes, List[bytes], bytes]:

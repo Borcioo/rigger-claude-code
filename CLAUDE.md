@@ -18,7 +18,7 @@ change: `CONTRIBUTING.md`.
   a subdomain needs its own entry): run `python -I scripts/sweep.py --no-denylist <file>` on a
   reference doc with URLs before moving it. It also reads a dotted code attribute as a domain.
   **Dry-run the sweep on word-for-word rows** before committing them.
-- **`plugins/rigger-windows/tools/gate-lab` drops events under the temp folder (`OUTSIDE`):** a test corpus under a temp folder reads 0 fires, not "nothing to find".
+- **`plugins/rigger-testing/tools/gate-lab` drops events under the temp folder (`OUTSIDE`):** a test corpus under a temp folder reads 0 fires, not "nothing to find".
 - **Transcript readers:** classify user lines by origin (`turnOrigin`, `isMeta`, `isCompactSummary`, body prefix) with one known-answer control per origin; `(Bash completed with no output)` is the text of an empty Bash result, so a "non-empty output" rule excludes it.
 - **Transcript walks:** a walk limit that is also the normal end cannot signal incompleteness — stop on a record that proves the end; evidence stored truncated hides later writes, so reread the full command before trusting a name filter; transcripts used for timing comparisons are pinned by size in a saved list, never picked by percentile.
 - **WSL git cannot open a worktree created on Windows** (its `.git` file names the git dir by a

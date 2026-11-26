@@ -2,6 +2,7 @@
   "schema": 1,
   "name": "rigger-windows",
   "layer": "general",
+  "fills": null,
   "rules": [
     {
       "file": "rules/windows.md",
@@ -38,6 +39,7 @@
     "paths": [
       "tools/*/tests/",
       "tools/mem-check/"
-    ]
+    ],
+    "contract": []
   }
 }

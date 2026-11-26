@@ -30,8 +30,7 @@ TALK_CONFIG = {
     "report_lines": {"type": "number", "default": 15},
 }
 TALK_TEXT = "## Talking to me\n\n- Reply in {{reply_language}}; ~{{reply_lines}} lines, ~{{var:report_lines}} report.\n"
-# D75: Task 23 removes this allowance. While rigger-shellwise and rigger-windows both fill shell-guard, the
-# assembler prints this one notice; it is the only notice allowed.
+# rigger-shellwise alone fills shell-guard (D75): the double-filler notice rigger-windows caused never comes back.
 D75_LINE = ("rigger: slot shell-guard is filled by rigger-shellwise and rigger-windows; disable one with "
             "claude plugin disable <name>")
 LANGUAGE_DEFAULT = ("the language of Claude Code's `language` setting (the user's language when it is "
@@ -657,14 +656,6 @@ class SnapshotTests(Base):
         self.assertFalse((self.layout.config / "rigger" / "state").exists())
 
 
-def d75_notices():
-    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []. Windows only: the
-    default shell-guard entry requires os:windows, so on other systems the slot, and its notice, is absent."""
-    fillers = sorted(json.loads(path.read_bytes())["name"] for path in (REPO / "plugins").glob("*/rigger-module.json")
-                     if json.loads(path.read_bytes()).get("fills") == "shell-guard")
-    return [D75_LINE] if fillers == ["rigger-shellwise", "rigger-windows"] and os.name == "nt" else []
-
-
 class FullLayoutTests(unittest.TestCase):
     """All 10 repository modules plus a full rules.d."""
 
@@ -683,7 +674,8 @@ class FullLayoutTests(unittest.TestCase):
     def test_full_repo_layout_fits_with_full_rules_d(self):
         self.assertEqual(len(self.layout.dirs), 9)
         found = self.layout.assemble()
-        self.assertEqual(found.notices, d75_notices())
+        self.assertNotIn(D75_LINE, found.notices)
+        self.assertEqual(found.notices, [])
         session = [self.layout.part(i) for i in range(1, 7)]
         stdin = self.layout.hook_input(hook_event_name="SubagentStart", agent_type="general-purpose")
         sub = [self.layout.part(i, subagent=True, stdin=stdin) for i in range(1, 5)]
