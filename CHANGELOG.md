@@ -5,6 +5,20 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Added
+
+- Doctor warns once when shellwise's own plugin (`shellwise@shellwise`) is enabled next to rigger-shellwise, so
+  two shellwise hooks check every command.
+
+### Changed
+
+- rigger-shellwise pins shellwise v0.2.0. The guard now blocks a wait loop that polls a count in `(( ))`, `let`
+  or an arithmetic `[[ ]]` and that nothing bounds (the job throttle `while (( $(jobs -rp | wc -l) >= 4 ))` among
+  them: throttle with `wait -n`), and a wait loop or follow under `timeout 0` or `timeout inf`; a command that
+  does not parse and pipes delete text into a shell behind a wrapper (`sudo`, `timeout`) is a danger instead of
+  a warn. Linux takes the static `x86_64-unknown-linux-musl` build, which runs on any glibc. A
+  `shell_guard.shellwise_path` override below 0.2.0 is now refused.
+
 ## [0.8.1] - 2026-11-26
 
 ### Changed
