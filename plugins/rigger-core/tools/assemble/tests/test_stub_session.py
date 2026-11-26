@@ -11,8 +11,17 @@ Phase 2 exit criterion 2 (SlotSessionTests): a command reviewer set in the perso
 with the line that runs it, a stub model runs that line through the Bash tool (spike Q3's form,
 `--allowedTools Bash`), and the `slot-run:` line reaches the next request as a tool_result. That a real model
 then treats a refusal as a blocked review is not provable with a stub.
+
+Phase 3b exit criteria (ShellwiseSessionTests, TurnGuardSessionTests): the shellwise module's hook denies a
+break command and passes a warn command with its note, a removed binary leaves the session line and an
+unguarded command, rigger-testing writes a commit row, and Task 5's guard holds a turn while a background gate
+runs. The binary is installed by the module's own installer (`--child`) from a local server over the pinned
+archive in the folder SHELLWISE_ASSETS names, so its SHA-256 is checked against pin.json and no test reaches the
+network; without SHELLWISE_ASSETS the shellwise cases skip. The download from the pinned release itself is
+docs/superpowers/spikes/phase-3b/exit-criteria.md's scratch run.
 """
 
+import functools
 import hashlib
 import json
 import os
@@ -22,10 +31,11 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 from collections import Counter
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -496,6 +506,285 @@ class SlotSessionTests(unittest.TestCase):
         self.assertEqual((proc.returncode, lines[-1:]),
                          (2, ["slot-run: refused: slot reviewer is agent; dispatch its target instead"]))
         self.assertFalse(os.path.exists(self.record), "the project's command ran")
+
+
+SHELLWISE = PLUGINS / "rigger-shellwise"
+GUARDED = ("rigger-core", "rigger-testing", "rigger-shellwise")
+# A --plugin-dir plugin's data folder under CLAUDE_CODE_PLUGIN_CACHE_DIR (observed on 2.1.332 and 2.1.323).
+DATA = ("data", "%s-inline")
+NO_BINARY_LINE = "shellwise: no binary (downloading); commands run unguarded"
+# A break only under the module's shellwise.toml (its gate_commands), on every host shell; run unguarded it writes
+# its marker file. A warn command that prints its marker.
+BREAK = ("safe-edit --run x 2>&1 | head -n 30; echo ran > m3b.txt", "gate-truncated-pipeline", "m3b.txt")
+WARN = ('rm -f "$NOPE_VAR"x.tmp; echo M3W', "dynamic-target")
+# The detached download child must fail closed if the session ever starts one: https goes to a dead port.
+NO_NETWORK = {"HTTPS_PROXY": "http://127.0.0.1:9", "https_proxy": "http://127.0.0.1:9",
+              "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
+
+
+def bash_use(tool_id, command, **extra):
+    return {"type": "tool_use", "id": tool_id, "name": "Bash",
+            "input": dict({"command": command, "description": tool_id}, **extra)}
+
+
+def tool_result(bodies, tool_id):
+    """Text of the first tool_result for tool_id in any message of any request, or None."""
+    for body in bodies:
+        for message in body.get("messages", []):
+            content = message.get("content")
+            for block in content if isinstance(content, list) else ():
+                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == tool_id:
+                    return "\n".join(strings(block.get("content")))
+    return None
+
+
+def plugin_hook_lines(debug, event, plugin):
+    """Debug-log lines `Hooks: <event> [<command>] (plugin <plugin>@inline) ...`."""
+    return [line for line in debug.splitlines()
+            if "Hooks: %s [" % event in line and "(plugin %s@inline)" % plugin in line]
+
+
+class ScriptHandler(BaseHTTPRequestHandler):
+    """The n-th main-loop request (one whose tools hold Bash) gets the server's script[n] (one tool_use block),
+    every other request end_turn text."""
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def send_body(self, status, content_type, body):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self):
+        self.send_body(404, "application/json", b"{}")
+
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        if not self.path.startswith("/v1/messages") or "count_tokens" in self.path:
+            self.send_body(404, "application/json", b"{}")
+            return
+        body = json.loads(raw.decode("utf-8"))
+        server = self.server
+        block = None
+        if "Bash" in [tool.get("name") for tool in body.get("tools") or []]:
+            with server.lock:
+                n = len(server.requests)
+                server.requests.append(body)
+            block = server.script[n] if n < len(server.script) else None
+        if block is None:
+            block, stop = {"type": "text", "text": "STUB-DONE"}, "end_turn"
+        else:
+            stop = "tool_use"
+        self.send_body(200, "text/event-stream", sse(body.get("model", "stub"), block, stop))
+
+
+class QuietFiles(SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+
+def scripted_session(test, tmp, label, names, script, cwd, extra=None, timeout=TIMEOUT):
+    """One session with `names` from --plugin-dir and as module roots; returns (main-loop request bodies, debug
+    log text). Config and plugin cache are tmp/cfg-<label> and tmp/cache-<label>."""
+    probe = "probe-" + uuid.uuid4().hex
+    settings = tmp / "settings.json"
+    settings.write_text(json.dumps({"claudeMdExcludes": ["**/CLAUDE.md"]}), encoding="utf-8")
+    debug = tmp / ("debug-%s.log" % label)
+    env = child_env({k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")
+                     and not k.upper().endswith("_PROXY")},
+                    CLAUDE_CONFIG_DIR=str(tmp / ("cfg-" + label)),
+                    CLAUDE_CODE_PLUGIN_CACHE_DIR=str(tmp / ("cache-" + label)),
+                    HARNESS_LESSONS_INBOX=str(tmp / "lessons-inbox.md"),
+                    ANTHROPIC_API_KEY="stub-key",
+                    RIGGER_MODULE_DIRS=module_dirs(names),
+                    HOME=str(tmp), **NO_NETWORK)  # USERPROFILE stays: Store Python derives sys.executable from it
+    env.update(extra or {})
+    command = [test.claude, "-p", probe, "--model", "haiku", "--output-format", "stream-json", "--verbose",
+               "--settings", str(settings), "--debug-file", str(debug), "--allowedTools", "Bash"]
+    for name in names:
+        command += ["--plugin-dir", str(PLUGINS / name)]
+    server = QuietServer(("127.0.0.1", 0), ScriptHandler)
+    server.requests, server.script, server.lock = [], script, threading.Lock()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        env["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:%d" % server.server_address[1]
+        status, out = stream_claude(command, cwd, env, timeout)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(10)
+    test.assertEqual(status, 0, "\n".join(out[-20:]))
+    requests = [body for body in server.requests if any(probe in text for text in strings(body.get("messages")))]
+    test.assertTrue(requests, "no request carries the probe word")
+    test.assertFalse([t for t in strings(requests[0]) if ANCESTOR_SENTINEL in t], "a CLAUDE.md above the cwd leaked in")
+    return requests, debug.read_text(encoding="utf-8", errors="replace")
+
+
+@unittest.skipIf(os.environ.get("HARNESS_NO_CLAUDE") == "1", "HARNESS_NO_CLAUDE=1: claude -p not run")
+class ShellwiseSessionTests(unittest.TestCase):
+    """rigger-core, rigger-testing and rigger-shellwise from --plugin-dir; the shellwise data folder filled by the
+    module's installer from the pinned archive on a local server."""
+
+    def setUp(self):
+        self.claude = shutil.which("claude")
+        self.assertIsNotNone(self.claude, "claude CLI not on PATH; run_tests.py --no-claude skips this test")
+        assets = os.environ.get("SHELLWISE_ASSETS")
+        if not assets:
+            self.skipTest("SHELLWISE_ASSETS unset: no pinned shellwise archive to install without the network")
+        sys.path.insert(0, str(SHELLWISE / "tools" / "install"))
+        try:
+            import shellwise_install
+        finally:
+            sys.path.remove(str(SHELLWISE / "tools" / "install"))
+        self.pin = json.loads((SHELLWISE / "pin.json").read_text(encoding="utf-8"))
+        self.target = shellwise_install.host_target()
+        self.assertIn(self.target, self.pin["assets"], "no pinned asset for this host")
+        archive = Path(assets) / self.pin["assets"][self.target]["name"]
+        self.assertTrue(archive.is_file(), "SHELLWISE_ASSETS holds no %s" % archive.name)
+        self.tmp = Path(tempfile.mkdtemp(prefix="stub-shellwise-"))
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        (self.tmp / "CLAUDE.md").write_text(ANCESTOR_SENTINEL + "\n", encoding="utf-8")
+        self.cwd = self.tmp / "cwd"
+        self.cwd.mkdir()
+        files = QuietServer(("127.0.0.1", 0), functools.partial(QuietFiles, directory=str(assets)))
+        thread = threading.Thread(target=files.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 10)
+        self.addCleanup(files.server_close)
+        self.addCleanup(files.shutdown)
+        self.base_url = "http://127.0.0.1:%d/" % files.server_address[1]
+
+    def install(self, label):
+        """The installer's --child into the data folder the session of `label` reads; the folder's shellwise/."""
+        data = self.tmp / ("cache-" + label) / DATA[0] / (DATA[1] % "rigger-shellwise")
+        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", str(SHELLWISE / "tools" / "install" /
+                                                                       "shellwise_install.py"),
+                               "--child", "--data", str(data), "--base-url", self.base_url],
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stdout.decode("utf-8", "replace"))
+        status = json.loads((data / "shellwise" / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual((status["state"], status["version"], status["target"]),
+                         ("ready", self.pin["version"], self.target), status)
+        return data / "shellwise"
+
+    def session(self, label, script, cwd=None, extra=None):
+        return scripted_session(self, self.tmp, label, GUARDED, script, cwd or self.cwd, extra)
+
+    def test_break_is_denied_and_warn_runs_with_its_note(self):
+        self.install("deny")
+        command, rule, marker = BREAK
+        requests, debug = self.session("deny", [bash_use("toolu_break", command), bash_use("toolu_warn", WARN[0])])
+        # The control that this session read the installed folder: its first request names the ready binary.
+        first = [line for text in strings(requests[0]) for line in text.splitlines()]
+        self.assertIn("SessionStart:startup hook success: shellwise: v%s ready" % self.pin["version"], first)
+        denied = tool_result(requests, "toolu_break")
+        self.assertIsNotNone(denied, "no request carries the break command's reply")
+        self.assertIn("shellwise: break %s: " % rule, denied)
+        self.assertFalse((self.cwd / marker).exists(), "the denied command ran")
+        ran = tool_result(requests, "toolu_warn")
+        self.assertIn("M3W", (ran or "").splitlines(), "the warn command did not run")
+        after = [body for body in requests if tool_result([body], "toolu_warn") is not None]
+        self.assertTrue([t for t in strings(after[0]) if "shellwise: warn %s: " % WARN[1] in t], "the warn note")
+        self.assertEqual(len(plugin_hook_lines(debug, "PreToolUse:Bash", "rigger-shellwise")), 2,
+                         "shellwise PreToolUse:Bash handler runs")
+
+    def test_commit_writes_one_row_from_the_testing_module(self):
+        empty = self.tmp / "gitconfig"
+        empty.write_bytes(b"")
+        git = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(empty), "GIT_AUTHOR_NAME": "test",
+               "GIT_AUTHOR_EMAIL": "test", "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test"}
+        git_env = dict({k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}, **git)
+        for opted, rows_expected in ((True, 1), (False, 0)):
+            with self.subTest(gates_json=opted):
+                label = "commit-%s" % opted
+                self.install(label)
+                repo = self.tmp / ("repo-%s" % opted)
+                repo.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=str(repo), env=git_env, check=True, timeout=60)
+                (repo / "a.py").write_bytes(b"x = 1\n")
+                if opted:
+                    (repo / ".claude").mkdir()
+                    (repo / ".claude" / "gates.json").write_text(json.dumps(
+                        {"commit": "shadow", "checks": ["pytest"], "scope_commit": ["*.py"]}), encoding="utf-8")
+                requests, debug = self.session(label, [bash_use("toolu_commit", "git add -A && git commit -q -m one")],
+                                               cwd=repo, extra=git)
+                log = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=str(repo), env=git_env,
+                                     stdout=subprocess.PIPE, timeout=60)
+                self.assertEqual(log.stdout.decode().strip(), "1", tool_result(requests, "toolu_commit"))
+                rows = self.tmp / ("cache-" + label) / DATA[0] / (DATA[1] % "rigger-testing") / "commit-gate" / "rows"
+                found = sorted(rows.iterdir()) if rows.is_dir() else []
+                self.assertEqual(len(found), rows_expected, [p.name for p in found])
+                for path in found:
+                    row = json.loads(path.read_text(encoding="utf-8"))
+                    self.assertEqual(row["op"], "commit")
+                    self.assertNotEqual(row["verdict"], "error", row)
+                # Both modules' PreToolUse:Bash handlers ran on the commit.
+                self.assertTrue(plugin_hook_lines(debug, "PreToolUse:Bash", "rigger-shellwise"))
+                self.assertTrue(plugin_hook_lines(debug, "PreToolUse:Bash", "rigger-testing"))
+
+    def test_removed_binary_leaves_the_line_and_the_command_runs(self):
+        root = self.install("removed")
+        binary = Path((root / "current").read_text(encoding="utf-8").strip())
+        binary.unlink()
+        # A fresh lock: the session start sees another download running and starts none (no network).
+        (root / "lock").write_text(json.dumps({"pid": 0, "start": time.time()}), encoding="utf-8")
+        before = {name: (root / name).read_bytes() for name in ("status.json", "lock")}
+        command, _, marker = BREAK
+        requests, _ = self.session("removed", [bash_use("toolu_break", command)])
+        first = [line for text in strings(requests[0]) for line in text.splitlines()]
+        self.assertIn("SessionStart:startup hook success: " + NO_BINARY_LINE, first)
+        self.assertIsNotNone(tool_result(requests, "toolu_break"), "no request carries the command's reply")
+        self.assertNotIn("shellwise:", tool_result(requests, "toolu_break"))
+        self.assertTrue((self.cwd / marker).exists(), "the unguarded command did not run")
+        self.assertEqual({name: (root / name).read_bytes() for name in before}, before, "a download child ran")
+
+
+@unittest.skipIf(os.environ.get("HARNESS_NO_CLAUDE") == "1", "HARNESS_NO_CLAUDE=1: claude -p not run")
+class TurnGuardSessionTests(unittest.TestCase):
+    """Task 5's turn guard (D89) in a real session: the stub starts `<python> run_tests.py` in the background and
+    then ends its turn while the script sleeps."""
+    SLEEP = 9
+
+    def setUp(self):
+        self.claude = shutil.which("claude")
+        self.assertIsNotNone(self.claude, "claude CLI not on PATH; run_tests.py --no-claude skips this test")
+        self.tmp = Path(tempfile.mkdtemp(prefix="stub-guard-"))
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        (self.tmp / "CLAUDE.md").write_text(ANCESTOR_SENTINEL + "\n", encoding="utf-8")
+        self.cwd = self.tmp / "cwd"
+        self.cwd.mkdir()
+        (self.cwd / "run_tests.py").write_text("import time\ntime.sleep(%d)\nprint('tests done')\n" % self.SLEEP,
+                                               encoding="utf-8")
+
+    def test_a_background_gate_holds_the_turn(self):
+        use = bash_use("toolu_gate", '"%s" run_tests.py' % Path(sys.executable).as_posix(), run_in_background=True)
+        # `claude -p` reports sdk-cli, which the guard never holds (its control); the desktop app's entrypoint is held.
+        for entrypoint, held in (("claude-desktop", True), (None, False)):
+            with self.subTest(entrypoint=entrypoint):
+                label = "guard-%s" % (entrypoint or "sdk-cli")
+                # The block count is written beside <config>/state/<session>.md; a fresh config has no state folder
+                # and then the guard allows (reported in exit-criteria.md), so the folder is made here.
+                (self.tmp / ("cfg-" + label) / "state").mkdir(parents=True)
+                extra = {"CLAUDE_CODE_ENTRYPOINT": entrypoint} if entrypoint else {}
+                requests, debug = scripted_session(self, self.tmp, label, ("rigger-core",), [use], self.cwd, extra)
+                self.assertIsNotNone(tool_result(requests, "toolu_gate"), "the background run did not start")
+                said = [line for body in requests for text in strings(body.get("messages")) for line in text.splitlines()
+                        if line.startswith("turn-guard: background run ") and line.endswith("Block 1 of 3.")]
+                self.assertEqual(bool(said), held, "a turn-guard block reached the next request")
+                stops = plugin_hook_lines(debug, "Stop", "rigger-core")
+                self.assertTrue([line for line in stops if "side_session_guard.py" in line], "Stop handler runs")
+                blocked = [line for line in debug.splitlines() if '"decision":"block"' in line and "turn-guard:" in line]
+                self.assertEqual(bool(blocked), held, "the Stop block in the debug log")
 
 
 if __name__ == "__main__":
