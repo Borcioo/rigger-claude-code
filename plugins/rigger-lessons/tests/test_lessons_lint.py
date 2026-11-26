@@ -543,6 +543,40 @@ class LessonsLintTests(unittest.TestCase):
                                                     modules),
                          "guard live:unclaimed: claimed; guard live:unclaimed: other; guard live:unclaimed: string")
 
+    def test_old_rule_id_is_claimed_through_aliases(self):
+        """An old id among the ALIASES keys of shellwise's rule_checker.py is claimed like a RULES id, with only
+        that checker in the repo (no lessons_guard.py beside it): a case whose tools name no shell is judged by
+        it, not accepted."""
+        self.build(set_meta(D, guard="live:bash-too-long", tools="[composer]"))
+        real = PLUGIN.parent / "rigger-shellwise" / "tools" / "rule-checker" / "rule_checker.py"
+        self.assertTrue(real.is_file(), real)
+        checker = self.tmp / "plugins" / "rigger-shellwise" / "tools" / "rule-checker" / "rule_checker.py"
+        checker.parent.mkdir(parents=True)
+        shutil.copyfile(str(real), str(checker))
+        self.assertEqual(lessons_lint.find_checkers([str(self.tmp)]), [str(checker)])
+        saved = {key: os.environ.pop(key) for key in ("CLAUDE_PLUGIN_DATA",) if key in os.environ}
+        saved["CLAUDE_CONFIG_DIR"] = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "no-config")   # never the real plugin data
+        try:
+            result = lessons_lint.lint(str(self.archive))
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        self.assertEqual(result, (5, ["%s: guard live:bash-too-long: tools names no shell (powershell, bash, git-bash) "
+                                      "to run the probe in" % os.path.join(str(self.archive), D)]))
+        # ALIASES that is no mapping claims nothing, not even a string equal to the id
+        shaped = self.tmp / "string_aliases.py"
+        with open(shaped, "w", encoding="utf-8", newline="") as handle:
+            handle.write("ALIASES = 'bash-too-long'\n"
+                         "def rule_guard_problem(rule, meta):\n    return 'guard live:%s: string' % rule\n")
+        modules, problems = lessons_lint.load_checkers([str(shaped)])
+        self.assertEqual((len(modules), problems), (1, []))
+        self.assertIsNone(lessons_lint.guard_problem("live:bash-too-long", str(self.tmp),
+                                                     {"tools": ["composer"], "probe": "x"}, modules))
+
     def test_rule_checker_found_in_repo_through_a_link(self):
         """A --repo given as a junction (Windows) or symlink finds its plugins/*/tools/*/lessons_guard.py and
         plugins/*/tools/*/rule_checker.py, and its test guards resolve through the link."""
