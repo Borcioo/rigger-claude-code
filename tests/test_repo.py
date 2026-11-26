@@ -26,10 +26,11 @@ import run_tests  # noqa: E402
 import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
-PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows", "rigger-shellwise")
-PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
+PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-shellwise")
+PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + (
+    "rigger-rules", "rigger-talk", "rigger-wp", "rigger-platform")
 # Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
-PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk",
+PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-platform", "rigger-wp", "rigger-lessons", "rigger-talk",
                            "rigger-review", "rigger-testing")
 
 
@@ -67,7 +68,7 @@ class ManifestTests(unittest.TestCase):
                 "rigger-rules",
                 "rigger-talk",
                 "rigger-wp",
-                "rigger-windows",
+                "rigger-platform",
                 "rigger-shellwise",
                 "rigger-panel",
             ],
@@ -121,7 +122,6 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(module.layer, "general")
 
     def test_slot_fields_of_each_manifest(self):
-        guard = {"kind": "hook", "target": "rigger-windows", "rule_checker": "tools/shell-guard/lessons_guard.py"}
         reviewer = {"kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule"}
         testing = {"kind": "skill", "target": "rigger-testing:testing"}
         expected = {
@@ -129,7 +129,7 @@ class ManifestTests(unittest.TestCase):
             "rigger-review": ("reviewer", None, {"reviewer": reviewer}, ["reviewer"]),
             "rigger-testing": ("testing", None, {"testing": testing}, []),
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
-            "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
+            "rigger-platform": (None, None, {}, []),
             "rigger-shellwise": ("shell-guard", "closed", {"shell-guard": {
                 "kind": "hook", "target": "rigger-shellwise",
                 "rule_checker": "tools/rule-checker/rule_checker.py"}}, ["shell-guard"]),
@@ -223,7 +223,7 @@ HOOK_EVENTS = frozenset(
 )
 # Exit 2 from a command hook stops the tool call, the prompt or the compaction.
 EXIT_2_BLOCKS = ("PreToolUse", "UserPromptSubmit", "PreCompact")
-FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-windows")
+FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-testing")
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"
@@ -288,8 +288,8 @@ CONTEXT = "context-guard"
 # A hand-made settings.json that copied these hooks before installing the plugins ("Migrating a
 # hand-made setup" in README.md): (row, event, matcher, handler, fate once the plugins are
 # installed). A fate names the plugin that now ships the handler; "stays" is the user's own and stays
-# in settings.json; "replaced" goes, with a plugin script of another name doing the work, or rows
-# 9-12, 14 and 15 with row 19's `*git*` handler, which starts the git rule on every git call.
+# in settings.json; "replaced" goes, with a plugin script of another name doing the work: rows 8-21
+# by rigger-shellwise's guard and rigger-testing's commit_shadow.py (D79).
 HAND_MADE_HOOKS = (
     (1, "SessionStart", None, {"type": "command", "command": USER_COMMAND}, "stays"),
     (2, "SessionStart", None, {"type": "command", "command": INBOX_COMMAND}, "replaced"),
@@ -300,21 +300,21 @@ HAND_MADE_HOOKS = (
     (5, "PostCompact", None, guard_handler(CONTEXT, "compact_guard.py", "post"), "rigger-core"),
     (6, "UserPromptSubmit", None, {"type": "command", "command": TASK_LIST_COMMAND}, "stays"),
     (7, "UserPromptSubmit", None, guard_handler(CONTEXT, "context_guard.py"), "rigger-core"),
-    (8, "PreToolUse", "PowerShell", shell_guard("--pwsh-all", None, 10), "rigger-windows"),
+    (8, "PreToolUse", "PowerShell", shell_guard("--pwsh-all", None, 10), "replaced"),
     (9, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(git checkout *)", 10), "replaced"),
     (10, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git* checkout *)", 10), "replaced"),
     (11, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(git restore *)", 10), "replaced"),
     (12, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git* restore *)", 10), "replaced"),
-    (13, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*worktree remove *)", 10), "rigger-windows"),
+    (13, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*worktree remove *)", 10), "replaced"),
     (14, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git commit *)", 10), "replaced"),
     (15, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git* commit *)", 10), "replaced"),
-    (16, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*push *--no-veri*)", 10), "rigger-windows"),
-    (17, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*tee *)", 5), "rigger-windows"),
-    (18, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*safe-edit*)", 5), "rigger-windows"),
-    (19, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git*)", 10), "rigger-windows"),
-    (20, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*<<*)", 5), "rigger-windows"),
+    (16, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*push *--no-veri*)", 10), "replaced"),
+    (17, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*tee *)", 5), "replaced"),
+    (18, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*safe-edit*)", 5), "replaced"),
+    (19, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git*)", 10), "replaced"),
+    (20, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*<<*)", 5), "replaced"),
     # The `if` is unescaped twice: eight backslashes match a literal `\\`.
-    (21, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*" + "\\" * 8 + "*)", 5), "rigger-windows"),
+    (21, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*" + "\\" * 8 + "*)", 5), "replaced"),
 )
 
 
@@ -413,7 +413,7 @@ class HookFileTests(unittest.TestCase):
         found = [handler for plugin in ("rigger-core", "rigger-testing")
                  for event, _group, handler in hook_handlers(ROOT / "plugins" / plugin / "hooks" / "hooks.json")
                  if event == "PreToolUse"]
-        self.assertEqual(len(found), 4)
+        self.assertEqual(len(found), 6)
         for handler in found:
             self.assertEqual(handler["timeout"], 20)
 
@@ -473,25 +473,6 @@ class HookFileTests(unittest.TestCase):
                     checked.append(plugin.name)
         self.assertEqual(sorted(checked), sorted(PLUGINS_WITH_CORE_CHECK))
 
-    def test_pretooluse_commands_still_deny_with_their_exit_zero(self):
-        event = json.dumps(
-            {"tool_name": "Bash", "tool_input": {"command": "git commit --no-verify -m x"}, "cwd": str(ROOT)}
-        ).encode("utf-8")
-        plugin = ROOT / "plugins" / "rigger-windows"
-        handlers = [
-            handler
-            for _, _, handler in hook_handlers(plugin / "hooks" / "hooks.json")
-            if "--only-git" in handler["command"] or "--pwsh-all" in handler["command"]
-        ]
-        self.assertEqual(len(handlers), 4)
-        data = tempfile.mkdtemp(prefix="hook-data-")
-        self.addCleanup(shutil.rmtree, data, True)
-        for handler in handlers:
-            with self.subTest(command=handler["command"]):
-                proc = self.run_hook(handler["command"], plugin, Path(data), event)
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertIn(b'"permissionDecision": "deny"', proc.stdout)
-
     def bare_plugin(self, plugin):
         """A copy of the plugin with its launcher and manifest but no scripts, under a path with a space."""
         base = Path(tempfile.mkdtemp(prefix="hook root "))
@@ -549,7 +530,7 @@ class DuplicateHookTests(unittest.TestCase):
         self.assertEqual(harness_start.describe(handler), "UserPromptSubmit, context_guard.py")
 
     def test_every_moved_row_is_a_plugin_handler_with_its_timeout(self):
-        for number, event, matcher, handler, fate in self.rows("rigger-core", "rigger-windows"):
+        for number, event, matcher, handler, fate in self.rows("rigger-core"):
             with self.subTest(row=number):
                 wanted = harness_start.handlers(settings_hooks([(number, event, matcher, handler, fate)]), "x")[0][1:]
                 path = ROOT / "plugins" / fate / "hooks" / "hooks.json"
@@ -562,19 +543,20 @@ class DuplicateHookTests(unittest.TestCase):
                 self.assertEqual(matches[0]["timeout"], handler["timeout"])
 
     def test_plugins_hold_no_handler_besides_the_table_and_the_known_ones(self):
-        moved = len(self.rows("rigger-core", "rigger-windows"))
+        moved = len(self.rows("rigger-core"))
         names = sorted(
             item.identity[1]
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 20)
+        self.assertEqual(len(names), moved + 22)
         self.assertEqual(names.count("state.py"), 1)
         self.assertEqual(names.count("core_check.sh"), 6)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
         self.assertEqual(names.count("stop_shadow.py"), 1)
+        self.assertEqual(names.count("commit_shadow.py"), 2)
         self.assertEqual(names.count("report_shadow.py"), 1)
         self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
@@ -600,7 +582,7 @@ class DuplicateHookTests(unittest.TestCase):
                 self.assertEqual([item.source for item in found if item.identity[1] == name], [])
 
     def test_all_moved_rows_are_named_on_a_hand_made_config(self):
-        self.assertEqual(len(self.check(HAND_MADE_HOOKS)), len(self.rows("rigger-core", "rigger-windows")))
+        self.assertEqual(len(self.check(HAND_MADE_HOOKS)), len(self.rows("rigger-core")))
 
 
 BOM_BYTES = chr(0xFEFF).encode("utf-8")
@@ -611,8 +593,9 @@ WINDOWS_GIT_DIR_RE = re.compile(r"gitdir: ([A-Za-z]):/(.*)")
 
 
 def git_env(root):
-    """The environment for git in `root`; a worktree made on Windows needs explicit paths under WSL."""
-    env = dict(os.environ)
+    """The environment for git in `root`: no inherited GIT_* variable, so a caller's GIT_DIR cannot aim a test's git at
+    another repository; a worktree made on Windows needs explicit paths under WSL."""
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     dot_git = root / ".git"
     if os.name != "nt" and dot_git.is_file():
         match = WINDOWS_GIT_DIR_RE.fullmatch(dot_git.read_text(encoding="utf-8").strip())
@@ -673,7 +656,7 @@ class DiscoveryCheckTests(unittest.TestCase):
     def test_undiscovered_files_are_named(self):
         repo = Path(tempfile.mkdtemp(prefix="discovery-"))
         self.addCleanup(shutil.rmtree, repo, True)
-        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True, timeout=60)
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), env=git_env(repo), check=True, timeout=60)
         names = (
             "tests/test_a.py",
             "plugins/p/tools/t/test_d.py",
@@ -688,7 +671,7 @@ class DiscoveryCheckTests(unittest.TestCase):
         for name in names:
             write_text(repo / name, "")
         (repo / "tests" / "test_untracked.py").write_bytes(b"")
-        subprocess.run(["git", "add", "--", *names], cwd=str(repo), check=True, timeout=60)
+        subprocess.run(["git", "add", "--", *names], cwd=str(repo), env=git_env(repo), check=True, timeout=60)
         self.assertEqual(
             undiscovered_tests(repo),
             (5, ["plugins/p/tools/t/test_d.py", "tests/control/test_f.py", "tools/t/e.tests.ps1"]),
@@ -699,12 +682,12 @@ class ZeroWidthTests(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp(prefix="invisible-"))
         self.addCleanup(shutil.rmtree, self.repo, True)
-        subprocess.run(["git", "init", "-q"], cwd=str(self.repo), check=True, timeout=60)
+        subprocess.run(["git", "init", "-q"], cwd=str(self.repo), env=git_env(self.repo), check=True, timeout=60)
 
     def track(self, name, data):
         path = self.repo / name
         path.write_bytes(data)
-        subprocess.run(["git", "add", "--", name], cwd=str(self.repo), check=True, timeout=60)
+        subprocess.run(["git", "add", "--", name], cwd=str(self.repo), env=git_env(self.repo), check=True, timeout=60)
 
     def test_repo_is_clean(self):
         read, findings = invisible_findings(ROOT)
@@ -754,6 +737,56 @@ class ZeroWidthTests(unittest.TestCase):
         (tree / ".git").write_text("gitdir: %s:%s\n" % (letter.upper(), tail), encoding="utf-8")
         env = git_env(tree)
         self.assertEqual((env.get("GIT_DIR"), env.get("GIT_WORK_TREE")), ("/mnt/%s%s" % (letter, tail), str(tree)))
+
+
+# One case per place in this file that starts git, run by ChildGitEnvTests in a child that inherits GIT_* variables.
+CHILD_GIT_CASES = (
+    "DiscoveryCheckTests.test_undiscovered_files_are_named",
+    "ZeroWidthTests.test_repo_is_clean",
+    "ZeroWidthTests.test_a_no_break_space_is_caught_with_its_line",
+    "RunTestsMainTests.test_fix_round_runs_the_changed_test_and_the_repo_test",
+)
+UNITTEST_RESULT_RE = re.compile(r"^Ran (\d+) tests? in [^\n]*\n\n(\S[^\n]*)$", re.M)
+
+
+def without_git_variables():
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+
+
+def files_under(folder):
+    return {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+
+
+class ChildGitEnvTests(unittest.TestCase):
+    def test_child_gits_ignore_an_inherited_git_dir(self):
+        tmp = Path(tempfile.mkdtemp(prefix="child-git-env-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        other, work = tmp / "other", tmp / "work"
+        other.mkdir()
+        work.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(other), env=without_git_variables(), check=True, timeout=60)
+        git_dir = other / ".git"
+        before = files_under(git_dir)
+        env = dict(os.environ, HARNESS_NO_CLAUDE="1", GIT_DIR=str(git_dir), GIT_WORK_TREE=str(work),
+                   GIT_INDEX_FILE=str(git_dir / "stray-index"))
+        proc = subprocess.run(
+            [sys.executable, "-I", "-X", "utf8", str(Path(__file__).resolve()), *CHILD_GIT_CASES],
+            cwd=str(ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=600,
+        )
+        output = proc.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
+        worktree = subprocess.run(["git", "config", "--file", str(git_dir / "config"), "--get", "core.worktree"],
+                                  cwd=str(tmp), env=without_git_variables(), capture_output=True, timeout=60)
+        self.assertEqual((worktree.returncode, worktree.stdout), (1, b""), output)
+        self.assertEqual(files_under(git_dir).get("config"), before["config"], output)
+        self.assertEqual(files_under(git_dir), before, output)
+        match = UNITTEST_RESULT_RE.search(output)
+        self.assertIsNotNone(match, output)
+        self.assertEqual(match.groups(), (str(len(CHILD_GIT_CASES)), "OK"), output)
 
 
 class ClaudeMdTests(unittest.TestCase):
@@ -1120,16 +1153,17 @@ class RunTestsPowerShellTests(unittest.TestCase):
                 self.assertEqual(code, expected_code, buffer.getvalue())
                 self.assertIn(expected, buffer.getvalue())
 
-    def test_real_ps1_file_is_discovered(self):
-        found = [path.relative_to(ROOT).as_posix() for path in run_tests.discover(ROOT)]
-        self.assertIn("plugins/rigger-windows/tools/safe-edit/tests/safe-edit.tests.ps1", found)
-        self.assertIn("plugins/rigger-windows/tools/mem-check/mem-check.tests.ps1", found)
-
 
 class RunTestsMainTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="run-tests-"))
         self.addCleanup(shutil.rmtree, self.root, True)
+        # run_tests runs git in this process: an inherited GIT_DIR would aim it, and the fixture's git, at another repo.
+        scrub = mock.patch.dict(os.environ)
+        scrub.start()
+        self.addCleanup(scrub.stop)
+        for key in [key for key in os.environ if key.upper().startswith("GIT_")]:
+            del os.environ[key]
 
     def set_env(self, key, value):
         old = os.environ.get(key)

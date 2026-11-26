@@ -10,15 +10,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import run_tests  # noqa: E402
 import select_tests  # noqa: E402
+from test_repo import git_env  # noqa: E402
 
 PY_SH = "plugins/rigger-%s/bin/py.sh"
 
 
 def git(root, *args):
-    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), *args], env=git_env(Path(root)), check=True, capture_output=True)
 
 
 def write(root, rel, text=""):
@@ -61,7 +63,7 @@ class RealTreeTests(unittest.TestCase):
         self.assertIn("tests/test_py_sh.py", selected)
 
     def test_every_other_copy_of_py_sh_runs_the_test_that_compares_them(self):
-        for plugin in ("core", "windows"):
+        for plugin in ("core", "shellwise"):
             with self.subTest(plugin):
                 selected, unmapped = self.picked(PY_SH % plugin)
                 self.assertEqual(unmapped, [])

@@ -17,7 +17,7 @@ and sibling plugins are hard-coded in rules, skills, agents and tests. For examp
 - `plugins/rigger-core/skills/orchestrating-subagents/SKILL.md:89-93` names the worker and reviewer
   agents.
 - `plugins/rigger-rules/rules/rules_start.sh:87` lists the agent types that get no rules.
-- `plugins/rigger-core/tools/doctor/doctor.sh:489` requires `rigger-windows` on Windows.
+- `plugins/rigger-core/tools/doctor/doctor.sh:495` requires `rigger-windows` on Windows.
 
 So replacing the reviewer, the testing skill or the shell guard means editing several plugins at
 once. A company that wants its own rules, deploy skill or ticket flow on top of Rigger has to fork
@@ -1164,34 +1164,34 @@ its analysis cannot finish it blocks with `danger`, so it fails closed.
 
 | Item today | Lands in | Note |
 |---|---|---|
-| `tools/shell-guard/shell_guard.py` (deny rules, PowerShell and git handlers, `hooks.json:20-77`) | **deleted**; the slot is filled by `rigger-shellwise` | shellwise is not changed for Rigger. 4 Python-guard rules have no shellwise counterpart: `bash-powershell-syntax`, `bash-ps-call-operator`, `bash-too-long` and `bash-unterminated-quote`. They are not a Rigger dependency, and their tests go with the Python guard. Proposing them to shellwise is a separate item outside this plan. |
-| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **`rigger-shellwise`** `tools/rule_checker.py`, a Python module with `RULES` and `rule_guard_problem` built on `explain` and `check` | `curate-lessons/SKILL.md:92-99` takes the checker path from the shell-guard filler's manifest (`provides.shell-guard.rule_checker`) instead of looking up `rigger-windows@`. A `live:<rule>` lesson for a rule the active filler lacks, the 4 above included, is reported as `no checker` by doctor and curation. It is never dropped, as `SKILL.md:96-99` already does for a missing checker. |
+| `tools/shell-guard/shell_guard.py` (deny rules, PowerShell and git handlers, `hooks.json:11-69`) | **deleted**; the slot is filled by `rigger-shellwise` | shellwise is not changed for Rigger. Every Python-guard rule has a shellwise counterpart. The rule checker covers `bash-powershell-syntax`, `bash-too-long` and `bash-unterminated-quote` through aliases to `bash-ps-cmdlet`, `too-long` and `parse-error` (`rule_checker.py` `ALIASES`; `bash-ps-call-operator` is a v0.1.1 rule, `docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md`). The Python guard's own tests go with it. |
+| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **`rigger-shellwise`** `tools/rule_checker.py`, a Python module with `RULES` and `rule_guard_problem` built on `explain` and `check` | `curate-lessons/SKILL.md:94-104` takes the checker path from the shell-guard filler's manifest (`provides.shell-guard.rule_checker`) instead of looking up `rigger-windows@`. A `live:<rule>` lesson for a rule the active filler lacks is reported as `no checker` by doctor and curation. It is never dropped, as `SKILL.md:96-99` already does for a missing checker. |
 | `rigger-core/tools/token-audit/tests/test_archive.py` (checks `lessons_guard.py`'s rule ids against `shell_guard.py`, `test_archive.py:19,241-242,316`) | rewritten against a stub checker module | It checks the checker interface, not one filler's rule list. |
 | commit shadow rule inside `shell_guard.py`, `stop_shadow.py`, `turn_evidence.py`, `.claude/gates.json` format (`INSTALL.md` "Shadow gates") | **rigger-testing** `tools/test-evidence/` | These ask whether a check ran after the last edit, a testing question, not a command-shape one. The commit rule is extracted from `shell_guard.py` into its own handler on `Bash(*commit*)` and `PowerShell(*commit*)`. `tests/test_repo.py` handler counts change. |
 | `tools/gate-lab/` (replay and report of the shadow gates) | **rigger-testing** `tools/gate-lab/` | It measures the gates above. The `CLAUDE.md:21` pitfall path follows. |
 | `tools/safe-edit/safe-edit.ps1` (red run in place) | **rigger-testing** `tools/safe-edit/` | pwsh runs on all 3 OSes. Its references `tests.md:13`, `defects.md:37` and `testing/SKILL.md:85` become `{{tool:…}}` with `requires: plugin:rigger-testing`. Porting it to Python is the builder's call. |
-| `tools/drift-lint/` (dangling skill, agent, path references) | **rigger-core** `tools/drift-lint/` | It becomes a reader of manifests too, so a trigger `load` naming a missing skill is a drift finding. `CONTRIBUTING.md:36` path follows. |
-| `tools/mem-check/` (Windows commit-charge headroom) | **rigger-platform** | `run_tests.py:89` path follows. |
+| `tools/drift-lint/` (dangling skill, agent, path references) | **rigger-core** `tools/drift-lint/` | It becomes a reader of manifests too, so a trigger `load` naming a missing skill is a drift finding. `CONTRIBUTING.md:42` path follows. |
+| `tools/mem-check/` (Windows commit-charge headroom) | **rigger-core** `tools/mem-check/mem_check.py`, the Python port (D80) | `run_tests.py` no longer names it. |
 | skills `windows-dev-env`, `node-versions`, `php-herd-tooling` | **rigger-platform** | Trigger rows carry `requires` on the OS (`os:windows` for `windows-dev-env`). `php-herd-tooling` and `node-versions` serve macOS too. The local docs folder `<config dir>/rigger-windows/herd-docs/` (`php-herd-tooling/SKILL.md:113`) becomes `<config dir>/rigger-platform/herd-docs/`, and the skill reads the old path for one release. |
-| `CONTRIBUTING.md:86-90` (this repo's `.claude/gates.json` opt-in, pointing at rigger-windows' INSTALL) | points at rigger-testing's `tools/test-evidence/` docs | The `gates.json` content does not change. |
+| `CONTRIBUTING.md:114-118` (this repo's `.claude/gates.json` opt-in, pointing at rigger-windows' INSTALL) | points at rigger-testing's `tools/test-evidence/` docs | The `gates.json` content does not change. |
 | `rules/windows.md` (PowerShell is the default shell, scripts over 10 lines via a file) | **rigger-platform**, `requires: os:windows` | The `Plugin root:` preamble goes, because `{{tool:}}` replaces root-relative names. |
-| `rules/windows-skills.md` | **rigger-platform** manifest `triggers` | The table merged into the one table in phase 2. |
+| `rules/windows-skills.md` | **rigger-platform** manifest `triggers` | The table merged into the one table in phase 2; the file no longer exists, its rows are triggers in `rigger-module.json`. |
 | 5 evals (`bash-in-powershell`, `commit-message-file-path`, `rmtree-readonly-objects`, `utf8-env-hides-bug`, `worktree-with-junctions`) | **rigger-platform** `evals/` | They test the platform skill and rules, not the guard. |
-| `hooks.json` `Stop` → `stop_shadow.py` | **rigger-testing** | async, as today (`tests/test_repo.py:270`). |
-| `bin/py.sh` copy | each new module gets the byte-identical copy | `tests/test_repo.py:101` |
+| `hooks.json` `Stop` → `stop_shadow.py` | **rigger-testing** | async, as today (`tests/test_repo.py:383-392`). |
+| `bin/py.sh` copy | each new module gets the byte-identical copy | `tests/test_repo.py:202-210` |
 
 Wording that says "with rigger-windows installed" changes to name the platform module or the
 testing module through placeholders or conditional wording:
 
 - `e2e-playwright-speed/SKILL.md:152`;
 - `git-workflow/SKILL.md:21-22`;
-- `orchestrating-subagents/SKILL.md:47-51`;
+- `orchestrating-subagents/SKILL.md:48-52`;
 - `stack-tooling/SKILL.md:72-73`;
 - `testing/SKILL.md:85`;
 - `implementer-brief.md:61,68-69`;
 - `README.md`.
 
-The doctor's Windows requirement (`doctor.sh:489`) becomes "recommends `rigger-platform` and a
+The doctor's Windows requirement (`doctor.sh:495`) becomes "recommends `rigger-platform` and a
 `shell-guard` filler".
 
 **Exit criterion:**
@@ -1393,7 +1393,7 @@ next to Rigger.
 | Two company modules conflict on config. | low | unexpected value | Neither applies, one line names both (§7.3). |
 | A leak guard that reports clean on an empty denylist. | was real for gates | private term published | Fail closed plus a planted-term control per run (§11.4). |
 | The released shellwise binary changes its hook reply or `check --json` shape. | low | `rigger-shellwise` misreads it | Pin a minimum version (S7), and test against a recorded reply of that version. shellwise itself is never changed for Rigger. |
-| Users relied on the 4 Python-guard rules shellwise lacks. | medium on Windows | those mistakes are no longer caught | Release notes name them. `live:` lessons for them show `no checker` and stay. Proposing the rules to shellwise is a separate item. |
+| Users relied on a Python-guard rule whose shellwise counterpart catches less. | low | a mistake is no longer caught | The three renamed rules are covered by aliases in the rule checker. A `live:` lesson for a rule with no checker shows `no checker` and stays. |
 | External reviewer output looks valid but reviews nothing. | medium | false "no findings" | Coverage must equal `review_scope.py`'s list. Quotes must anchor. Empty findings need `shortcuts_check`. |
 | Public text gains a private term through examples. | medium | leak | Generic examples only. Sweep with the maintainer's denylist at release (`gate.py --release`). The contract test refuses `lessons.denylist` in public manifests. |
 

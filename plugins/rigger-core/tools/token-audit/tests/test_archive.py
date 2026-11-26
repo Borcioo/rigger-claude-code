@@ -1,6 +1,5 @@
 """python -I test_archive.py - the lessons archive: the rigger-lessons lint with a stub rule checker
-module, the rigger-windows shell-guard rule checker, `token_audit.py archive` and the history files, on transcripts and a
-lessons repo built in temp folders.
+module, `token_audit.py archive` and the history files, on transcripts and a lessons repo built in temp folders.
 """
 import calendar
 import importlib.util
@@ -16,7 +15,6 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGINS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(HERE))))
 LINT = os.path.join(PLUGINS, "rigger-lessons", "tools", "lessons_lint.py")
-GUARD = os.path.join(PLUGINS, "rigger-windows", "tools", "shell-guard", "lessons_guard.py")
 SCRIPT = os.path.join(os.path.dirname(HERE), "token_audit.py")
 sys.path.insert(0, os.path.dirname(HERE))
 sys.dont_write_bytecode = True
@@ -123,6 +121,9 @@ def build_transcripts(root):
         # Mentioning the marker is not carrying it.
         a_tool_use(S1, "m6", "t6", "PowerShell", {"command": "rg -n 'shell-guard: allow' docs"},
                    "2026-10-20T08:06:00.000Z"),
+        # The shellwise marker counts too; the old one stays counted for old transcripts.
+        a_tool_use(S1, "m6b", "t6b", "Bash", {"command": "git restore a.txt # shellwise: allow"},
+                   "2026-10-20T08:06:30.000Z"),
         a_tool_use(S1, "m7", "t7", "PowerShell", {"command": "wp db export y.sql"}, "2026-10-20T08:07:00.000Z"),
         a_tool_result(S1, "t7", "The user doesn't want to proceed with this tool use.", "2026-10-20T08:07:01.000Z"),
         a_tool_use(S1, "m8", "t8", "Bash", {"command": "make once"}, "2026-10-20T08:08:00.000Z"),
@@ -210,24 +211,6 @@ def case(date, kind="env-defect", cls="wrong-client", guard="none", repeat="none
                        session=session, extra=extra, tools=tools, body=body, rule=rule, scope=scope)
 
 
-# Stands in for shell_guard.py: denies a PowerShell command holding `^`; `warn` gives a finding that does
-# not deny, `boom` raises.
-FAKE_SHELL_GUARD = '''class Finding:
-    def __init__(self, rule, deny, message):
-        self.rule, self.deny, self.message = rule, deny, message
-
-
-def check_installed(tool, cmd, cwd=None):
-    if "boom" in cmd:
-        raise ValueError("boom")
-    if tool == "PowerShell" and "^" in cmd:
-        return [Finding("bat-metachar", "warn" not in cmd, "m")]
-    return []
-
-
-def unused():
-    return Finding("quoted-not-a-rule", True, "m")
-'''
 # Stands in for a shell-guard filler's rule checker module: claims bat-metachar and denies a powershell
 # probe holding `^` with it; `warn` gives a finding that does not deny, `boom` raises.
 STUB_CHECKER = '''RULES = frozenset(("bat-metachar",))
@@ -317,45 +300,6 @@ def lint_with(repo, rel, text, run=None):
         else:
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(before)
-
-
-def check_windows_checker(root):
-    """rigger-windows' lessons_guard.py over a fake shell_guard.py next to it, called as the lint calls it."""
-    def checker(name, shell_guard):
-        folder = os.path.join(root, name)
-        os.makedirs(folder)
-        shutil.copy(GUARD, folder)
-        with open(os.path.join(folder, "shell_guard.py"), "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(shell_guard)
-        modules, problems = ll.load_checkers([os.path.join(folder, "lessons_guard.py")])
-        return modules[0].rule_guard_problem if modules and not problems else problems
-
-    meta = {"tools": ["composer", "powershell"], "probe": "composer require 'a/b:^1'"}
-    guard = checker("fake", FAKE_SHELL_GUARD)
-    rows = {
-        "denies the probe": ("bat-metachar", meta, None),
-        "names a rule the probe does not get": ("quoted-not-a-rule", meta, "guard live:quoted-not-a-rule: "
-            "check_installed does not deny the probe with quoted-not-a-rule (PowerShell: bat-metachar)"),
-        "probe the hook lets through": ("bat-metachar", dict(meta, probe="composer require 'a/b:1'"),
-            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (PowerShell: no deny)"),
-        "finding that does not deny": ("bat-metachar", dict(meta, probe="composer require 'a/b:^1' warn"),
-            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (PowerShell: no deny)"),
-        "shell the hook does not deny in": ("bat-metachar", dict(meta, tools=["bash"]),
-            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (Bash: no deny)"),
-        "check that raises": ("bat-metachar", dict(meta, probe="boom 'a/b:^1'"),
-            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar "
-            "(PowerShell: raised ValueError)"),
-        "no probe": ("bat-metachar", {"tools": ["powershell"]},
-            "guard live:bat-metachar: needs a probe: a command of the failure shape that the hook denies"),
-    }
-    for name, (rule, case_meta, expected) in rows.items():
-        check(f"rigger-windows checker: {name}", guard(rule, case_meta), expected)
-    no_check = checker("no-check-installed", "def check(tool, cmd):\n    return []\n")
-    check("rigger-windows checker: shell_guard.py without check_installed",
-          no_check("bat-metachar", meta).endswith("shell_guard.py has no check_installed"), True)
-    broken = checker("broken", "def check_installed(:\n")
-    check("rigger-windows checker: shell_guard.py that does not load",
-          "shell_guard.py (SyntaxError" in broken("bat-metachar", meta), True)
 
 
 def check_lint(repo):
@@ -576,21 +520,6 @@ def check_lint(repo):
                                                                                  "live:some-lint-rule")
     check("lint: a live rule guard no checker claims, in a case whose tools name no shell, is accepted as written",
           lint_with(repo, first, other_rule), [])
-    composer = {"tools": ["composer", "powershell", "cmd"], "probe": r"vendor\bin\composer require 'pkg:^5.3'"}
-    real, _ = ll.load_checkers([GUARD])
-    with open(os.path.join(os.path.dirname(GUARD), "shell_guard.py"), encoding="utf-8") as fh:
-        reported = set(re.findall(r'Finding\(\s*"([a-z0-9-]+)"', fh.read()))
-    check("rule checker: RULES are the rule ids shell_guard.py reports (20 or more)",
-          (len(reported) >= 20, sorted(real[0].RULES)), (True, sorted(reported)))
-    check("lint: the rigger-windows shell-guard hook denies a real probe",
-          ll.guard_problem("live:bat-metachar", [], composer, real), None)
-    check("lint: ... and lets the same command without the caret through",
-          ll.guard_problem("live:bat-metachar", [], dict(composer, probe="composer require 'pkg:5.3'"), real),
-          "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (PowerShell: no deny)")
-    check("rule checker: tools that name no shell are a problem when it is asked directly",
-          real[0].rule_guard_problem("bat-metachar", dict(composer, tools=["composer"])),
-          "guard live:bat-metachar: tools names no shell (powershell, bash, git-bash) to run the probe in")
-    check_windows_checker(os.path.join(repo, "windows-checker"))
     check("lint: a live guard may name a PowerShell Test-Case",
           ll.guard_problem("live:tools/x/tests/x.tests.ps1::refuses a run", repo), None)
     check("lint: ... but not one that is only in a comment",
@@ -701,8 +630,8 @@ def check_archive(root, repo):
     check("archive: a hook error with no error code shows its first stderr line",
           hooks[1].endswith("No stderr output 1 | PreToolUse:Read | node \"${CLAUDE_PLUGIN_ROOT}/hooks/read-guard.js\""),
           True)
-    check("archive: shell-guard escapes counted from the trailing comment only",
-          "commands carrying '# shell-guard: allow': 1 (PowerShell 1)" in text, True)
+    check("archive: guard escapes (either marker) counted from the trailing comment only",
+          "commands carrying '# shellwise: allow' or '# shell-guard: allow': 2 (Bash 1, PowerShell 1)" in text, True)
     _, missing_case = ta.build_archive(cases, events, NOW, 30, expect_case="2026-10-25-mysql-again.md")
     check("archive: a case no recurring error matches fails the control", missing_case, False)
     _, missing_hook = ta.build_archive(cases, events, NOW, 30, expect_hook=("episodic-memory", "EACCES"))
@@ -716,7 +645,7 @@ def check_archive(root, repo):
           (october.get("events"), october.get("error_results"), october.get("shell_guard_allow"),
            october.get("hooks"), october.get("skills"), october.get("transcripts_modified_since"),
            sorted(october.get("errors_in_2_sessions", {}).values(), key=str)),
-          (16, 10, 1, {f"SessionStart:startup | {EPISODIC}": 2,
+          (17, 10, 2, {f"SessionStart:startup | {EPISODIC}": 2,
                       'PreToolUse:Read | node "${CLAUDE_PLUGIN_ROOT}/hooks/read-guard.js"': 1},
            {"brainstorming": {"Skill": 1}, "windows-dev-env": {"Read": 1}}, "2026-10-03",
            [{"results": 2, "sessions": 2}, {"results": 2, "sessions": 2}, {"results": 5, "sessions": 2}]))

@@ -12,7 +12,7 @@ subagents. It ships seven plugins: working rules (verification, tests, scope, gi
 session start and into every subagent, a lessons inbox that turns mistakes into rules, portable
 skills and agents, context and compaction guards, a side panel, and opt-in packs for native Windows
 and WordPress development. Install the plugins you want; every plugin that holds rules (`rigger-rules`,
-`rigger-lessons`, `rigger-talk`, `rigger-windows`, `rigger-wp`) requires `rigger-core`.
+`rigger-lessons`, `rigger-talk`, `rigger-platform`, `rigger-wp`) requires `rigger-core`.
 
 Everything is plain Markdown, POSIX `sh` and Python hooks: read a rules file before you install it,
 and change it by forking.
@@ -21,11 +21,14 @@ and change it by forking.
 
 | Plugin | Install | Adds | Depends on |
 |---|---|---|---|
-| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps, testing), agents (mapper, implementer, worker, reviewer), context-guard and compact-guard hooks, token-audit, variant-run, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
+| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps), agents (mapper, implementer, worker), context-guard and compact-guard hooks, token-audit, variant-run, drift-lint, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
 | `rigger-rules` | default | the working rules, injected at session start and into subagents, plus every `*.md` file of your own `rules.d` folder | `rigger-core` |
 | `rigger-lessons` | default | lessons inbox count at session start, the capture rule, the `curate-lessons` skill, a lint for lessons, and opt-in background curation batches | `rigger-core` |
 | `rigger-talk` | opt-in | reply-format rules (language, length, report order) for the main session, configured through `userConfig` | `rigger-core` |
-| `rigger-windows` | opt-in, native Windows only | rules (shell, skill triggers), shell-guard hooks (deny commands certain to fail in PowerShell or Git Bash), `safe-edit.ps1`, drift-lint, `mem-check`, skills windows-dev-env, php-herd-tooling, node-versions | `rigger-core` |
+| `rigger-platform` | opt-in, native Windows only | the Windows shell rule, skills windows-dev-env, php-herd-tooling, node-versions | `rigger-core` |
+| `rigger-shellwise` | default | a pinned shellwise binary as the shell guard (checks Bash and PowerShell commands before they run), on Windows, macOS and Linux | `rigger-core` |
+| `rigger-testing` | default | the `testing` skill, the commit-time weak-test guard, `safe_edit.py` (in-place red runs) and the test-evidence and gate-lab tools | `rigger-core` |
+| `rigger-review` | default | the reviewer agent and the `review` skill: every changed file covered, per-language checklists, per-path review rules, and a closing JSON that rigger-core checks | `rigger-core` |
 | `rigger-wp` | opt-in, for WordPress developers | the `rigger-wp-traps` skill, the rule that says when to load it, the `wp-outbound-block` template, and the upstream WordPress agent skills behind `wordpress-router` | `rigger-core` |
 | `rigger-panel` | opt-in | the `/harness` command and four panes beside the chat: Rigger (the session's context, cost and limits, harness state), Issues (the GitHub issues assigned to you, read-only, through `gh`), Plan (the task list) and Environments (the project's `.claude/environments.json`) | none to run; the Rigger pane's version and Compaction rows read `rigger-core` files and its Lessons row reads the `rigger-lessons` inbox (a `?` without them) |
 
@@ -53,13 +56,16 @@ claude plugin marketplace add Borcioo/rigger-claude-code
 claude plugin install rigger-core@rigger
 claude plugin install rigger-rules@rigger
 claude plugin install rigger-lessons@rigger
+claude plugin install rigger-shellwise@rigger
+claude plugin install rigger-testing@rigger
+claude plugin install rigger-review@rigger
 ```
 
 Opt-in plugins install the same way:
 
 ```
 claude plugin install rigger-talk@rigger
-claude plugin install rigger-windows@rigger
+claude plugin install rigger-platform@rigger
 claude plugin install rigger-wp@rigger
 claude plugin install rigger-panel@rigger
 ```
@@ -89,8 +95,9 @@ An agent asked to install Rigger from a link can do it in one go:
    Windows `py -3 --version`), and on native Windows Git Bash where Claude Code finds it. Name what
    is missing and how to get it; install nothing without the user's yes.
 2. Ask once what to leave out (`rigger-talk`, `rigger-wp`, `rigger-panel`, the separate
-   `superpowers` plugin, plugin auto-update). `rigger-core`, `rigger-rules` and `rigger-lessons`
-   are always installed; `rigger-windows` goes on native Windows and never elsewhere.
+   `superpowers` plugin, plugin auto-update). `rigger-core`, `rigger-rules`, `rigger-lessons`,
+   `rigger-shellwise` (the shell guard), `rigger-testing` (the commit and Stop shadows) and `rigger-review`
+   are always installed; `rigger-platform` goes on native Windows and never elsewhere.
 3. Install what is kept with the commands above. Superpowers, unless left out:
    `claude plugin marketplace add obra/superpowers-marketplace`, then
    `claude plugin install superpowers@superpowers-marketplace`.
@@ -119,7 +126,7 @@ plugin's dependency. The rest works without the other plugin; text that names it
 nothing:
 
 - **Sibling plugins.** A rule or skill that names a skill of another plugin (`rigger-core:<skill>`,
-  `rigger-windows:<skill>`, the `safe-edit.ps1` of `rigger-windows`) works only when that plugin is
+  `rigger-platform:<skill>`, the `safe_edit.py` of `rigger-testing`) works only when that plugin is
   installed and enabled.
 - **Superpowers.** A separate plugin, not required. It fills the four `process` slots (brainstorm,
   plans, TDD, debugging); without it those slots are empty and the Skill triggers table drops their
@@ -133,7 +140,7 @@ nothing:
   (layout: `plugins/rigger-lessons/templates/archive/README.md`). `curate-lessons` writes applied
   lessons there, and the verify rule searches it for an error text before debugging. Unset, both
   steps are skipped.
-- **PowerShell tool.** `rigger-windows` assumes Claude Code has a PowerShell tool;
+- **PowerShell tool.** `rigger-platform` assumes Claude Code has a PowerShell tool;
   `CLAUDE_CODE_USE_POWERSHELL_TOOL=1` adds it. Without it the "default shell" rule names a tool
   that does not exist, and the model uses Bash; the Bash guard still runs.
 
@@ -182,7 +189,10 @@ it for one repo only.
 | working rules and your `rules.d` | `claude plugin disable rigger-rules@rigger` |
 | lessons rules and the inbox count | `claude plugin disable rigger-lessons@rigger` |
 | reply-format rules | `claude plugin disable rigger-talk@rigger` |
-| Windows rules, shell guards and skills | `claude plugin disable rigger-windows@rigger` |
+| Windows rules and skills | `claude plugin disable rigger-platform@rigger` |
+| the shell guard | `claude plugin disable rigger-shellwise@rigger` |
+| the testing skill, weak-test guard and shadows | `claude plugin disable rigger-testing@rigger` |
+| the reviewer agent | `claude plugin disable rigger-review@rigger` |
 | WordPress rule and skills | `claude plugin disable rigger-wp@rigger` |
 | the side panel and `/harness` | `claude plugin disable rigger-panel@rigger` |
 | skills, agents, guards and the state-file rule | `claude plugin disable rigger-core@rigger` (disable the rules plugins first: they depend on `rigger-core`) |
@@ -196,8 +206,8 @@ claude plugin marketplace remove rigger
 ```
 
 `--keep-data` keeps a plugin's data directory. Uninstall the plugins before removing the
-marketplace, and **uninstall `rigger-rules`, `rigger-lessons`, `rigger-talk`, `rigger-windows` and `rigger-wp` before
-`rigger-core`**: `claude plugin uninstall rigger-core` succeeds with only a warning, and those plugins then fail to load.
+marketplace, and **uninstall `rigger-rules`, `rigger-lessons`, `rigger-talk`, `rigger-platform`, `rigger-shellwise`,
+`rigger-testing`, `rigger-review` and `rigger-wp` before `rigger-core`**: `claude plugin uninstall rigger-core` succeeds with only a warning, and those plugins then fail to load.
 `claude plugin uninstall rigger-rules@rigger --prune -y` also removes `rigger-core` when it came in
 as a dependency.
 

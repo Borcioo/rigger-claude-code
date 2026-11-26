@@ -672,7 +672,8 @@ def build_prefix(path):
 
 
 SKILL_READ = re.compile(r"[\\/]([^\\/]+)[\\/]SKILL\.md$", re.I)
-ALLOW_COMMENT = re.compile(r"#\s*shell-guard:\s*allow\b")
+# The shellwise marker, and the Python guard's, which older transcripts carry.
+ALLOW_COMMENT = re.compile(r"#\s*(?:shellwise|shell-guard):\s*allow\b")
 HOOK_MARKER = re.compile(r"\b(ERR_[A-Z_]+|E[A-Z]{3,9})\b")
 HOOK_PREFIX = "Failed with non-blocking status code:"
 KINDS = ("env-defect", "knowledge", "judgment", "shortcut")
@@ -949,7 +950,7 @@ def build_archive(cases, events, now, days, expect_case=None, expect_hook=(), co
                  f"error lines in >=2 sessions: {len(recurring)} ({len(with_case)} with a case, "
                  f"{len(no_case)} with no case); cases whose error_text did not recur: {len(unseen)} of {len(texts)}")
     lines.append(f"hook non-blocking errors: {len(recent['hooks'])}; commands carrying "
-                 f"'# shell-guard: allow': {len(recent['allow'])} ("
+                 f"'# shellwise: allow' or '# shell-guard: allow': {len(recent['allow'])} ("
                  + ", ".join(f"{t} {n}" for t, n in sorted(allow_tools.items())) + ")")
     if undated or events.get("failed"):
         lines.append(f"undated events skipped: {undated}; unreadable transcripts: {len(events.get('failed') or [])}")

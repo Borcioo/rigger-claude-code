@@ -20,6 +20,7 @@ from doctor_sh_harness import (  # noqa: E402
     REQUIRED,
     STAMP,
     VERSION,
+    WINDOWS_RECOMMENDED,
     WORKTREE_ROOT,
     dump,
     entry,
@@ -74,7 +75,8 @@ class DoctorShTests(DoctorShCase):
         result = self.run_doctor()
         for name in REQUIRED:
             self.assertRow(result, "plugin " + name, "OK", VERSION)
-        self.assertNotIn("plugin rigger-windows", result.checks)
+        for name in WINDOWS_RECOMMENDED + ("rigger-windows",):
+            self.assertNotIn("plugin " + name, result.checks)
 
     def test_plugin_not_installed(self):
         installed = self.good_installed()
@@ -162,15 +164,36 @@ class DoctorShTests(DoctorShCase):
         result = self.run_doctor()
         self.assertEqual([name for name in result.checks if name.startswith("plugin ")], ["plugin " + n for n in REQUIRED])
 
-    def test_windows_requires_rigger_windows(self):
+    def test_windows_recommends_the_platform_module_and_a_shell_guard_filler(self):
+        # D84: rigger-windows is gone; on Windows the platform module and the shell-guard filler are recommended.
         self.good_config(windows=False)
         result = self.run_doctor("MINGW64_NT-10.0-26100")
-        self.assertRow(result, "plugin rigger-windows", "MISSING")
-        self.assertEqual(result.fixes["plugin rigger-windows"], ["claude plugin install rigger-windows@rigger"])
+        self.assertNotIn("plugin rigger-windows", result.checks)
+        for name in ("rigger-platform", "rigger-shellwise"):
+            with self.subTest(name):
+                self.assertRow(result, "plugin " + name, "WARN", "not installed")
+                self.assertEqual(result.fixes["plugin " + name], ["claude plugin install %s@rigger" % name])
 
-    def test_windows_with_rigger_windows_ok(self):
-        self.good_config(windows=True)
-        self.assertRow(self.run_doctor("MINGW64_NT-10.0-26100"), "plugin rigger-windows", "OK", VERSION)
+    def test_a_still_installed_rigger_windows_is_only_ever_disabled(self):
+        # D84: enabled, it gets a WARN whose FIX disables it; disabled or another scope's install gets no row,
+        # never an enable or install FIX, on any system.
+        cases = (
+            ("enabled", True, entry(VERSION), ("WARN", VERSION + ", removed from the marketplace and still enabled"),
+             ["claude plugin disable rigger-windows@rigger"]),
+            ("disabled", False, entry(VERSION), None, None),
+            ("another scope only", True, entry(VERSION, scope="local", project="/work/p"), None, None),
+        )
+        for kernel in ("MINGW64_NT-10.0-26100", "Linux"):
+            for name, enabled, item, row, fixes in cases:
+                with self.subTest(kernel=kernel, state=name):
+                    settings = self.good_settings(windows=True)
+                    installed = self.good_installed(windows=True)
+                    settings["enabledPlugins"]["rigger-windows@rigger"] = enabled
+                    installed["plugins"]["rigger-windows@rigger"] = [item]
+                    self.write_config(settings, installed, self.good_marketplaces())
+                    result = self.run_doctor(kernel)
+                    self.assertEqual(result.checks.get("plugin rigger-windows", (None, None))[:2], row or (None, None))
+                    self.assertEqual(result.fixes.get("plugin rigger-windows"), fixes)
 
     def test_one_line_json_reads_the_same(self):
         settings = self.good_settings()
@@ -273,7 +296,7 @@ class DoctorShTests(DoctorShCase):
         self.check_invalid_file("settings.json", "settings-file", plugins + ("autoCompactWindow", "worktree-root"))
 
     def test_settings_not_valid_json_on_windows(self):
-        plugins = tuple("plugin " + name for name in REQUIRED + ("rigger-windows",)) + ("superpowers",)
+        plugins = tuple("plugin " + name for name in REQUIRED + WINDOWS_RECOMMENDED) + ("superpowers",)
         rows = plugins + ("autoCompactWindow", "powershell-tool", "worktree-root")
         self.check_invalid_file("settings.json", "settings-file", rows, kernel="MINGW64_NT-10.0-26100")
 
@@ -416,8 +439,7 @@ class DoctorShTests(DoctorShCase):
 
     def test_clean_layout_gives_one_slot_row_per_slot_and_no_warning(self):
         result = self.run_assembly()
-        expected = set(self.SLOTS) if os.name == "nt" else set(self.SLOTS) - {"shell-guard"}  # requires os:windows
-        self.assertEqual(set(self.rows(result, "slot ")), {"slot " + path for path in expected})
+        self.assertEqual(set(self.rows(result, "slot ")), {"slot " + path for path in self.SLOTS})
         how = "assemble.py --doctor"
         self.assertEqual(result.checks["slot reviewer"], ("OK", "rigger-review:reviewer (default)", how))
         self.assertEqual(result.checks["slot testing"], ("OK", "rigger-testing:testing (default)", how))
@@ -439,16 +461,16 @@ class DoctorShTests(DoctorShCase):
         self.assertRow(result, "rules-assembly", "OK")  # the install lines have rows of their own
 
     def test_hook_slot_rows_name_the_filler_and_its_failure_mode(self):
-        # `requires: []` keeps the shell-guard row on every system; it sets neither kind nor target.
         # An expected filler set above level 1 that is enabled gives OK, not MISSING.
-        self.personal_config({"slots": {"shell-guard": {"requires": []},
-                                        "lessons": {"kind": "hook", "target": "rigger-lessons"}}})
-        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", REPO_PLUGINS / "rigger-windows")
+        self.personal_config({"slots": {"lessons": {"kind": "hook", "target": "rigger-lessons"}}})
+        self.write_file(self.config / "plugins" / "data" / "rigger-shellwise-rigger" / "shellwise" / "status.json",
+                        json.dumps({"state": "ready", "version": "0.1.1"}))
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", REPO_PLUGINS / "rigger-shellwise")
         self.assertRow(result, "slot lessons", "OK", "rigger-lessons (failure mode: undeclared)")
-        self.assertRow(result, "slot shell-guard", "OK", "rigger-windows (fails open)")
+        self.assertRow(result, "slot shell-guard", "OK", "rigger-shellwise (fails closed); state ready, v0.1.1")
         checker = result.checks["slot-checker shell-guard"]
         self.assertEqual(checker[0], "OK", checker)
-        self.assertTrue(checker[1].endswith("rigger-windows/tools/shell-guard/lessons_guard.py"), checker)
+        self.assertTrue(checker[1].endswith("rigger-shellwise/tools/rule-checker/rule_checker.py"), checker)
         self.assertTrue(Path(checker[1]).is_file(), checker)
         self.assertRow(result, "rules-assembly", "OK")
 

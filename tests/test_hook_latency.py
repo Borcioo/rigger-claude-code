@@ -196,7 +196,7 @@ class RealTreeTests(unittest.TestCase):
                    for groups in json.loads(path.read_bytes().decode("utf-8")).get("hooks", {}).values()
                    for group in groups)
         self.assertEqual(len(handlers), want)
-        self.assertEqual(want, 47)
+        self.assertEqual(want, 41)
         keys = {(h.plugin, h.script) for h in handlers}
         self.assertEqual(sorted(keys - set(hl.CASES)), [], "handlers without a case")
         self.assertEqual(sorted(set(hl.CASES) - keys), [], "cases without a handler")

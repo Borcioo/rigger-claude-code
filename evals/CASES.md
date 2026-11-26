@@ -47,7 +47,7 @@ counts only when the same output shows `testing-skill-loads | skill` above 0. Th
 `rigger-testing` with `rigger-core` as its dependency (staged by `scripts/eval_stage.py`), so the
 skill must load from its own description; the `rigger-rules` skills table is not in these sessions.
 
-## rigger-windows
+## rigger-platform
 
 | case | failure it came from | skill meant to prevent it | what a correct run does | grader type | tag |
 |---|---|---|---|---|---|

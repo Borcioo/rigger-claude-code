@@ -282,12 +282,52 @@ class CapTests(Base):
         self.assertEqual(self.check([task()], stop_hook_active=True), (None, None))
         self.assertHeld(self.check([task(), task("bq2")], stop_hook_active=True), "bq2")
 
-    def test_count_that_cannot_be_written_allows(self):
+    def test_a_config_without_a_state_folder_holds_and_counts(self):
         self.output()
-        os.makedirs(self.counts)
-        self.assertAllowed(self.check([task()]))
-        os.rmdir(self.counts)
-        self.assertHeld(self.check([task()]))
+        shutil.rmtree(self.state_dir)
+        for count, active in ((1, False), (2, True)):
+            reason, note = self.check([task()], stop_hook_active=active)
+            self.assertHeld((reason, note))
+            self.assertIn("%d of 3" % count, reason)
+        with open(self.counts, "rb") as fh:
+            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 2})
+
+    def test_count_that_cannot_be_written_holds_once_per_stop_chain(self):
+        def count_is_a_folder():
+            os.makedirs(self.counts)
+            return lambda: os.rmdir(self.counts)
+
+        def state_folder_is_a_file():
+            shutil.rmtree(self.state_dir)
+            self.write(self.state_dir, "")
+            return lambda: os.remove(self.state_dir) or os.makedirs(self.state_dir)
+
+        self.output()
+        for name, unwritable in (("count path is a folder", count_is_a_folder),
+                                 ("state folder is a file", state_folder_is_a_file)):
+            with self.subTest(case=name):
+                undo = unwritable()
+                reason, note = self.check([task()], stop_hook_active=False)
+                self.assertHeld((reason, note))
+                self.assertIsNone(note)
+                for active in (False, None, "true", 1):
+                    with self.subTest(stop_hook_active=active):
+                        self.assertHeld(self.check([task()], stop_hook_active=active))
+                event = self.event([task()])
+                del event["stop_hook_active"]
+                clock = Clock()
+                self.assertHeld(turn_guard.check(event, self.state, False, self.environ, self.config,
+                                                 clock=clock, sleep=clock.sleep))
+                reason, note = self.check([task()], stop_hook_active=True)
+                self.assertIsNone(reason)
+                self.assertIsNotNone(note, "expected the one-line note")
+                self.assertTrue(note.startswith(turn_guard.PREFIX + " "), note)
+                self.assertIn("block count cannot be written (%s)" % self.counts, note)
+                self.assertIn("the turn ends without holding again", note)
+                self.assertNotIn("\n", note)
+                undo()
+                self.assertHeld(self.check([task()], stop_hook_active=True))
+                os.remove(self.counts)
 
     def test_block_reason_is_one_line_naming_the_run(self):
         self.output()
@@ -381,6 +421,25 @@ class WiringTests(Base):
         self.assertEqual(sorted(data), ["systemMessage"])
         self.assertTrue(data["systemMessage"].startswith(turn_guard.PREFIX + " ") and "b58ki4brf" in data["systemMessage"])
         self.assertEqual(self.run_hook(self.event([task()], stop_hook_active=True)), {})
+
+    def test_the_stop_hook_holds_in_a_config_without_a_state_folder(self):
+        self.output()
+        shutil.rmtree(self.state_dir)
+        data = self.run_hook(self.event([task()]))
+        self.assertEqual(data.get("decision"), "block")
+        self.assertTrue(data["reason"].startswith(turn_guard.PREFIX + " ") and "Block 1 of 3" in data["reason"])
+        self.assertTrue(os.path.isfile(self.counts))
+
+    def test_an_unwritable_count_holds_then_prints_one_line(self):
+        self.output()
+        shutil.rmtree(self.state_dir)
+        self.write(self.state_dir, "")
+        data = self.run_hook(self.event([task()]))
+        self.assertEqual(data.get("decision"), "block")
+        self.assertTrue(data["reason"].startswith(turn_guard.PREFIX + " "), data)
+        data = self.run_hook(self.event([task()], stop_hook_active=True))
+        self.assertEqual(sorted(data), ["systemMessage"])
+        self.assertIn("block count cannot be written", data["systemMessage"])
 
     def test_an_open_side_session_still_blocks_with_bad_tasks(self):
         self.write(self.transcript, json.dumps({"type": "user", "message": {"role": "user", "content": NOTE_TEXT}}) + "\n")

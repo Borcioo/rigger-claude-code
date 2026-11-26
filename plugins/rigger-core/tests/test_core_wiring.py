@@ -221,7 +221,9 @@ class LoadRuleTests(unittest.TestCase):
         bullets = [bullet for bullet in text.split("\n- ") if "mem-check" in bullet]
         self.assertEqual(len(bullets), 1, bullets)
         flat = " ".join(bullets[0].split())
-        self.assertIn("starts only while `mem-check` exits 0 on Windows with rigger-windows installed", flat)
+        self.assertIn("starts only while `mem-check` exits 0 on Windows (`python "
+                      "\"<rigger-core plugin folder>/tools/mem-check/mem_check.py\"` prints the minimum)", flat)
+        self.assertNotIn("rigger-windows", flat)
         self.assertIn("elsewhere check free memory with the OS's tool", flat)
         self.assertIn("run at most 2 at once", flat)
         self.assertNotIn("GiB", flat)

@@ -34,7 +34,7 @@
 - **Every await inside a time budget has its own bound;** its test stubs a never-settling promise.
 - **Text encoding is explicit:** never rely on the platform default when a script writes a file;
   pass UTF-8, and match text in Unicode mode. Source edits go through the Edit tool or
-  `safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows), never a heredoc or regex script.
+  `safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing), never a heredoc or regex script.
   Decode a file that came from someone else or an e-mail strictly as UTF-8 and look for "?" where
   letters belong before using it. Never write a `\uXXXX` escape through the Write/Edit tool
   expecting a literal — build it at runtime or match the decoded text — and make every scripted

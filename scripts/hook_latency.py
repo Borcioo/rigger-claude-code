@@ -71,7 +71,6 @@ LARGE_TRANSCRIPT = 4 << 20
 LARGE_INBOX_ENTRIES = 3000
 LARGE_DIFF_FILES = 300
 LARGE_MESSAGE = 200 * 1024
-LARGE_WORKTREE_FILES = 3000
 
 
 class Handler(NamedTuple):
@@ -455,26 +454,6 @@ class Context:
             return repo
         return self.once("staged-" + kind, build)
 
-    def worktree(self, kind: str) -> Path:
-        """A linked worktree of the project, on Windows holding a junction to a folder outside it; `large` also
-        holds LARGE_WORKTREE_FILES files the junction check walks."""
-        def build():
-            self.staged("small")   # the project needs a commit
-            tree = self.tmp / ("worktree-" + kind)
-            self.git(self.project, "worktree", "add", "-q", "--detach", str(tree))
-            for i in range(LARGE_WORKTREE_FILES if kind == "large" else 10):
-                _write(tree / "src" / ("d%d" % (i // 100)) / ("f%d.txt" % i), "x\n")
-            if os.name == "nt":   # the rule looks for junctions only, which only Windows has
-                import _winapi
-                outside = self.tmp / ("outside-" + kind)
-                outside.mkdir()
-                link = tree / "src" / "zz" / "link"   # last in the walk, after the files
-                link.parent.mkdir(parents=True)
-                _winapi.CreateJunction(str(outside), str(link))
-            return tree
-        return self.once("worktree-" + kind, build)
-
-
 # --- the cases --------------------------------------------------------------------------------------------
 
 def _sizes(build: Callable[[str, str], Variant]) -> List[Variant]:
@@ -622,39 +601,6 @@ def case_worktree_root(ctx: Context, h: Handler) -> List[Variant]:
                     env={"HARNESS_WORKTREE_ROOT": str(ctx.tmp / "worktrees")})]
 
 
-BASH_PAD = "echo " + " ".join("word%d" % i for i in range(500)) + "\n"
-WORKTREE_REMOVE = "Bash(*worktree remove *)"
-PWSH_PAD = "Write-Output " + " ".join("word%d" % i for i in range(500)) + "\n"
-# A command each `if` lets through that the handler's rules deny, and its grown form.
-SHELL_GUARD_COMMANDS = {
-    None: ("ls -la | head -5", PWSH_PAD + "ls -la | head -5"),
-    "Bash(*git*)": ("git checkout -- .", BASH_PAD + "git checkout -- ."),
-    "Bash(*push *--no-veri*)": ("git push --no-verify origin x", BASH_PAD + "git push --no-verify origin x"),
-    "Bash(*tee *)": ("npm test | tee run.log | head -40", BASH_PAD + "npm test | tee run.log | head -40"),
-    "Bash(*safe-edit*)": ("'/d/x/safe-edit.ps1' -Run x | head -3", BASH_PAD + "'/d/x/safe-edit.ps1' -Run x | head -3"),
-    "Bash(*<<*)": ("python - <<'EOF'\nprint('a\\\\nb')\nEOF", "cat > a.py <<'EOF'\n" + "x = 'y'\n" * 1200 + "EOF\n"),
-    "Bash(*" + "\\" * 8 + "*)": ("python -c \"print('%sserver')\"" % ("\\" * 8),
-                                BASH_PAD + "python -c \"print('%sserver')\"" % ("\\" * 8)),
-}
-
-
-def case_shell_guard(ctx: Context, h: Handler) -> List[Variant]:
-    if h.condition == WORKTREE_REMOVE:   # the check walks the tree for junctions: its size is the input
-        small, large = ('git worktree remove "%s"' % ctx.worktree(kind).as_posix() for kind in ("small", "large"))
-    elif h.condition in SHELL_GUARD_COMMANDS:
-        small, large = SHELL_GUARD_COMMANDS[h.condition]
-    else:
-        return []
-    # Outside Windows a worktree holds no junction: the check walks the whole tree and allows.
-    denied = silent if h.condition == WORKTREE_REMOVE and os.name != "nt" else expect(b'"deny"')
-    variants = [Variant(case, ctx.stdin(h, {"tool_input": {"command": command}}), denied)
-                for case, command in (("match", small), ("match-large", large))]
-    if h.condition is None:
-        variants += [Variant(case, ctx.stdin(h, {"tool_input": {"command": command}}), silent)
-                     for case, command in (("non-match", "Get-ChildItem"), ("non-match-large", PWSH_PAD))]
-    return variants
-
-
 SHELLWISE_DENIED = "git checkout -- ."
 SHELLWISE_STUB = ("#!/bin/sh\ncase $(cat) in *'%s'*) printf '%%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":"
                   "\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"stub\"}}' ;; esac\n"
@@ -704,6 +650,14 @@ def case_shellwise_install(ctx: Context, h: Handler) -> List[Variant]:
     return [Variant("match", ctx.stdin(h, {}), found, prepare=prepare)]
 
 
+def case_commit_shadow(ctx: Context, h: Handler) -> List[Variant]:
+    # The project opts in to the commit rule (ctx.state); a commit there gets its row, whatever its verdict.
+    ctx.state()
+    rows = ctx.data(h.plugin) / "commit-gate" / "rows"
+    return [Variant("match", ctx.stdin(h, {"tool_input": {"command": 'git commit -m "change"'}}), _rows_written(rows),
+                    prepare=_empty(rows))]
+
+
 def case_stop_shadow(ctx: Context, h: Handler) -> List[Variant]:
     ctx.state()
     rows = ctx.data(h.plugin) / "turn-gate" / "rows"
@@ -737,11 +691,11 @@ CASES = {
     ("rigger-review", "core_check.sh"): case_core_check,
     ("rigger-rules", "core_check.sh"): case_core_check,
     ("rigger-talk", "core_check.sh"): case_core_check,
+    ("rigger-testing", "commit_shadow.py"): case_commit_shadow,
     ("rigger-testing", "core_check.sh"): case_core_check,
+    ("rigger-testing", "stop_shadow.py"): case_stop_shadow,
     ("rigger-testing", "weak_test_guard.py"): case_weak_test_guard,
-    ("rigger-windows", "core_check.sh"): case_core_check,
-    ("rigger-windows", "shell_guard.py"): case_shell_guard,
-    ("rigger-windows", "stop_shadow.py"): case_stop_shadow,
+    ("rigger-platform", "core_check.sh"): case_core_check,
     ("rigger-wp", "core_check.sh"): case_core_check,
 }  # type: Dict[Tuple[str, str], Builder]
 

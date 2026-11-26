@@ -129,6 +129,11 @@ def without_editors():
     return {k: v for k, v in os.environ.items() if k not in ("GIT_EDITOR", "VISUAL", "EDITOR", "GIT_SEQUENCE_EDITOR")}
 
 
+def without_git_variables(env):
+    """`env` with every GIT_* variable removed, so a fixture's git acts on the folder it runs in."""
+    return {k: v for k, v in env.items() if not k.upper().startswith("GIT_")}
+
+
 def reason_of(proc):
     """The denial reason, or None when the hook allowed (no output)."""
     assert proc.returncode == 0, proc.stderr
@@ -1585,7 +1590,8 @@ class BeforeApprovalTests(unittest.TestCase):
                 self.assertIsNotNone(reason_of(run_hook('git add -A && git commit -m "x"', repo.root)))
                 self.assertFalse(marker.exists())
                 subprocess.run(["git", "add", "tests/test_parser.py"], cwd=repo.root, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)   # a process filter that speaks no protocol fails the add
+                               stderr=subprocess.DEVNULL,   # a process filter that speaks no protocol fails the add
+                               env=without_git_variables(os.environ))
                 self.assertTrue(marker.exists(), "control: git add runs this filter")
 
     def test_a_signature_program_is_not_run(self):
@@ -1601,7 +1607,8 @@ class BeforeApprovalTests(unittest.TestCase):
         body = ("tree %s\nparent %s\nauthor %s\ncommitter %s\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n"
                 " -----END PGP SIGNATURE-----\n\nfix: x\n" % (tree, head, who, who))
         signed = subprocess.run(["git", "hash-object", "-t", "commit", "-w", "--stdin"], cwd=repo.root,
-                                input=body.encode("utf-8"), stdout=subprocess.PIPE, check=True).stdout.decode().strip()
+                                env=without_git_variables(os.environ), input=body.encode("utf-8"),
+                                stdout=subprocess.PIPE, check=True).stdout.decode().strip()
         git(repo.root, "config", "log.showSignature", "true")
         git(repo.root, "config", "gpg.program", program.as_posix())
         repo.change(WEAK)
@@ -1637,7 +1644,8 @@ class InteractiveAndLazyFetchTests(unittest.TestCase):
         git(repo.root, "config", "core.editor", "echo ran >> '%s' #" % marker.as_posix())
         repo.change(WEAK, stage=False)
         env = without_editors()
-        control = subprocess.run(["git", "add", "-e", "tests/test_parser.py"], cwd=repo.root, env=env,
+        control = subprocess.run(["git", "add", "-e", "tests/test_parser.py"], cwd=repo.root,
+                                 env=without_git_variables(env),
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.assertTrue(marker.exists(), "control: git add -e runs core.editor (exit %s)" % control.returncode)
         for flags in ("-ve", "-ev", "--ed", "--edi", "-vp", "--pat", "--inter"):

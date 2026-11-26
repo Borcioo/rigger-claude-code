@@ -5,7 +5,7 @@ Usage: python -I -X utf8 scripts/startup_bench.py [--runs N]
 Each run starts one side's startup handlers at once, through a real POSIX sh as Claude Code does, and
 times the slowest of them (the session waits for all). "Old" is the golden fixture's 19 rules handlers
 (tests/fixtures/golden-34e7713); "new" is rigger-core's 6 part.sh handlers; "new+checks" adds the 5
-core_check.sh handlers that also run at a startup SessionStart. All on the windows layout (rigger-windows
+core_check.sh handlers that also run at a startup SessionStart. All on the windows layout (rigger-platform
 installed) with an empty rules.d, from a temp folder laid out like the plugin cache, with a config dir
 that lists the plugins as installed and enabled. One unmeasured run per side comes first; the sides
 alternate within each run.
@@ -37,7 +37,7 @@ sys.dont_write_bytecode = True
 import golden_baseline as gb  # noqa: E402
 
 MARKET = "rigger"
-MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-windows", "rigger-panel")
+MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-platform", "rigger-panel")
 OLD_HANDLERS = 19
 PARTS = 6
 CHECKS = 5
@@ -139,7 +139,10 @@ def check_new(outputs: List[bytes], layout: Layout) -> None:
         line = next(l for l in joined.splitlines() if NOT_LOADED in l)
         raise RuntimeError(line.decode("utf-8", "replace"))
     lines = set(joined.splitlines())
-    missing = [m for m in gb.PLUGINS_WITH_RULES
+    # The old side's rigger-windows is rigger-platform, whose rule requires os:windows (D83).
+    expected = [("rigger-platform" if m == "rigger-windows" else m) for m in gb.PLUGINS_WITH_RULES
+                if m != "rigger-windows" or os.name == "nt"]
+    missing = [m for m in expected
                if ("Plugin root: " + gb.root_text(layout.new / m)).encode("utf-8") not in lines]
     if missing:
         raise RuntimeError("no Plugin root line for " + ", ".join(missing))

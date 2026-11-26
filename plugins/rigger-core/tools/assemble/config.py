@@ -3,7 +3,8 @@
 `triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4), `trust` (level 3) and `review`
 (levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base), `lessons` (levels 2-3, read
 by rigger-lessons' lint), `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py), `load` (levels
-1-4, read by mem_check.py) and `shell_guard` (level 3, read by rigger-shellwise's installer) apply.
+1-4, read by mem_check.py), `shell_guard` (level 3, read by rigger-shellwise's installer), `test_evidence`
+(levels 2-3, read by rigger-testing's Stop shadow) and `drift_lint` (levels 2-3, read by drift-lint) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -15,6 +16,7 @@ such characters escaped.
 import copy
 import json
 import os
+import re
 import unicodedata
 
 import manifest
@@ -36,16 +38,24 @@ KEYS = {
     "lessons": (dict, frozenset((2, 3))),
     "turn_guard": (dict, frozenset((2, 3, 4))),
     "load": (dict, ALL_LEVELS),
+    "test_evidence": (dict, frozenset((2, 3))),
+    "drift_lint": (dict, frozenset((2, 3))),
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
 ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons", "turn_guard",
-                             "load", "shell_guard"))
+                             "load", "shell_guard", "test_evidence", "drift_lint"))
 LOAD_MIN_FREE_GB = (0, 1024)  # load.min_free_gb, a number (D80)
 LOAD_HEAVY_AGENTS = (1, 8)  # load.max_heavy_agents, a whole number (D80)
 REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
 REVIEW_TEXT_MAX = 200  # characters of a review.paths glob or skip reason
 LESSONS_PATHS_MAX = 50  # lessons.allowed_paths globs per config level (D97), each at most REVIEW_TEXT_MAX
+PHRASE_CATEGORIES = ("claim", "negation", "disclosure", "status")  # test_evidence.phrases (D95)
+PHRASES_MAX = 100  # entries per category per config level, each at most PHRASE_TEXT_MAX characters
+PHRASE_TEXT_MAX = 60
+DRIFT_LISTS = ("remote_commands", "project_bins")  # drift_lint lists of command names (D95)
+DRIFT_NAMES_MAX = 50  # entries per list per config level
+DRIFT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")  # one command name, matched whole
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = manifest.BEFORE_MAX
 LOAD_MAX = manifest.LOAD_MAX
@@ -291,6 +301,79 @@ def _load(value: dict, where: str) -> Tuple[dict, List[str]]:
     return clean, notices
 
 
+def _test_evidence(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """test_evidence.phrases (D95): words per category that the Stop shadow adds to its shipped lists; a bad
+    category or entry is dropped, so the shipped lists stay."""
+    clean = {}
+    notices = []
+    for key, item in value.items():
+        if key != "phrases":
+            notices.append("rigger: config %s test_evidence key %s unknown; ignored" % (where, _shown(key)))
+            continue
+        if item is None:
+            clean[key] = None
+            continue
+        if not isinstance(item, dict):
+            notices.append("rigger: config %s test_evidence.phrases must be an object; ignored" % where)
+            continue
+        phrases = {}
+        for category, words in item.items():
+            name = "test_evidence.phrases." + _shown(category)
+            if category not in PHRASE_CATEGORIES:
+                notices.append("rigger: config %s test_evidence.phrases category %s unknown; ignored"
+                               % (where, _shown(category)))
+            elif words is None:
+                phrases[category] = None
+            elif not isinstance(words, list):
+                notices.append("rigger: config %s %s must be a list of words; ignored" % (where, name))
+            else:
+                kept = []
+                for word in words:
+                    problem = "must be a non-empty string" if not isinstance(word, str) or not word else \
+                        _text_problem("word", word, PHRASE_TEXT_MAX)
+                    if problem:
+                        problem = problem[len("word "):] if problem.startswith("word ") else problem
+                        notices.append("rigger: config %s %s entry %s ignored: %s"
+                                       % (where, name, _shown(repr(word)), problem))
+                    else:
+                        kept.append(word)
+                if len(kept) > PHRASES_MAX:
+                    notices.append("rigger: config %s holds %d %s entries; the last %d ignored (at most %d per file)"
+                                   % (where, len(kept), name, len(kept) - PHRASES_MAX, PHRASES_MAX))
+                    kept = kept[:PHRASES_MAX]
+                phrases[category] = kept
+        clean[key] = phrases
+    return clean, notices
+
+
+def _drift_lint(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """drift_lint.remote_commands and drift_lint.project_bins (D95): command names drift-lint adds to its default
+    skip lists; a bad list or entry is dropped, so the defaults stay."""
+    clean = {}
+    notices = []
+    for key, names in value.items():
+        if key not in DRIFT_LISTS:
+            notices.append("rigger: config %s drift_lint key %s unknown; ignored" % (where, _shown(key)))
+        elif names is None:
+            clean[key] = None
+        elif not isinstance(names, list):
+            notices.append("rigger: config %s drift_lint.%s must be a list of command names; ignored" % (where, key))
+        else:
+            kept = []
+            for name in names:
+                if isinstance(name, str) and DRIFT_NAME.fullmatch(name):
+                    kept.append(name)
+                else:
+                    notices.append("rigger: config %s drift_lint.%s entry %s ignored: must be one command name of at "
+                                   "most 64 characters (letters, digits, . _ + -)" % (where, key, _shown(repr(name))))
+            if len(kept) > DRIFT_NAMES_MAX:
+                notices.append("rigger: config %s holds %d drift_lint.%s entries; the last %d ignored (at most %d per "
+                               "file)" % (where, len(kept), key, len(kept) - DRIFT_NAMES_MAX, DRIFT_NAMES_MAX))
+                kept = kept[:DRIFT_NAMES_MAX]
+            clean[key] = kept
+    return clean, notices
+
+
 def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
     """The keys of one level's data that its level allows, each of the right shape, and a notice per drop."""
     clean = {}
@@ -341,6 +424,12 @@ def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]
             notices.extend(found)
         if key == "shell_guard":
             value, found = _shell_guard(value, where)
+            notices.extend(found)
+        if key == "test_evidence":
+            value, found = _test_evidence(value, where)
+            notices.extend(found)
+        if key == "drift_lint":
+            value, found = _drift_lint(value, where)
             notices.extend(found)
         clean[key] = value
     return clean, notices

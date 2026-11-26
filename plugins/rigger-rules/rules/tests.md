@@ -10,7 +10,7 @@
   syntax error, with output proving it ran (`1 passed`); a name filter that matches nothing can
   exit 0. No conditional assertions. A TDD red run on unchanged code counts; otherwise break the
   covered code and name the mutation. Red runs: in a worktree, or in place only through
-  `safe-edit.ps1 -Run` (needs rigger-windows).
+  `python "<rigger-testing plugin folder>/tools/safe-edit/safe_edit.py"` with `--run` (needs rigger-testing).
 - Rigor follows risk, check by check. A check that enforces security, money or data integrity
   (capability, ownership, validation guarding storage, visibility, sanitiser, lock, amount) is
   broken once per branch, table row, stage and wiring; other shared infrastructure and migrations

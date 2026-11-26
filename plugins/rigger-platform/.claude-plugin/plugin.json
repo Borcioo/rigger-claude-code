@@ -1,0 +1,13 @@
+{
+  "name": "rigger-platform",
+  "description": "The Windows shell rule and the Windows, PHP (Herd) and Node skills; on Windows only, the rule and the skill triggers apply",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/Borcioo/rigger-claude-code",
+  "repository": "https://github.com/Borcioo/rigger-claude-code",
+  "author": {
+    "name": "Borcioo"
+  },
+  "dependencies": [
+    "rigger-core"
+  ]
+}

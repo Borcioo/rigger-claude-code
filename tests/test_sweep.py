@@ -765,7 +765,7 @@ class VendoredTests(SweepTestCase):
             "plugins/rigger-wp/skills/wordpress-router/references.md",
             "plugins/rigger-wp/skills/wordpress-router/other/x.md",
             "plugins/rigger-wp/skills/rigger-wp-traps/references/x.md",
-            "plugins/rigger-windows/skills/wordpress-router/references/x.md",
+            "plugins/rigger-platform/skills/wordpress-router/references/x.md",
             "docs/x.md",
         )
         script = self.make_repo({path: self.NOISE for path in (inside,) + outside})

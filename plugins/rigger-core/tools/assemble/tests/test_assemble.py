@@ -30,8 +30,7 @@ TALK_CONFIG = {
     "report_lines": {"type": "number", "default": 15},
 }
 TALK_TEXT = "## Talking to me\n\n- Reply in {{reply_language}}; ~{{reply_lines}} lines, ~{{var:report_lines}} report.\n"
-# D75: Task 23 removes this allowance. While rigger-shellwise and rigger-windows both fill shell-guard, the
-# assembler prints this one notice; it is the only notice allowed.
+# rigger-shellwise alone fills shell-guard (D75): the double-filler notice rigger-windows caused never comes back.
 D75_LINE = ("rigger: slot shell-guard is filled by rigger-shellwise and rigger-windows; disable one with "
             "claude plugin disable <name>")
 LANGUAGE_DEFAULT = ("the language of Claude Code's `language` setting (the user's language when it is "
@@ -657,16 +656,8 @@ class SnapshotTests(Base):
         self.assertFalse((self.layout.config / "rigger" / "state").exists())
 
 
-def d75_notices():
-    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []. Windows only: the
-    default shell-guard entry requires os:windows, so on other systems the slot, and its notice, is absent."""
-    fillers = sorted(json.loads(path.read_bytes())["name"] for path in (REPO / "plugins").glob("*/rigger-module.json")
-                     if json.loads(path.read_bytes()).get("fills") == "shell-guard")
-    return [D75_LINE] if fillers == ["rigger-shellwise", "rigger-windows"] and os.name == "nt" else []
-
-
 class FullLayoutTests(unittest.TestCase):
-    """All 10 repository modules plus a full rules.d."""
+    """All 11 repository modules plus a full rules.d."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -683,7 +674,8 @@ class FullLayoutTests(unittest.TestCase):
     def test_full_repo_layout_fits_with_full_rules_d(self):
         self.assertEqual(len(self.layout.dirs), 9)
         found = self.layout.assemble()
-        self.assertEqual(found.notices, d75_notices())
+        self.assertNotIn(D75_LINE, found.notices)
+        self.assertEqual(found.notices, [])
         session = [self.layout.part(i) for i in range(1, 7)]
         stdin = self.layout.hook_input(hook_event_name="SubagentStart", agent_type="general-purpose")
         sub = [self.layout.part(i, subagent=True, stdin=stdin) for i in range(1, 5)]
@@ -693,11 +685,11 @@ class FullLayoutTests(unittest.TestCase):
         self.assertIn(b"## a.md", b"".join(session))
 
     def test_slots_section_for_the_default_layout_is_under_1200_bytes(self):
-        # D50: ## Slots has its own cap of 1,200 bytes for the default set (11 rows on Windows, 10 elsewhere).
+        # D50: ## Slots has its own cap of 1,200 bytes for the default set (11 rows on every system).
         block = [b for b in self.layout.assemble().blocks if b[2] == "slots.slots"]
         self.assertEqual(len(block), 1)
         rows = [line for line in block[0][1].splitlines() if line.startswith(b"| ") and not line.startswith(b"| Slot ")]
-        self.assertEqual(len(rows), 11 if os.name == "nt" else 10)
+        self.assertEqual(len(rows), 11)
         self.assertLessEqual(len(block[0][1]), 1200)
 
     def test_emitted_part_stays_under_the_hook_cap(self):

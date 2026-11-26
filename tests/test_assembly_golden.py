@@ -28,8 +28,11 @@ import golden_baseline as gb  # noqa: E402
 
 WORK_PLUGINS = gb.ROOT / "plugins"
 MARKET = "rigger"
-WINDOWS_MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-windows",
+WINDOWS_MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-platform",
                    "rigger-panel", "rigger-review", "rigger-testing")
+# The baseline's `rigger-windows` is rigger-platform since phase 3b (D83); its rule and rows require os:windows, so a
+# host that is not Windows prints neither.
+OLD_WINDOWS_ROWS_SHOWN = os.name == "nt"
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
 SKIPPED_AGENTS = ("Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper")
@@ -97,25 +100,19 @@ SLOT_ROWS = [  # D36, written by hand: every slot at its default, superpowers en
     b"| implementer | agent | rigger-core:implementer | pinned | default |\n",
     b"| mapper | agent | rigger-core:mapper | pinned | default |\n",
     b"| testing | skill | rigger-testing:testing | \xe2\x80\x94 | default |\n",
-    b"SHELL-GUARD",
+    # The default names rigger-shellwise on every system; no golden layout installs it, so the row is empty.
+    b"| shell-guard | hook | \xe2\x80\x94 | \xe2\x80\x94 | default |\n",
     b"| lessons | hook | rigger-lessons (failure mode: undeclared) | \xe2\x80\x94 | default |\n",
     b"| process.brainstorm | skill | superpowers:brainstorming | \xe2\x80\x94 | default |\n",
     b"| process.plans | skill | superpowers:writing-plans | \xe2\x80\x94 | default |\n",
     b"| process.tdd | skill | superpowers:test-driven-development | \xe2\x80\x94 | default |\n",
     b"| process.debug | skill | superpowers:systematic-debugging | \xe2\x80\x94 | default |\n",
 ]
-SHELL_GUARD_FILLED = b"| shell-guard | hook | rigger-windows (fails open) | \xe2\x80\x94 | default |\n"
-SHELL_GUARD_EMPTY = b"| shell-guard | hook | \xe2\x80\x94 | \xe2\x80\x94 | default |\n"
 
 
 def expected_slots(layout: str) -> bytes:
-    """`## Slots` for this system: 11 rows on Windows (shell-guard filled only with rigger-windows), else 10."""
-    if os.name != "nt":
-        shell_guard = b""
-    else:
-        shell_guard = SHELL_GUARD_FILLED if layout == "windows" else SHELL_GUARD_EMPTY
-    rows = b"".join(shell_guard if line == b"SHELL-GUARD" else line for line in SLOT_ROWS)
-    return b"## Slots\n\n| Slot | Kind | Target | Model | From |\n|---|---|---|---|---|\n" + rows
+    """`## Slots`: the same 11 rows on every system and layout."""
+    return b"## Slots\n\n| Slot | Kind | Target | Model | From |\n|---|---|---|---|---|\n" + b"".join(SLOT_ROWS)
 
 
 def split_table(piece: bytes) -> Tuple[bytes, List[bytes], bytes]:
@@ -143,8 +140,9 @@ def _merged_table(scenario, roots, pieces) -> bool:
     others = []  # type: List[bytes]
     for module, key in (("rigger-windows", WINDOWS_TABLE), ("rigger-wp", WP_OLD)):
         where = _piece(pieces, module, key)
-        if where is not None:
-            others += split_table(pieces[module][where][1])[1]
+        if where is not None and (module != "rigger-windows" or OLD_WINDOWS_ROWS_SHOWN):
+            others += [row.replace(b"`rigger-windows:", b"`rigger-platform:")
+                       for row in split_table(pieces[module][where][1])[1]]
     if OLD_INTRO not in before:
         raise AssertionError("the frozen intro moved: %r" % before)
     merged = before.replace(OLD_INTRO, NEW_INTRO) + TABLE_HEADER + b"".join(core + others + slot_rows) + after
@@ -153,13 +151,15 @@ def _merged_table(scenario, roots, pieces) -> bool:
 
 
 def _review_row_joins(scenario, roots, pieces) -> bool:
-    """The review module's trigger row follows rigger-core's own rows in the merged table (phase 3a D56)."""
+    """The review module's trigger row follows rigger-core's own rows in the merged table (phase 3a D56), and the
+    platform module's rows (rigger-platform sorts before rigger-review)."""
     at = _piece(pieces, "rigger-core", SKILLS)
     if at is None or "rigger-review" not in scenario.modules():
         return False
     key, text = pieces["rigger-core"][at]
     before, rows, after = split_table(text)
-    core = [i for i, row in enumerate(rows) if b"`rigger-core:" in row and b"`superpowers:" not in row]
+    core = [i for i, row in enumerate(rows)
+            if (b"`rigger-core:" in row or b"`rigger-platform:" in row) and b"`superpowers:" not in row]
     if not core:
         raise AssertionError("the merged table holds no rigger-core row: %r" % text[:300])
     rows.insert(core[-1] + 1, REVIEW_ROW)
@@ -187,6 +187,20 @@ def _windows_table_goes(scenario, roots, pieces) -> bool:
     if not pieces["rigger-windows"]:
         del pieces["rigger-windows"]
         roots.discard("Plugin root: " + gb.root_text(FIXTURE.tree(scenario) / "rigger-windows"))
+    return True
+
+
+def _windows_becomes_platform(scenario, roots, pieces) -> bool:
+    """D83: the Windows rules module is rigger-platform, and its rules file lost the root-name preamble; its rule
+    requires os:windows, so off Windows nothing of it prints (no root line either)."""
+    old = pieces.pop("rigger-windows", None)
+    if old is None:
+        return False
+    tree = FIXTURE.tree(scenario)
+    roots.discard("Plugin root: " + gb.root_text(tree / "rigger-windows"))
+    if OLD_WINDOWS_ROWS_SHOWN:
+        roots.add("Plugin root: " + gb.root_text(tree / "rigger-platform"))
+        pieces["rigger-platform"] = [(key, text) for key, text in old if key != gb.PREAMBLE]
     return True
 
 
@@ -269,6 +283,28 @@ def _state_items(scenario, roots, pieces) -> bool:
     return True
 
 
+SAFE_EDIT_WORDING = [  # phase 3b: the tool that rigger-windows shipped is rigger-testing's safe_edit.py
+    (b"`safe-edit.ps1 -Run` (needs rigger-windows).",
+     b'`python "<rigger-testing plugin folder>/tools/safe-edit/safe_edit.py"` with `--run` (needs rigger-testing).'),
+    (b"`safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows)",
+     b"`safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)"),
+]
+
+
+def _safe_edit_wording(scenario, roots, pieces) -> bool:
+    """The two rules that name the in-place red-run tool name rigger-testing's safe_edit.py (phase 3b)."""
+    done = False
+    for i, (key, text) in enumerate(pieces.get("rigger-rules", [])):
+        for old, new in SAFE_EDIT_WORDING:
+            if old in text:
+                if text.count(old) != 1:
+                    raise AssertionError("the frozen piece %s holds %r other than once" % (key, old))
+                text = text.replace(old, new)
+                done = True
+        pieces["rigger-rules"][i] = (key, text)
+    return done
+
+
 # D40's fixed list, in the order it is applied; every entry must apply in at least one scenario.
 ALLOWED = [
     ("the rigger-rules table moves to rigger-core and merges the three tables", _merged_table),
@@ -276,12 +312,14 @@ ALLOWED = [
     ("the testing slot names the testing module", _testing_cell),
     ("the rigger-windows table section goes", _windows_table_goes),
     ("the rigger-wp section keeps its sentence under a new heading", _wp_sentence),
+    ("rigger-windows' rules module is rigger-platform, Windows only, without its preamble", _windows_becomes_platform),
     ("rigger-core gains ## Slots for the main session", _slots_section),
     ("subagents get rigger-core's root line", _core_root_for_subagents),
     ("## Plans: main session names the table, not the slots", _plans_wording),
     ("the lo-fi trap leaves ## Plans: main session for the web-ui-traps skill", _lofi_leaves_plans),
     ("the web-ui-traps trigger row names lo-fi screens", _ui_row_names_lofi),
     ("the state-file section sends work items through the state tool", _state_items),
+    ("the safe-edit wording names rigger-testing's safe_edit.py", _safe_edit_wording),
 ]
 
 
@@ -299,7 +337,7 @@ class Scenario:
     event: str = "SessionStart"
     source: Optional[str] = "startup"
     agent: Optional[str] = None
-    layout: str = "windows"  # or "macos": without rigger-windows
+    layout: str = "windows"  # or "macos": without rigger-platform
     eol: str = "lf"
     rules_d: str = ""  # "", "hostile", "main_budget" or "override"
     drop: str = ""
@@ -313,10 +351,12 @@ class Scenario:
         return self.event == "SubagentStart"
 
     def modules(self) -> List[str]:
-        return [m for m in WINDOWS_MODULES if not (self.layout == "macos" and m == "rigger-windows")]
+        return [m for m in WINDOWS_MODULES if not (self.layout == "macos" and m == "rigger-platform")]
 
     def plugins_with_rules(self) -> List[str]:
-        return [m for m in gb.PLUGINS_WITH_RULES if m in self.modules()]
+        # The frozen baseline calls rigger-platform rigger-windows.
+        return [m for m in gb.PLUGINS_WITH_RULES
+                if ("rigger-platform" if m == "rigger-windows" else m) in self.modules()]
 
     def baseline_key(self) -> tuple:
         return (self.event, self.source, self.agent, self.layout, self.eol, self.rules_d, self.drop, self.talk)
@@ -664,6 +704,16 @@ class GoldenTest(unittest.TestCase):
 
     # --- named tests ---------------------------------------------------------------------------
 
+    def test_windows_layout_is_every_shipped_plugin_but_the_shell_guard_filler(self):
+        """D84: rigger-windows is gone, so the Windows layout is the marketplace's list and the plugin folders without
+        rigger-shellwise, which no golden layout installs (its shell-guard row stays empty)."""
+        market = json.loads((gb.ROOT / ".claude-plugin" / "marketplace.json").read_bytes().decode("utf-8"))
+        listed = sorted(entry["name"] for entry in market["plugins"])
+        folders = sorted(path.parent.parent.name for path in WORK_PLUGINS.glob("*/.claude-plugin/plugin.json"))
+        layout = sorted(WINDOWS_MODULES + ("rigger-shellwise",))
+        self.assertEqual(listed, layout)
+        self.assertEqual(folders, layout)
+
     def test_baseline_ran_every_handler(self):
         """Control: the windows startup baseline holds 19 handler outputs; rigger-rules' 12 share one root line."""
         baseline = FIXTURE.baselines[SCENARIOS[0].baseline_key()]
@@ -742,10 +792,13 @@ class GoldenTest(unittest.TestCase):
         frozen["rigger-rules"] = [line.replace(b"`rigger-core:testing`", b"`rigger-testing:testing`")
                                   .replace(UI_ROW_OLD, UI_ROW_NEW) for line in frozen["rigger-rules"]]
         self.assertEqual([len(frozen[m]) for m in ("rigger-rules", "rigger-windows", "rigger-wp")], [8, 3, 2])
-        every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"] + [REVIEW_ROW]
+        frozen["rigger-windows"] = [row.replace(b"`rigger-windows:", b"`rigger-platform:")
+                                    for row in frozen["rigger-windows"]]
+        shown = frozen["rigger-windows"] if OLD_WINDOWS_ROWS_SHOWN else []
+        every = frozen["rigger-rules"] + shown + frozen["rigger-wp"] + [REVIEW_ROW]
         core = [row for row in frozen["rigger-rules"] if b"`superpowers:" not in row]
         self.assertEqual(len(core), 5)
-        ordered = (core + [REVIEW_ROW] + frozen["rigger-windows"] + frozen["rigger-wp"]
+        ordered = (core + shown + [REVIEW_ROW] + frozen["rigger-wp"]
                    + [row for row in frozen["rigger-rules"] if b"`superpowers:" in row])
         for scenario in (SCENARIOS[0], next(s for s in SCENARIOS if s.agent == "general-purpose")):
             with self.subTest(scenario.id):
@@ -800,7 +853,7 @@ for _scenario in SCENARIOS:
 
 
 if __name__ == "__main__":
-    print("# scenarios %d, named tests 8" % len(SCENARIOS))
+    print("# scenarios %d, named tests 9" % len(SCENARIOS))
     sys.stdout.flush()
     started = time.time()
     try:

@@ -24,8 +24,8 @@ import assemble  # noqa: E402
 MATCHER = common.MATCHER
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
-WINDOWS = PLUGINS / "rigger-windows"
-ROOT_NAME_LINE = "The `Plugin root:` line above is `<rigger-windows root>`."
+PLATFORM = PLUGINS / "rigger-platform"
+SHELL_HEADING = "## Windows shell"
 SHELL_LINE = "**the PowerShell tool is the default shell**"
 TABLE_HEADER = "| Before | Skill |\n|---|---|\n"
 # Every session loads these sections: they may be rewritten, never grown. Lower the ceiling when they shrink.
@@ -34,12 +34,13 @@ RULES_CEILING_BYTES = 27300
 SLOTS_CEILING_BYTES = 1200
 SLOTS_ID = "slots.slots"
 RULES_MIN_FILES = 18
+# The platform module's rule requires os:windows: one rules file fewer is printed elsewhere.
+PRINTED_MIN_FILES = RULES_MIN_FILES if os.name == "nt" else RULES_MIN_FILES - 1
 WORKERS = ["rigger-core:worker", "rigger-review:reviewer", "general-purpose"]
 TESTING_SKILL = PLUGINS / "rigger-testing" / "skills" / "testing" / "SKILL.md"
 ROW_RE = re.compile(r"\| .+ \| `([a-z0-9-]+):([a-z0-9-]+)` \|")
 SID = "5b1f0c1e-7d3a-4c55-9a2e-0f6d1c2b3a49"
-# D75: Task 23 removes this allowance. While rigger-shellwise and rigger-windows both fill shell-guard, the
-# assembler prints this one notice per audience; it is the only notice allowed.
+# rigger-shellwise alone fills shell-guard (D75): the double-filler notice rigger-windows caused never comes back.
 D75_LINE = ("rigger: slot shell-guard is filled by rigger-shellwise and rigger-windows; disable one with "
             "claude plugin disable <name>")
 FILL = 8400  # one fill section per part: two never share the 9,000-byte cap
@@ -57,14 +58,6 @@ def load_manifest(root):
 
 def module_dirs(root=PLUGINS):
     return [path.parent for path in sorted(Path(root).glob("*/rigger-module.json"))]
-
-
-def d75_notices(root=PLUGINS):
-    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []. Windows only: the
-    default shell-guard entry requires os:windows, so on other systems the slot, and its notice, is absent."""
-    fillers = sorted(load_manifest(d)["name"] for d in module_dirs(root) if load_manifest(d).get("fills") == "shell-guard")
-    both = fillers == ["rigger-shellwise", "rigger-windows"]
-    return [D75_LINE] if both and os.name == "nt" else []
 
 
 def part_command(index, subagent=False):
@@ -96,7 +89,8 @@ def heading_lines(text):
 class Assembled:
     """The repository's modules assembled in-process with an empty config dir: options at their defaults."""
 
-    def __init__(self, root=PLUGINS, **environ):
+    def __init__(self, root=PLUGINS, os_name=None, **environ):
+        """`os_name` pins the system the rules `requires: os:...` are judged on; None is this host's."""
         self.root = Path(root)
         tmp = Path(tempfile.mkdtemp(prefix="plugin-rules-"))
         try:
@@ -107,8 +101,14 @@ class Assembled:
             env.update(environ)
             inputs = assemble.Inputs(config_dir=tmp / "config", project_dir=tmp / "project", environ=env,
                                      self_root=self.root / "rigger-core")
-            self.main = assemble.assemble(inputs, "main")
-            self.subagent = assemble.assemble(inputs, "subagent", "general-purpose")
+            saved = assemble._this_os
+            if os_name is not None:
+                assemble._this_os = lambda: os_name
+            try:
+                self.main = assemble.assemble(inputs, "main")
+                self.subagent = assemble.assemble(inputs, "subagent", "general-purpose")
+            finally:
+                assemble._this_os = saved
         finally:
             shutil.rmtree(str(tmp), True)
 
@@ -262,7 +262,7 @@ class SessionStartTests(HookRun):
                 if entry["audience"] in ("both", audience):
                     text = assembled().text(root.name, entry["file"][len("rules/"):], audience).decode("utf-8")
                     found.extend(heading_lines(text))
-        self.assertGreaterEqual(len(found), 16)  # 17 main-session files; 00-scope.md is a preamble, no heading
+        self.assertGreaterEqual(len(found), PRINTED_MIN_FILES - 2)  # 17 main-session files on Windows; 00-scope.md is a preamble, no heading
         return found
 
     def test_each_source_prints_each_section_once_after_its_root_line(self):
@@ -275,10 +275,14 @@ class SessionStartTests(HookRun):
                 lines = joined.decode("utf-8").split("\n")
                 for heading in self.expected_headings("main"):
                     self.assertEqual(lines.count(heading), 1, heading)
-                self.assertEqual([line for line in lines if line.startswith("rigger: ")], d75_notices())
+                self.assertNotIn(D75_LINE, lines)
+                self.assertEqual([line for line in lines if line.startswith("rigger: ")], [])
                 for root in dirs:
+                    if root.name == "rigger-platform":
+                        # its rule requires os:windows: the root line comes with the rule, on Windows only
+                        self.assertEqual(root_line(root) in joined, os.name == "nt")
                     # no rules, no root line
-                    if root.name not in ("rigger-panel", "rigger-review", "rigger-shellwise", "rigger-testing"):
+                    elif root.name not in ("rigger-panel", "rigger-review", "rigger-shellwise", "rigger-testing"):
                         self.assertIn(root_line(root), joined)
 
     def test_resume_prints_nothing(self):
@@ -286,12 +290,12 @@ class SessionStartTests(HookRun):
 
 
 class SubagentStartTests(HookRun):
-    def test_a_worker_gets_the_root_line_and_the_shell_line(self):
+    def test_a_worker_gets_the_root_line_and_the_shell_line_on_windows_only(self):
         for agent in WORKERS:
             with self.subTest(agent=agent):
                 text = b"".join(self.context(out) for out in self.subagent(module_dirs(), agent)).decode("utf-8")
-                self.assertIn(root_line(WINDOWS).decode("utf-8") + ROOT_NAME_LINE + "\n", text)
-                self.assertIn(SHELL_LINE, text)
+                self.assertEqual(root_line(PLATFORM).decode("utf-8") + SHELL_HEADING + "\n" in text, os.name == "nt")
+                self.assertEqual(SHELL_LINE in text, os.name == "nt")
                 self.assertEqual(without_root_lines(text.encode("utf-8")),
                                  without_root_lines(assembled().whole("subagent")))
 
@@ -309,16 +313,17 @@ class SubagentStartTests(HookRun):
 
 class DropTests(unittest.TestCase):
     def test_a_basename_drops_only_its_own_file(self):
-        found = Assembled(HARNESS_RULES_DROP="windows.md")
-        self.assertEqual(found.text("rigger-windows", "windows.md"), b"")
-        self.assertIn(b"`rigger-windows:windows-dev-env`", found.text("rigger-core", "skills.md"))
-        self.assertEqual(found.text("rigger-core", "skills.md"), rules_text("rigger-core", "skills.md"))
+        found = Assembled(os_name="windows", HARNESS_RULES_DROP="windows.md")
+        self.assertEqual(found.text("rigger-platform", "windows.md"), b"")
+        self.assertIn(b"`rigger-platform:windows-dev-env`", found.text("rigger-core", "skills.md"))
+        self.assertEqual(found.text("rigger-core", "skills.md"),
+                         Assembled(os_name="windows").text("rigger-core", "skills.md"))
 
-    def test_root_name_stays_when_the_shell_heading_is_dropped(self):
-        heading = heading_lines(rules_text("rigger-windows", "windows.md").decode("utf-8"))[0]
-        text = Assembled(HARNESS_RULES_DROP=heading).whole("subagent").decode("utf-8")
-        self.assertNotIn(heading + "\n", text)
-        self.assertIn(root_line(WINDOWS).decode("utf-8") + ROOT_NAME_LINE + "\n\n", text)
+    def test_the_shell_section_goes_when_its_heading_is_dropped(self):
+        # The rule has no preamble before its heading since the platform module took it over.
+        text = Assembled(os_name="windows", HARNESS_RULES_DROP=SHELL_HEADING).whole("subagent").decode("utf-8")
+        self.assertNotIn(SHELL_HEADING + "\n", text)
+        self.assertNotIn(SHELL_LINE, text)
 
 
 class SkillTableTests(unittest.TestCase):
@@ -333,9 +338,11 @@ class SkillTableTests(unittest.TestCase):
                 matches = [ROW_RE.fullmatch(row) for row in self.table_rows(audience)]
                 self.assertNotIn(None, matches)
                 listed = sorted((match.group(1), match.group(2)) for match in matches)
-                for plugin in ("rigger-core", "rigger-testing", "rigger-windows", "rigger-wp"):
+                for plugin in ("rigger-core", "rigger-testing", "rigger-platform", "rigger-wp"):
                     skills = sorted(path.parent.name for path in (PLUGINS / plugin / "skills").glob("*/SKILL.md"))
                     self.assertGreater(len(skills), 0)
+                    if plugin == "rigger-platform" and os.name != "nt":
+                        skills = []  # its three rows require os:windows
                     # Without superpowers, the testing slot's row reads `rigger-testing:testing` alone (D39).
                     self.assertEqual(sorted(skill for owner, skill in listed if owner == plugin), skills, plugin)
 
@@ -363,10 +370,11 @@ class CrossPluginWordingTests(unittest.TestCase):
 
     def test_safe_edit_is_conditional_and_the_worktree_route_is_not(self):
         self.assertIn(
-            "Red runs: in a worktree, or in place only through `safe-edit.ps1 -Run` (needs rigger-windows).",
+            "Red runs: in a worktree, or in place only through `python \"<rigger-testing plugin folder>/tools/"
+            "safe-edit/safe_edit.py\"` with `--run` (needs rigger-testing).",
             self.text("tests.md"))
         self.assertIn(
-            "go through the Edit tool or `safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows)",
+            "go through the Edit tool or `safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)",
             self.text("defects.md"))
 
     def test_only_a_main_session_loads_the_git_skill(self):
@@ -510,15 +518,14 @@ class RulesSizeTests(unittest.TestCase):
     def test_rules_text_stays_under_the_ceiling(self):
         root = Path(os.environ.get("RIGGER_RULES_ROOT") or PLUGINS)
         found = Assembled(root)
-        expected = d75_notices(root)
-        self.assertEqual((found.main.notices, found.subagent.notices), (expected, expected),
-                         "rules assembled from %s" % root)
+        self.assertNotIn(D75_LINE, found.main.notices + found.subagent.notices)
+        self.assertEqual((found.main.notices, found.subagent.notices), ([], []), "rules assembled from %s" % root)
         main_ids = {section["id"] for section in found.main.sections}
         blocks = list(found.main.blocks) + [block for block, section in zip(found.subagent.blocks, found.subagent.sections)
                                             if section["id"] not in main_ids]
         files = {(s["module"], s["file"]) for s in found.main.sections + found.subagent.sections
                  if s["id"] != SLOTS_ID}
-        self.assertGreaterEqual(len(files), RULES_MIN_FILES, "rules files read from %s" % root)
+        self.assertGreaterEqual(len(files), PRINTED_MIN_FILES, "rules files read from %s" % root)
         # `## Slots` is generated and has a ceiling of its own (D50).
         slots = [block for block in blocks if block[2] == SLOTS_ID]
         self.assertEqual(len(slots), 1)

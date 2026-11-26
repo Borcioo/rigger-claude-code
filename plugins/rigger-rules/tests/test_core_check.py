@@ -19,7 +19,7 @@ PLUGIN = Path(__file__).resolve().parent.parent
 PLUGINS = PLUGIN.parent
 # Every plugin that needs rigger-core: each warns for itself when it moved past the installed core, or when it is
 # installed with no core at all.
-RULES_PLUGINS = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk", "rigger-review",
+RULES_PLUGINS = ("rigger-rules", "rigger-platform", "rigger-wp", "rigger-lessons", "rigger-talk", "rigger-review",
                  "rigger-testing")
 
 
@@ -399,10 +399,10 @@ class CoreCheckTests(unittest.TestCase):
     def test_two_moved_plugins_print_two_lines(self):
         # Claude Code merges identical hook text; each line names its plugin, so both reach the session.
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)
-        windows = self.plugin_copy(self.cache / "rigger-windows" / "945ea046f764", PLUGINS / "rigger-windows")
-        self.listing({"rigger-rules@rigger": self.rules, "rigger-windows@rigger": windows, "rigger-core@rigger": old})
-        outputs = [self.run_check(), self.run_check(windows, plugin=PLUGINS / "rigger-windows")]
-        self.assertEqual(outputs, [line("rigger-rules"), line("rigger-windows")])
+        platform = self.plugin_copy(self.cache / "rigger-platform" / "945ea046f764", PLUGINS / "rigger-platform")
+        self.listing({"rigger-rules@rigger": self.rules, "rigger-platform@rigger": platform, "rigger-core@rigger": old})
+        outputs = [self.run_check(), self.run_check(platform, plugin=PLUGINS / "rigger-platform")]
+        self.assertEqual(outputs, [line("rigger-rules"), line("rigger-platform")])
 
     def test_no_plugin_name_prints_nothing(self):
         old = self.core(self.cache / "rigger-core" / "85be9b16363b", assembler=False)

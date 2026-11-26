@@ -23,7 +23,7 @@ SPEC_SLOTS = {
     "implementer": {"kind": "agent", "target": "rigger-core:implementer", "model": "pinned"},
     "mapper": {"kind": "agent", "target": "rigger-core:mapper", "model": "pinned"},
     "testing": {"kind": "skill", "target": "rigger-testing:testing"},
-    "shell-guard": {"kind": "hook", "target": "rigger-windows", "requires": ["os:windows"]},
+    "shell-guard": {"kind": "hook", "target": "rigger-shellwise"},
     "lessons": {"kind": "hook", "target": "rigger-lessons"},
     "process": {
         "brainstorm": {"kind": "skill", "target": "superpowers:brainstorming"},
@@ -524,6 +524,110 @@ class TurnGuardTests(unittest.TestCase):
         self.assertIn("turn_guard key poll unknown", notices[0])
         clean, notices = config.validate_level({"turn_guard": "off"}, 4, "w")
         self.assertEqual((clean, len(notices)), ({}, 1))
+
+
+class TestEvidencePhrasesTests(unittest.TestCase):
+    """D95: test_evidence.phrases (levels 2-3) lists words per category for the Stop shadow; a bad one is dropped."""
+
+    BLOCK = {"claim": ["zrobione"], "negation": ["nie"], "disclosure": ["nie uruchomiono"], "status": ["w toku"]}
+
+    def test_phrases_apply_at_levels_two_and_three(self):
+        got = resolve(l3={"schema": 1, "test_evidence": {"phrases": self.BLOCK}})
+        self.assertEqual((got.effective.get("test_evidence"), got.notices), ({"phrases": self.BLOCK}, []))
+        self.assertEqual(got.sources[("test_evidence", "phrases", "claim")], "L3:" + PATHS[3])
+        got = resolve(l2=[("acme", {"test_evidence": {"phrases": {"claim": ["zrobione"]}}})])
+        self.assertEqual((got.effective.get("test_evidence"), got.notices, got.inactive),
+                         ({"phrases": {"claim": ["zrobione"]}}, [], {}))
+
+    def test_other_levels_drop_it_with_a_notice(self):
+        block = {"test_evidence": {"phrases": {"claim": ["zrobione"]}}}
+        for level in (1, 4):
+            with self.subTest(level=level):
+                clean, notices = config.validate_level(dict(block, schema=1), level, "w")
+                self.assertEqual(clean, {"schema": 1})
+                self.assertEqual(notices, ["rigger: config w key test_evidence not allowed at level %d; ignored"
+                                           % level])
+        got = resolve(l4=dict(block, schema=1))
+        self.assertNotIn("test_evidence", got.effective)
+
+    def test_bad_shapes_are_dropped_with_a_notice(self):
+        where = PATHS[3]
+        rows = (
+            ("phrases not an object", {"phrases": ["a"]},
+             ["rigger: config %s test_evidence.phrases must be an object; ignored" % where]),
+            ("unknown key", {"words": {}}, ["rigger: config %s test_evidence key words unknown; ignored" % where]),
+            ("unknown category", {"phrases": {"tone": ["a"], "claim": ["ok"]}},
+             ["rigger: config %s test_evidence.phrases category tone unknown; ignored" % where]),
+            ("a category not a list", {"phrases": {"claim": "zrobione"}},
+             ["rigger: config %s test_evidence.phrases.claim must be a list of words; ignored" % where]),
+            ("a bad entry", {"phrases": {"claim": [7, "", "a\nb", "x" * 61, "ok"]}},
+             ["rigger: config %s test_evidence.phrases.claim entry %s ignored: %s" % (where, shown, why)
+              for shown, why in (("7", "must be a non-empty string"), ("''", "must be a non-empty string"),
+                                 ("'a\\nb'", "holds a line break or control character"),
+                                 (repr("x" * 61), "over 60 characters"))]),
+            ("too many entries", {"phrases": {"claim": ["w%d" % n for n in range(101)]}},
+             ["rigger: config %s holds 101 test_evidence.phrases.claim entries; the last 1 ignored (at most 100 per "
+              "file)" % where]),
+        )
+        for what, block, expected in rows:
+            with self.subTest(what):
+                got = resolve(l3={"schema": 1, "test_evidence": block})
+                self.assertEqual(got.notices, expected)
+        got = resolve(l3={"schema": 1, "test_evidence": rows[3][1]})
+        self.assertEqual(got.effective.get("test_evidence"), {"phrases": {}})
+        got = resolve(l3={"schema": 1, "test_evidence": rows[4][1]})
+        self.assertEqual(got.effective["test_evidence"], {"phrases": {"claim": ["ok"]}})
+        got = resolve(l3={"schema": 1, "test_evidence": rows[5][1]})
+        self.assertEqual(got.effective["test_evidence"]["phrases"]["claim"], ["w%d" % n for n in range(100)])
+        clean, notices = config.validate_level({"test_evidence": "x"}, 3, "w")
+        self.assertEqual((clean, len(notices)), ({}, 1))
+
+
+class DriftLintListsTests(unittest.TestCase):
+    """D95: drift_lint.remote_commands and drift_lint.project_bins (levels 2-3) add command names; a bad one is
+    dropped with a notice."""
+
+    BLOCK = {"remote_commands": ["deploytool"], "project_bins": ["bintool", "vite"]}
+
+    def test_lists_apply_at_levels_two_and_three(self):
+        got = resolve(l3={"schema": 1, "drift_lint": self.BLOCK})
+        self.assertEqual((got.effective.get("drift_lint"), got.notices, got.inactive), (self.BLOCK, [], {}))
+        self.assertEqual(got.sources[("drift_lint", "project_bins")], "L3:" + PATHS[3])
+        got = resolve(l2=[("acme", {"drift_lint": {"remote_commands": ["deploytool"]}})])
+        self.assertEqual((got.effective.get("drift_lint"), got.notices, got.inactive),
+                         ({"remote_commands": ["deploytool"]}, [], {}))
+
+    def test_other_levels_drop_it_with_a_notice(self):
+        for level in (1, 4):
+            with self.subTest(level=level):
+                clean, notices = config.validate_level({"schema": 1, "drift_lint": self.BLOCK}, level, "w")
+                self.assertEqual(clean, {"schema": 1})
+                self.assertEqual(notices, ["rigger: config w key drift_lint not allowed at level %d; ignored" % level])
+        self.assertNotIn("drift_lint", resolve(l4={"schema": 1, "drift_lint": self.BLOCK}).effective)
+
+    def test_bad_shapes_are_dropped_with_a_notice(self):
+        where = PATHS[3]
+        name = "must be one command name of at most 64 characters (letters, digits, . _ + -)"
+        rows = (
+            ("unknown key", {"commands": ["x"]}, {},
+             ["rigger: config %s drift_lint key commands unknown; ignored" % where]),
+            ("a list that is an object", {"project_bins": {}, "remote_commands": ["ok"]}, {"remote_commands": ["ok"]},
+             ["rigger: config %s drift_lint.project_bins must be a list of command names; ignored" % where]),
+            ("bad entries", {"remote_commands": [7, "", "two words", "a\nb", "x" * 65, "x" * 64, "ok"]},
+             {"remote_commands": ["x" * 64, "ok"]},
+             ["rigger: config %s drift_lint.remote_commands entry %s ignored: %s" % (where, shown, name)
+              for shown in ("7", "''", "'two words'", "'a\\nb'", repr("x" * 65))]),
+            ("too many entries", {"project_bins": ["b%d" % n for n in range(51)]},
+             {"project_bins": ["b%d" % n for n in range(50)]},
+             ["rigger: config %s holds 51 drift_lint.project_bins entries; the last 1 ignored (at most 50 per file)"
+              % where]),
+        )
+        for what, block, kept, expected in rows:
+            with self.subTest(what):
+                got = resolve(l3={"schema": 1, "drift_lint": block})
+                self.assertEqual((got.notices, got.effective.get("drift_lint")), (expected, kept))
+        clean, notices = config.validate_level({"drift_lint": ["deploytool"]}, 3, "w")
+        self.assertEqual((clean, notices), ({}, ["rigger: config w key drift_lint must be an object; ignored"]))
 
 
 class ShellGuardTests(unittest.TestCase):

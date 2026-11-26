@@ -7,13 +7,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_repo import tracked_files  # noqa: E402
+from test_repo import git_env, tracked_files  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PREFIXES = "rigger"
 # `rigger-core:worker` (a skill or agent) and `plugins/rigger-core` (a folder).
 QUALIFIED_RE = re.compile(r"(?<![A-Za-z0-9-])%s-([a-z]+):[a-z][a-z0-9-]*" % PREFIXES)
 FOLDER_RE = re.compile(r"plugins/%s-([a-z]+)(?![A-Za-z0-9-])" % PREFIXES)
+# Removed plugins (D84) that the history in docs/ and the frozen golden fixture still name.
+REMOVED = ("windows",)
+HISTORY = ("docs/", "tests/fixtures/")
 
 
 def plugin_names(root):
@@ -33,8 +36,9 @@ def findings(root, names):
         for number, line in enumerate(data.decode("utf-8", "replace").split("\n"), 1):
             for regex in (QUALIFIED_RE, FOLDER_RE):
                 for match in regex.finditer(line):
-                    if match.group(1) not in names:
-                        found.append("%s:%d: %s" % (name, number, match.group(0)))
+                    if match.group(1) in names or (match.group(1) in REMOVED and name.startswith(HISTORY)):
+                        continue
+                    found.append("%s:%d: %s" % (name, number, match.group(0)))
     return read, found
 
 
@@ -55,12 +59,18 @@ class PluginRefs(unittest.TestCase):
             (root / "plugins" / "rigger-core" / "a.md").write_text("run `rigger-core:worker` first\n", encoding="utf-8")
             (root / "b.md").write_text("line one\nrun `%s` now\n" % planted, encoding="utf-8")
             (root / "c.md").write_text("see plugins/rigger-" + "gone/x\n", encoding="utf-8")
+            removed = "plugins/rigger-" + "windows"
+            for folder_name in ("docs", "tests/fixtures", "plugins/rigger-core"):
+                (root / folder_name).mkdir(parents=True, exist_ok=True)
+                (root / folder_name / "d.md").write_text("see %s/x\n" % removed, encoding="utf-8")
             import subprocess
-            subprocess.run(["git", "init", "-q"], cwd=folder, check=True)
-            subprocess.run(["git", "add", "-A"], cwd=folder, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=folder, env=git_env(root), check=True)
+            subprocess.run(["git", "add", "-A"], cwd=folder, env=git_env(root), check=True)
             read, found = findings(root, plugin_names(root))
-        self.assertEqual(read, 3)
-        self.assertEqual(sorted(found), ["b.md:2: " + planted, "c.md:1: plugins/rigger-" + "gone"])
+        self.assertEqual(read, 6)
+        # A removed plugin passes in the history folders only.
+        self.assertEqual(sorted(found), ["b.md:2: " + planted, "c.md:1: plugins/rigger-" + "gone",
+                                         "plugins/rigger-core/d.md:1: " + removed])
 
 
 if __name__ == "__main__":

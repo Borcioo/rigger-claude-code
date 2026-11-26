@@ -58,15 +58,15 @@ the `implementer` slot's agent, pass both groups as RISK.
 **Pitfalls**
 - Project: `<project CLAUDE.md, Pitfalls section>` — read it first.
 - This session: <paste every lesson captured so far>.
-- If rigger-windows is installed (Windows): absolute paths for `[IO.File]`/`[IO.Directory]`; commit with
+- If rigger-platform is installed (Windows): absolute paths for `[IO.File]`/`[IO.Directory]`; commit with
   `git commit -m @'…'@` or `-F <file>`, never `-F -`; no `node_modules`/`vendor` junctions in
   worktrees (removing the worktree empties the target; a `vendor` junction makes Composer load the
-  main checkout's code); source edits only with the Edit tool or `safe-edit.ps1 -Find -Replace
-  -Count`, never a heredoc or regex script; superpowers helper scripts (`sdd-workspace`, `task-brief`,
+  main checkout's code); source edits only with the Edit tool or `safe_edit.py --find TEXT
+  --replace TEXT --count N` (rigger-testing), never a heredoc or regex script; superpowers helper scripts (`sdd-workspace`, `task-brief`,
   `review-package`) only through the Bash tool (Git Bash) by absolute path — `bash` typed in
   PowerShell starts WSL.
-- Red runs: in a worktree, or in place — with rigger-windows installed — through
-  `<rigger-windows root>/tools/safe-edit/safe-edit.ps1 -Run`; never restored with `git checkout`.
+- Red runs: in a worktree, or in place — with rigger-testing installed — through
+  `python "<rigger-testing plugin folder>/tools/safe-edit/safe_edit.py"` with `--run`; never restored with `git checkout`.
 - Escapes are built at runtime (`"\\" + "u0141"`), never typed through Write/Edit expecting a literal character.
 
 **Design:** `<board path>` the task reproduces, or n/a; the review compares the built screen with

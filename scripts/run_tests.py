@@ -98,7 +98,7 @@ TIMEOUT = 120
 # A file that spawns hundreds of git and shell processes by design has its own limit: its quiet run takes 60-90 s
 # and a loaded gate nearly doubles that. Add a file here only with the spawn count that shows it.
 TIMEOUTS = {
-    "plugins/rigger-windows/tools/shell-guard/tests/test_commit_gate.py": 300,
+    "plugins/rigger-testing/tools/test-evidence/tests/test_commit_gate.py": 300,
     "tests/test_assembly_golden.py": 300,  # 507 sh and 302 python starts; 33 s alone, 45-65 s in the gate
     # 580 git and 375 hook (python) starts, each hook run starting git again; 110 s alone
     "plugins/rigger-testing/tools/weak-test-guard/tests/test_weak_test_guard.py": 300,
@@ -115,8 +115,6 @@ LOG_FOLDER = "harness-tests"
 SERIAL = (
     "plugins/rigger-core/tools/assemble/tests/test_stub_session.py",
     "plugins/rigger-rules/tests/test_reinject.py",
-    "plugins/rigger-windows/tools/mem-check/mem-check.tests.ps1",
-    "plugins/rigger-windows/tools/shell-guard/tests/test_rules.py",
     "tests/test_repo.py",
     "tests/test_sweep.py",
 )

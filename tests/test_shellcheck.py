@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 
-from test_repo import tracked_files  # noqa: E402
+from test_repo import git_env, tracked_files  # noqa: E402
 
 SHELLCHECK = shutil.which("shellcheck")
 # Notes on code that is right in rules_start.sh: SC1003 reads the literal '\' as a failed escape,
@@ -46,10 +46,12 @@ class ShellcheckTest(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
-        subprocess.run(["git", "init", "-q", str(root)], check=True, stdin=subprocess.DEVNULL, timeout=60)
+        subprocess.run(["git", "init", "-q", str(root)], env=git_env(root), check=True, stdin=subprocess.DEVNULL,
+                       timeout=60)
         for name, text in files.items():
             (root / name).write_bytes(text.encode("utf-8"))
-        subprocess.run(["git", "add", "-A"], cwd=str(root), check=True, stdin=subprocess.DEVNULL, timeout=60)
+        subprocess.run(["git", "add", "-A"], cwd=str(root), env=git_env(root), check=True, stdin=subprocess.DEVNULL,
+                       timeout=60)
         return root
 
     def test_every_tracked_sh_file_is_clean(self):
@@ -57,7 +59,7 @@ class ShellcheckTest(unittest.TestCase):
         self.assertIn("plugins/rigger-core/bin/py.sh", names)
         self.assertIn("plugins/rigger-rules/rules/rules_start.sh", names)
         self.assertIn("plugins/rigger-core/tools/assemble/part.sh", names)
-        for plugin in ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk", "rigger-review",
+        for plugin in ("rigger-rules", "rigger-platform", "rigger-wp", "rigger-lessons", "rigger-talk", "rigger-review",
                        "rigger-testing"):
             self.assertIn("plugins/%s/hooks/core_check.sh" % plugin, names)
         self.assertEqual((code, output), (0, ""))
