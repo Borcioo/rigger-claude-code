@@ -126,12 +126,12 @@ gets an exact entry in `ALLOWED_DOMAINS`; an accepted exception is an exact `pat
 session start and trusts only the SHA-256 values committed there. A new release is a pin bump. Do it
 on a branch, with a network connection:
 
-1. **Download all assets** of the release (4 archives, 4 `.sha256` files and `SHA256SUMS`) into a new
-   empty folder, from `https://github.com/Borcioo/shellwise/releases/download/v<version>/<asset>`
-   (the installer's `DEFAULT_BASE` has the same form). The archive names are
+1. **Download all assets** of the release (the archives, their `.sha256` files and `SHA256SUMS`) into a
+   new empty folder, from `https://github.com/Borcioo/shellwise/releases/download/v<version>/<asset>`
+   (the installer's `DEFAULT_BASE` has the same form). The pin takes four archives:
    `shellwise-v<version>-<target>.zip` for `x86_64-pc-windows-msvc` and
-   `shellwise-v<version>-<target>.tar.gz` for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and
-   `x86_64-apple-darwin`.
+   `shellwise-v<version>-<target>.tar.gz` for `x86_64-unknown-linux-musl` (the static build: the
+   `-gnu` one needs a recent glibc), `aarch64-apple-darwin` and `x86_64-apple-darwin`.
 2. **The hash check.** Compute each archive's SHA-256 yourself and compare it with three sources: its
    `.sha256` file, its line in `SHA256SUMS` and the `digest` of
    `gh release view v<version> --repo Borcioo/shellwise --json assets`. All four values must agree for
