@@ -150,6 +150,7 @@ class HarnessStartTests(unittest.TestCase):
     def test_enabled_rigger_windows_gets_one_line(self):
         # D84: the removed plugin, still installed from some marketplace and enabled, gets one line per startup.
         key = "rigger-windows@my-market"
+        replaced = ("rigger-shellwise@my-market", "rigger-testing@my-market")
         line = ("rigger: rigger-windows is still enabled; disable it "
                 "(claude plugin disable rigger-windows@my-market)\n")
 
@@ -159,6 +160,8 @@ class HarnessStartTests(unittest.TestCase):
             if not install_path:
                 for entry in self.installed[key]:
                     del entry["installPath"]
+            for other in replaced:   # its replacements are enabled: the line names only the disable
+                self.install(other, {})
 
         def not_listed():
             self.install(PLUGIN, {})
@@ -170,12 +173,36 @@ class HarnessStartTests(unittest.TestCase):
             ("not listed, enabled in settings", not_listed, ""),
             ("listed and disabled", lambda: listed(1, enabled=False), ""),
             ("listed for a project only", lambda: self.install(key, {}, scope="project"), ""),
+            ("a similar name", lambda: self.install("rigger-windows-extra@my-market", {}), ""),
         )
         for name, arrange, expected in cases:
             with self.subTest(name):
                 self.installed.clear()
                 self.enabled.clear()
                 arrange()
+                self.settings({})
+                self.assertEqual(self.run_hook(), expected)
+
+    def test_the_removed_plugin_line_names_a_missing_replacement(self):
+        """d65-C C-3: disabling rigger-windows without its replacements would leave commands unguarded."""
+        key = "rigger-windows@my-market"
+        head = "rigger: rigger-windows is still enabled; disable it (claude plugin disable rigger-windows@my-market)"
+        shellwise = " rigger-shellwise (claude plugin install rigger-shellwise@my-market)"
+        testing = " rigger-testing (claude plugin install rigger-testing@my-market)"
+        cases = (
+            ("neither", (), head + " after installing" + shellwise + " and" + testing + "\n"),
+            ("only testing enabled", ("rigger-testing@my-market",), head + " after installing" + shellwise + "\n"),
+            ("only shellwise enabled", ("rigger-shellwise@my-market",), head + " after installing" + testing + "\n"),
+            ("shellwise from another marketplace", ("rigger-shellwise@other", "rigger-testing@my-market"),
+             head + " after installing" + shellwise + "\n"),
+        )
+        for name, present, expected in cases:
+            with self.subTest(name):
+                self.installed.clear()
+                self.enabled.clear()
+                self.install(key, {})
+                for other in present:
+                    self.install(other, {})
                 self.settings({})
                 self.assertEqual(self.run_hook(), expected)
 
@@ -284,6 +311,15 @@ class HarnessStartTests(unittest.TestCase):
         self.assertIn("rigger: cannot read %s" % hooks_file, self.run_hook())
         (self.config / "settings.json").write_bytes(b"{broken")
         self.assertIn("rigger: cannot read %s" % (self.config / "settings.json"), self.run_hook())
+
+    def test_an_unreadable_installed_plugins_file_is_named(self):
+        self.settings({})
+        installed = self.config / "plugins" / "installed_plugins.json"
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(b"{broken")
+        output = self.run_hook()
+        self.assertEqual(len(output.splitlines()), 1, output)
+        self.assertTrue(output.startswith("rigger: cannot read %s" % installed), output)
 
     def test_malformed_shapes_do_not_fail_the_hook(self):
         self.write_json(self.config / "plugins" / "installed_plugins.json", {"plugins": {PLUGIN: "x", OTHER: [1, {}]}})
