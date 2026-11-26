@@ -233,6 +233,64 @@ class SafeEditTests(unittest.TestCase):
                                  "the backup; the backup is kept at %s" % (path, backup)])
         self.assertTrue(os.path.exists(backup))
 
+    def test_working_directory_is_the_cwd_of_the_command(self):
+        path = self.fixture("cwd.txt", "guard = on\n")
+        where = os.path.join(self.work, "elsewhere")
+        os.mkdir(where)
+        code, lines = self.safe_edit(*self.red_args(path, code="import os, sys; print('# tests 1'); "
+                                                              "print('CWD=' + os.getcwd()); sys.exit(1)")
+                                     + ["--working-directory", where])
+        self.assertEqual(code, 0, lines)
+        seen = [line[4:] for line in lines if line.startswith("CWD=")]
+        self.assertEqual(len(seen), 1, lines)
+        self.assertTrue(os.path.samefile(seen[0], where), (seen, where))
+
+    def killed_write(self, path, argv, kill_on):
+        """Run main in process; the `kill_on`-th os.replace is the kill: the temp file was written, nothing else."""
+        import safe_edit
+        calls = []
+        real = os.replace
+
+        class Killed(BaseException):
+            pass
+
+        def replace(src, dst):
+            calls.append(dst)
+            if len(calls) == kill_on:
+                raise Killed()
+            return real(src, dst)
+
+        saved, os.replace = os.replace, replace
+        try:
+            with self.assertRaises(Killed):
+                safe_edit._main(argv)
+        finally:
+            os.replace = saved
+        return calls
+
+    def run_args(self, path):
+        return ["--path", path, "--find", "guard = on", "--replace", "guard = off", "--run",
+                python_command(CHECK, path), "--expect-ran", "# tests [1-9]"]
+
+    def test_a_kill_while_the_backup_is_written_leaves_no_truncated_backup(self):
+        path = self.fixture("kill-backup.txt", "guard = on\n")
+        self.killed_write(path, self.run_args(path), 1)
+        self.assertEqual(self.text(path), "guard = on\n")
+        self.assertFalse(os.path.exists(path + ".safe-edit-backup"))
+        code, lines = self.safe_edit(*self.run_args(path))
+        self.assertEqual(code, 0, lines)
+
+    def test_a_kill_while_the_file_is_restored_leaves_a_whole_file_and_a_backup_that_restores_it(self):
+        path = self.fixture("kill-restore.txt", "guard = on\n")
+        calls = self.killed_write(path, self.run_args(path), 3)  # 1 backup, 2 mutation, 3 restore
+        backup = path + ".safe-edit-backup"
+        self.assertEqual(self.text(path), "guard = off\n")  # whole mutated file, not a partial write
+        self.assertTrue(json.loads(self.read(backup).decode("utf-8"))["original"])
+        code, lines = self.safe_edit("--path", path, "--restore")
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.text(path), "guard = on\n")
+        self.assertFalse(os.path.exists(backup))
+
     def test_platform_shell_is_recorded_in_the_backup(self):
         path = self.fixture("shell.txt", "guard = on\n")
         seen = os.path.join(self.work, "backup-seen.json")
