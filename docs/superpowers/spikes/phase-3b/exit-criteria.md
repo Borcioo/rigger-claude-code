@@ -62,7 +62,7 @@ counted the three CLI builtins as host plugins. The check now accepts only `path
 | 4 | With the binary removed, the session line appears and the command runs | test + scratch | PASS |
 | 5 | `Hooks: PreToolUse:Bash` appears for rigger-shellwise and rigger-testing | test + scratch | PASS |
 | 6 | A commit row comes from the testing module | test + scratch | PASS |
-| 7 | The turn guard holds a turn with a background gate | test + scratch | FAIL in a fresh config (F2); PASS once `<config>/state/` exists |
+| 7 | The turn guard holds a turn with a background gate | test + scratch | PASS (fixed in 5ccf220; it was FAIL in a fresh config, F2) |
 | 8 | Doctor reports `closed` for the shell-guard slot | scratch `e8_doctor.py` | PASS: `fails closed` in both layouts; the `OK` state only in a hand-copied layout (F1) |
 | 9 | The download case again under WSL | scratch `e1_download.py` | PASS |
 
@@ -175,8 +175,12 @@ is never held. The stub's first reply is
 `Bash {"command": "\"<python>\" run_tests.py", "run_in_background": true}`, where `run_tests.py` sleeps 9 s.
 Every later reply is end_turn text.
 
-**Result:** FAIL in the setup the criterion names (a fresh config), because of F2. PASS once
-`<config>/state/` exists, which the harness and the test create before the session.
+**Result (2026-11-26, after the fix):** PASS. Commit 5ccf220 makes the turn guard create
+`<config>/state/` itself, and an unwritable count holds the first Stop of a chain. `TurnGuardSessionTests`
+no longer creates the folder and asserts that the count file exists.
+
+**Result as first recorded (before 5ccf220):** FAIL in the setup the criterion names (a fresh config),
+because of F2. PASS once `<config>/state/` existed, which the harness and the test then created before the session.
 
 **Observed (`e7b`, with `<config>/state/` created first):**
 - **Debug log:** `Hooks: Stop [sh "<plugins>/rigger-core/bin/py.sh" -S "<plugins>/rigger-core/tools/side-session-guard/side_session_guard.py" || true] (plugin rigger-core@inline)`.
@@ -278,12 +282,12 @@ The harness is `<temp>/rigger-p3b/C2-task28/harness/`.
   - `rule_checker.find_data_dir` has the same fallback, but only when `CLAUDE_PLUGIN_DATA` is unset (inside
     a session it is set).
   - It is visible only with the variable set (stub runs, a custom cache).
-- **F2. The turn guard fails open in a config with no `state/` folder.**
+- **F2. The turn guard fails open in a config with no `state/` folder.** Fixed in 5ccf220 (2026-11-26); the text below is the observation before the fix.
   - `_save_counts` writes `<config>/state/<session>.turn-guard.json`, and nothing creates the folder first.
     A failed count write allows the turn, as the guard's docstring says.
   - So in a fresh config the guard polls 4 s at each Stop and never holds the turn (`e7`). With the folder
     present it holds (`e7b`).
-  - The test creates the folder and says why.
+  - The test created the folder and said why; since 5ccf220 it no longer does.
 - **Observation:** rigger-testing's `if: "Bash(*commit*)"` handlers ran for `rm -f "$NOPE_VAR"x.tmp; echo M3W`,
   which holds no `commit` (2 handler lines). They were skipped for the break command. The CLI appears to
   run an `if` hook when the command holds an expansion it cannot read. `commit_shadow.py` then finds no
