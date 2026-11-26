@@ -177,7 +177,9 @@ Every later reply is end_turn text.
 
 **Result (2026-11-26, after the fix):** PASS. Commit 5ccf220 makes the turn guard create
 `<config>/state/` itself, and an unwritable count holds the first Stop of a chain. `TurnGuardSessionTests`
-no longer creates the folder and asserts that the count file exists.
+no longer creates the folder and asserts that the count file exists. The run after the fix, on a fresh config:
+`Ran 12 tests in 67.770s`, `OK (skipped=3)` (`<temp>/rigger-p3b/C2-f2/checks/stub_session.txt`), and the
+guard's count file holds `{"format": 1, "blocks": {"brkomw3d9": 2}}`.
 
 **Result as first recorded (before 5ccf220):** FAIL in the setup the criterion names (a fresh config),
 because of F2. PASS once `<config>/state/` existed, which the harness and the test then created before the session.

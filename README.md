@@ -8,7 +8,7 @@
 > sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC.
 
 Rigger is a Claude Code plugin marketplace: a working harness for Claude Code sessions and
-subagents. It ships seven plugins: working rules (verification, tests, scope, git) injected at
+subagents. It ships ten plugins: working rules (verification, tests, scope, git) injected at
 session start and into every subagent, a lessons inbox that turns mistakes into rules, portable
 skills and agents, context and compaction guards, a side panel, and opt-in packs for native Windows
 and WordPress development. Install the plugins you want; every plugin that holds rules (`rigger-rules`,
@@ -146,9 +146,9 @@ nothing:
 
 ## Cost
 
-Context added by the rules hooks with all seven plugins installed: about 9.5k tokens in a main
-session over `rigger-core` alone, about 4.2k per worker spawn and about 1.4k per Explore spawn, plus
-whatever your `rules.d` holds. `resume` re-injects nothing. The `Skill` tool adds the skills listing,
+Context added by the rules hooks with all ten plugins installed: about 28 KB (about 7k tokens) in a
+main session and about 16 KB (about 4k tokens) per subagent spawn, nothing for the built-in Explore
+and Plan agents, plus whatever your `rules.d` holds. `resume` re-injects nothing. The `Skill` tool adds the skills listing,
 about 3k more per worker or reviewer spawn.
 
 ## Update
@@ -195,7 +195,7 @@ it for one repo only.
 | the reviewer agent | `claude plugin disable rigger-review@rigger` |
 | WordPress rule and skills | `claude plugin disable rigger-wp@rigger` |
 | the side panel and `/harness` | `claude plugin disable rigger-panel@rigger` |
-| skills, agents, guards and the state-file rule | `claude plugin disable rigger-core@rigger` (disable the rules plugins first: they depend on `rigger-core`) |
+| skills, agents, guards and the state-file rule | `claude plugin disable rigger-core@rigger` (disable every plugin that depends on it first: `rigger-rules`, `rigger-lessons`, `rigger-talk`, `rigger-platform`, `rigger-shellwise`, `rigger-testing`, `rigger-review` and `rigger-wp`) |
 
 The skills and agents of `rigger-core` stay available without `rigger-rules`; that is why they are
 separate plugins.

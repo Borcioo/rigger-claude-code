@@ -84,10 +84,9 @@ STATE_NEW = (  # phase 3b D87, written by hand: work items go through the state 
     b"  then goal, plan file, commits, running agents, `## Next step`, `## Items`, `## Keep verbatim`\n"
     b"  (exact errors, file:line, commands, ids, decisions and why), lessons. Rewrite it at each task\n"
     b"  boundary (commit, green tests, subagent result), refreshing Next step and Keep verbatim,\n"
-    b"  with `true`; set `false` before a step that must not be cut (merge, migration).\n"
-    b"  Compaction waits for `true`; after it, continue from Next step without\n"
-    b"  asking or writing a\n"
-    b"  handoff.\n"
+    b"  with `true`; set `false` before a step that must not be cut (merge, multi-file edit,\n"
+    b"  migration). Compaction waits for `true` (up to a hard cap); after it, continue from Next step\n"
+    b"  without asking or writing a handoff.\n"
     b"- **The state file stays under 9 000 characters,** all that comes back after compaction.\n"
     b"  `## Next step` is the first section: rewrite it, never append to it, at most ~15 lines. History\n"
     b"  goes to `<session id>.log.md`, linked\n"
@@ -287,7 +286,7 @@ SAFE_EDIT_WORDING = [  # phase 3b: the tool that rigger-windows shipped is rigge
     (b"`safe-edit.ps1 -Run` (needs rigger-windows).",
      b'`python "<rigger-testing plugin folder>/tools/safe-edit/safe_edit.py"` with `--run` (needs rigger-testing).'),
     (b"`safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows)",
-     b"`safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)"),
+     b"`safe_edit.py --path FILE --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)"),
 ]
 
 

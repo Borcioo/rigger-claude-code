@@ -3,6 +3,13 @@
 All notable changes to this marketplace are listed here, newest first, in the Keep a Changelog
 format. Releases are tagged `v<version>`.
 
+## [Unreleased]
+
+### Fixed
+
+- 0.8.0 notes misdescribed which plugins print the rigger-core-missing line: not every plugin that needs
+  rigger-core (rigger-shellwise prints none), but every plugin whose rules or skills rigger-core loads.
+
 ## [0.8.0] - 2026-11-26
 
 ### Migration

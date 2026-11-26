@@ -1165,7 +1165,7 @@ its analysis cannot finish it blocks with `danger`, so it fails closed.
 | Item today | Lands in | Note |
 |---|---|---|
 | `tools/shell-guard/shell_guard.py` (deny rules, PowerShell and git handlers, `hooks.json:11-69`) | **deleted**; the slot is filled by `rigger-shellwise` | shellwise is not changed for Rigger. Every Python-guard rule has a shellwise counterpart. The rule checker covers `bash-powershell-syntax`, `bash-too-long` and `bash-unterminated-quote` through aliases to `bash-ps-cmdlet`, `too-long` and `parse-error` (`rule_checker.py` `ALIASES`; `bash-ps-call-operator` is a v0.1.1 rule, `docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md`). The Python guard's own tests go with it. |
-| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **`rigger-shellwise`** `tools/rule_checker.py`, a Python module with `RULES` and `rule_guard_problem` built on `explain` and `check` | `curate-lessons/SKILL.md:94-104` takes the checker path from the shell-guard filler's manifest (`provides.shell-guard.rule_checker`) instead of looking up `rigger-windows@`. A `live:<rule>` lesson for a rule the active filler lacks is reported as `no checker` by doctor and curation. It is never dropped, as `SKILL.md:96-99` already does for a missing checker. |
+| `tools/shell-guard/lessons_guard.py` (rule checker for `lessons_lint.py`) | **`rigger-shellwise`** `tools/rule-checker/rule_checker.py`, a Python module with `RULES` and `rule_guard_problem` built on `explain` and `check` | `curate-lessons/SKILL.md:94-104` takes the checker path from the shell-guard filler's manifest (`provides.shell-guard.rule_checker`) instead of looking up `rigger-windows@`. A `live:<rule>` lesson for a rule the active filler lacks is reported as `no checker` by doctor and curation. It is never dropped, as `SKILL.md:103-107` already does for a missing checker. |
 | `rigger-core/tools/token-audit/tests/test_archive.py` (checks `lessons_guard.py`'s rule ids against `shell_guard.py`, `test_archive.py:19,241-242,316`) | rewritten against a stub checker module | It checks the checker interface, not one filler's rule list. |
 | commit shadow rule inside `shell_guard.py`, `stop_shadow.py`, `turn_evidence.py`, `.claude/gates.json` format (`INSTALL.md` "Shadow gates") | **rigger-testing** `tools/test-evidence/` | These ask whether a check ran after the last edit, a testing question, not a command-shape one. The commit rule is extracted from `shell_guard.py` into its own handler on `Bash(*commit*)` and `PowerShell(*commit*)`. `tests/test_repo.py` handler counts change. |
 | `tools/gate-lab/` (replay and report of the shadow gates) | **rigger-testing** `tools/gate-lab/` | It measures the gates above. The `CLAUDE.md:21` pitfall path follows. |
@@ -1185,7 +1185,7 @@ testing module through placeholders or conditional wording:
 
 - `e2e-playwright-speed/SKILL.md:152`;
 - `git-workflow/SKILL.md:21-22`;
-- `orchestrating-subagents/SKILL.md:48-52`;
+- `orchestrating-subagents/SKILL.md:49-53`;
 - `stack-tooling/SKILL.md:72-73`;
 - `testing/SKILL.md:85`;
 - `implementer-brief.md:61,68-69`;
@@ -1214,8 +1214,8 @@ The doctor's Windows requirement (`doctor.sh:495`) becomes "recommends `rigger-p
      dropped without a word, with exit 0). Their `dependencies` install or re-enable rigger-core
      but leave an installed one at its version, so also run
      `claude plugin update rigger-core@rigger`. Phase 3a ships the first two.
-  2. Install the shellwise binary as its README says. If you had added its hook to `settings.json`
-     by hand, remove that entry: `harness_start.py` reports it as a handler that runs twice.
+  2. Nothing to install by hand: rigger-shellwise downloads its pinned binary at session start. If you
+     had added the shellwise hook to `settings.json` by hand, remove that entry: `harness_start.py` reports it as a handler that runs twice.
   3. `claude plugin disable rigger-windows@rigger`, then uninstall it.
   4. Run `/rigger-core:doctor`.
 - **Windows, from the first phase-3 release:** `harness_start.py` prints one line while rigger-windows
@@ -1224,10 +1224,10 @@ The doctor's Windows requirement (`doctor.sh:495`) becomes "recommends `rigger-p
 - **Gates file:** a repository's `.claude/gates.json` keeps its format, and its rows move to
   rigger-testing's data folder (`CLAUDE_PLUGIN_DATA` changes with the plugin), so old rows stay
   where they were. Gate-lab takes `--data` for either folder.
-- **macOS:** install `rigger-testing` and `rigger-review`, one call each, and update rigger-core
-  (doctor and the session's install lines say so), and optionally
-  `rigger-shellwise` with the shellwise binary.
-  The guard is new on macOS, a behaviour change listed in the release notes. Nothing to remove.
+- **macOS and Linux:** install `rigger-testing`, `rigger-review` and `rigger-shellwise`, one call
+  each, and update rigger-core (doctor and the session's install lines say so); rigger-shellwise
+  downloads its pinned binary at session start.
+  The guard is new on macOS and Linux, a behaviour change listed in the release notes. Nothing to remove.
 
 **Estimate:** 28 h:
 

@@ -28,9 +28,9 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
 
 - `/rigger-core:doctor`: checks the machine (Claude Code version, the hook shell, `git`, Python as
   the hooks find it, the Rigger plugins and settings) and offers one block of install commands, run
-  only after your yes. It reports `rigger-rules` and `rigger-lessons` (and `rigger-platform` on
-  Windows) as MISSING when they are not installed: they are the recommended set, not a hard
-  dependency of this plugin. With Python it also prints the assembler's rows: `rules-assembly` (OK
+  only after your yes. When they are not installed it reports `rigger-rules` and `rigger-lessons` as
+  MISSING, and `rigger-platform` (Windows) and `rigger-shellwise` as WARN: they are the recommended
+  set, not a hard dependency of this plugin. With Python it also prints the assembler's rows: `rules-assembly` (OK
   with the module and section counts, or WARN with the first problem), one `rule-override` per
   `rules.d` section that replaces a Rigger one, one `expects` per plugin the project file expects
   that is not installed and enabled (FIX `claude plugin install <name>`), one `config-inactive`
