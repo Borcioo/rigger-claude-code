@@ -13,7 +13,8 @@
   "rules": [],
   "tests": {
     "paths": [
-      "tests/"
+      "tests/",
+      "tools/*/tests/"
     ],
     "contract": [
       "shell-guard"
