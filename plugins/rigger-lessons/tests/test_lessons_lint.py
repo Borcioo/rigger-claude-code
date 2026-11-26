@@ -544,24 +544,54 @@ class LessonsLintTests(unittest.TestCase):
                          "guard live:unclaimed: claimed; guard live:unclaimed: other; guard live:unclaimed: string")
 
     def test_rule_checker_found_in_repo_through_a_link(self):
-        """A --repo given as a junction (Windows) or symlink finds its plugins/*/tools/*/lessons_guard.py, and
-        its test guards resolve through the link."""
+        """A --repo given as a junction (Windows) or symlink finds its plugins/*/tools/*/lessons_guard.py and
+        plugins/*/tools/*/rule_checker.py, and its test guards resolve through the link."""
         self.build()
         real = self.tmp / "real-repo"
-        checker = real / "plugins" / "p" / "tools" / "t" / "lessons_guard.py"
-        checker.parent.mkdir(parents=True)
-        with open(checker, "w", encoding="utf-8", newline="") as handle:
-            handle.write("def rule_guard_problem(rule, meta):\n    return 'guard live:%s: from the linked repo' % rule\n")
+        sources = {"plugins/p/tools/t/lessons_guard.py": "from the linked repo",
+                   "plugins/s/tools/rule-checker/rule_checker.py": "from its rule_checker.py"}
+        for rel, said in sources.items():
+            checker = real.joinpath(*rel.split("/"))
+            checker.parent.mkdir(parents=True)
+            with open(checker, "w", encoding="utf-8", newline="") as handle:
+                handle.write("def rule_guard_problem(rule, meta):\n    return 'guard live:%%s: %s' %% rule\n" % said)
         shutil.move(str(self.tmp / "tests"), str(real / "tests"))
         link = self.tmp / "linked-repo"
         make_dir_link(link, real)
-        self.assertEqual([Path(p).name for p in lessons_lint.find_checkers([str(link)])], ["lessons_guard.py"])
+        self.assertEqual(sorted(Path(p).name for p in lessons_lint.find_checkers([str(link)])),
+                         ["lessons_guard.py", "rule_checker.py"])
         self.build(set_meta(D, tools="[powershell]"))
         shutil.rmtree(str(self.tmp / "tests"))
         count, problems = lessons_lint.lint(str(self.archive), repo=str(link))
         self.assertEqual(count, 5)
-        self.assertEqual(problems, ["%s: guard live:deploy-exit-check: from the linked repo" % os.path.join(
-            str(self.archive), D)])
+        self.assertEqual(problems, ["%s: guard live:deploy-exit-check: from the linked repo; "
+                                    "guard live:deploy-exit-check: from its rule_checker.py" % os.path.join(
+                                        str(self.archive), D)])
+
+    def test_a_rule_checker_py_confirms_by_glob_and_by_flag(self):
+        """plugins/*/tools/*/rule_checker.py in a --repo is a rule checker, and so is one given by --rule-checker;
+        one that confirms the probe clears the guard."""
+        self.build(set_meta(D, tools="[powershell]"))
+        source = ("RULES = frozenset({'deploy-exit-check'})\n"
+                  "def rule_guard_problem(rule, meta):\n"
+                  "    return None if meta.get('probe') == 'sh deploy.sh --fail-upload' else 'guard live:%s: no' % rule\n")
+        repo = self.tmp / "repo"
+        in_repo = repo / "plugins" / "s" / "tools" / "rule-checker" / "rule_checker.py"
+        given = self.tmp / "elsewhere" / "rule_checker.py"
+        for path in (in_repo, given):
+            path.parent.mkdir(parents=True)
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                handle.write(source)
+        self.assertEqual(lessons_lint.find_checkers([str(self.tmp), str(repo)]), [str(in_repo)])
+        self.assertEqual(lessons_lint.lint(str(self.archive), repo=[str(self.tmp), str(repo)]), (5, []))
+        # without a checker the same case is a problem
+        self.assertEqual([p.split(", so ")[0] for p in lessons_lint.lint(str(self.archive), repo=str(self.tmp))[1]],
+                         ["%s: guard live:deploy-exit-check: the case's tools name a shell" % os.path.join(
+                             str(self.archive), D)])
+        code, out, err = self.run_cli("--archive", str(self.archive), "--repo", str(self.tmp),
+                                      "--rule-checker", str(given))
+        self.assertEqual((code, err), (0, b""), out)
+        self.assertTrue(out.endswith("# 5 case files checked, 0 problems\n"), out)
 
     def test_cli_repo_and_checker_must_exist(self):
         self.build()

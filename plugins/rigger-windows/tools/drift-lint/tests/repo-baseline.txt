@@ -6,5 +6,3 @@ rigger-windows/skills/php-herd-tooling/SKILL.md	path	$env:USERPROFILE\.config\he
 rigger-windows/skills/windows-dev-env/SKILL.md	path	$env:USERPROFILE\.config\herd\bin\php84\php.exe
 rigger-windows/skills/windows-dev-env/SKILL.md	path	~/.claude.json
 rigger-windows/skills/windows-dev-env/SKILL.md	path	~/bin
-# Reached through the rigger-windows installPath read from installed_plugins.json, not by a path relative to this plugin.
-rigger-lessons/skills/curate-lessons/SKILL.md	repo-path	tools/shell-guard/lessons_guard.py

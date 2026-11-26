@@ -131,7 +131,8 @@ class ManifestTests(unittest.TestCase):
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
             "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
             "rigger-shellwise": ("shell-guard", "closed", {"shell-guard": {
-                "kind": "hook", "target": "rigger-shellwise"}}, ["shell-guard"]),
+                "kind": "hook", "target": "rigger-shellwise",
+                "rule_checker": "tools/rule-checker/rule_checker.py"}}, ["shell-guard"]),
             "rigger-rules": (None, None, {}, []),
             "rigger-talk": (None, None, {}, []),
             "rigger-wp": (None, None, {}, []),

@@ -7,7 +7,8 @@
   "provides": {
     "shell-guard": {
       "kind": "hook",
-      "target": "rigger-shellwise"
+      "target": "rigger-shellwise",
+      "rule_checker": "tools/rule-checker/rule_checker.py"
     }
   },
   "rules": [],

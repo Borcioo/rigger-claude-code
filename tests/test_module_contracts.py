@@ -331,12 +331,13 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual((verdict.ok, verdict.rule), want, verdict)
 
     def test_shellwise_filler_manifest(self):
-        # the rule checker key is added by Task 18
         manifest = import_from(ASSEMBLE_DIR, "manifest")
         module = manifest.load_manifest(SHELLWISE, None, "repository")
         self.assertEqual(module.fills, "shell-guard")
         self.assertEqual(module.failure_mode, "closed")
-        self.assertNotIn("rule_checker", module.provides["shell-guard"])
+        checker = module.provides["shell-guard"].get("rule_checker")
+        self.assertEqual(checker, "tools/rule-checker/rule_checker.py")
+        self.assertTrue((SHELLWISE / checker).is_file(), checker)
         self.assertEqual(module.tests.get("contract"), ["shell-guard"])
 
     def test_testing_filler_ships_the_commit_guards(self):
