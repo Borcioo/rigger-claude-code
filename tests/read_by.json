@@ -25,6 +25,7 @@
     "plugins/rigger-rules/tests/test_plugin_rules.py": ["*"],
     "plugins/rigger-rules/tests/test_reinject.py": ["*"],
     "plugins/rigger-rules/tests/test_rules_hooks.py": ["*"],
+    "plugins/rigger-shellwise/tools/install/tests/test_shellwise_install.py": ["rigger-core"],
     "plugins/rigger-talk/tests/test_talk.py": ["rigger-core"],
     "plugins/rigger-testing/tests/test_testing_wiring.py": ["rigger-core", "rigger-rules"],
     "plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py": ["*"]

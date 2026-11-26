@@ -8,6 +8,10 @@ Layout under the plugin data folder (`CLAUDE_PLUGIN_DATA`, or `--data`):
 `shellwise/status.json`, `shellwise/lock` (pid and start time) and `shellwise/announced` (the last
 ready line printed, so it is printed once).
 
+Override: `shell_guard.shellwise_path` (personal config, level 3), read through rigger-core's config module
+found by its installPath. An accepted override is what `current` names (status `override`); a refused one
+leaves `current` absent, so the launcher runs nothing, never the downloaded binary.
+
 Trust: only the SHA-256 committed in pin.json is compared, never a hash fetched with the archive;
 only the one expected member is streamed out; the binary runs (`--version`) only after the hash
 matched; `current` and the ready status are written only after both checks passed.
@@ -16,8 +20,10 @@ matched; `current` and the ready status are written only after both checks passe
 import argparse
 import collections
 import hashlib
+import importlib
 import json
 import os
+import pathlib
 import platform
 import re
 import shutil
@@ -393,6 +399,69 @@ def spawn_child(argv):
     subprocess.Popen(argv, **kwargs)
 
 
+# --- the override from config ----------------------------------------------------------------
+
+def _core_assemble_dir(config_dir):
+    """rigger-core's tools/assemble folder from the first absolute installPath of the first `rigger-core@` key
+    of installed_plugins.json that holds config.py, or None."""
+    try:
+        data = json.loads((_read_bytes(os.path.join(config_dir, "plugins", "installed_plugins.json")) or b"")
+                          .decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        return None
+    plugins = data.get("plugins") if isinstance(data, dict) else None
+    key = next((name for name in plugins if isinstance(name, str) and name.startswith("rigger-core@")), None) \
+        if isinstance(plugins, dict) else None
+    for item in plugins[key] if key and isinstance(plugins[key], list) else []:
+        root = item.get("installPath") if isinstance(item, dict) else None
+        if isinstance(root, str) and os.path.isabs(root) and (os.name != "nt" or os.path.splitdrive(root)[0]):
+            folder = os.path.join(root, "tools", "assemble")
+            if os.path.isfile(os.path.join(folder, "config.py")):
+                return folder
+    return None
+
+
+def read_override(environ=None):
+    """shell_guard.shellwise_path as rigger-core's config module resolves the personal config (the one level
+    that may set it); None when unset or when rigger-core cannot be found or loaded."""
+    environ = os.environ if environ is None else environ
+    config_dir = environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    folder = _core_assemble_dir(config_dir)
+    if folder is None:
+        return None
+    names = ("config", "manifest")
+    saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+    sys.path.insert(0, folder)
+    try:
+        config = importlib.import_module("config")
+        path = os.path.join(config_dir, "rigger", "config.json")
+        data, _ = config.load_level(pathlib.Path(path), 3)
+        block = {"shell_guard": data["shell_guard"]} if "shell_guard" in data else {}
+        guard = config.resolve({}, [], block, {}, {3: path}).effective.get("shell_guard")
+    except Exception:   # a core that does not load reads no config
+        return None
+    finally:
+        sys.path.remove(folder)
+        for name in names:
+            sys.modules.pop(name, None)
+        sys.modules.update(saved)
+    return guard.get("shellwise_path") if isinstance(guard, dict) else None   # config.py checks the shape
+
+
+def _override_left(root):
+    """True when the files on record come from an override (accepted or refused)."""
+    status = _read_status(root)
+    return status.get("state") == "override" or (status.get("state") == "failed"
+                                                 and str(status.get("reason", "")).startswith("override "))
+
+
+def _remove(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
 # --- entry points -----------------------------------------------------------------------------
 
 def _load_pin(path):
@@ -407,7 +476,7 @@ def _load_pin(path):
     return pin
 
 
-def _session_start(args, spawn):
+def _session_start(args, spawn, launch=None):
     data = args.data or os.environ.get("CLAUDE_PLUGIN_DATA")
     if not data:
         return NO_BINARY % "no plugin data folder"
@@ -417,11 +486,22 @@ def _session_start(args, spawn):
     base = args.base_url or DEFAULT_BASE.format(version=pin["version"])
     child = [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--child", "--data", data,
              "--pin", pin_path, "--base-url", base] + (["--target", args.target] if args.target else [])
-    # The override (shell_guard.shellwise_path) is passed here once config reads it.
-    status = ensure(data, pin, None, spawn=lambda: spawn(child), target=args.target)
+    root = _root(data)
+    override = read_override()
+    if not override and _override_left(root):   # the override is gone: back to the download
+        _remove(os.path.join(root, "current"))
+        _remove(os.path.join(root, "status.json"))
+    status = ensure(data, pin, override, spawn=lambda: spawn(child), target=args.target, launch=launch)
+    if override and status.state == "override":
+        _write_atomic(os.path.join(root, "current"), (status.path + "\n").encode("utf-8"))
+        _write_status(root, status.version, status.target, "override")
+    elif override:   # refused: the slot stays unfilled, never filled by the downloaded binary
+        _remove(os.path.join(root, "current"))
+        _write_status(root, status.version, status.target, "failed", status.reason)
+    elif status.state == "no-asset" or status.reason.startswith("download could not start"):
+        _write_status(root, status.version, status.target, status.state, status.reason)
     if status.state not in ("ready", "override"):
         return NO_BINARY % status.reason
-    root = _root(data)
     key = "%s %s %s" % (status.state, status.version, status.path)
     if _read_text(os.path.join(root, "announced")) == key:
         return ""
@@ -437,7 +517,7 @@ def _child(args):
         download(data, pin, target, args.base_url or DEFAULT_BASE.format(version=pin["version"]))
 
 
-def main(argv=None, *, spawn=None, out=None):
+def main(argv=None, *, spawn=None, out=None, launch=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--session-start", action="store_true")
@@ -454,7 +534,7 @@ def main(argv=None, *, spawn=None, out=None):
             pass
         return 0
     try:
-        line = _session_start(args, spawn or spawn_child)
+        line = _session_start(args, spawn or spawn_child, launch)
     except Exception as exc:
         line = NO_BINARY % _one_line(exc)
     if line:

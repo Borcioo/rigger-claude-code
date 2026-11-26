@@ -60,9 +60,11 @@ def module_dirs(root=PLUGINS):
 
 
 def d75_notices(root=PLUGINS):
-    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []."""
+    """[D75_LINE] while rigger-shellwise and rigger-windows both fill shell-guard, else []. Windows only: the
+    default shell-guard entry requires os:windows, so on other systems the slot, and its notice, is absent."""
     fillers = sorted(load_manifest(d)["name"] for d in module_dirs(root) if load_manifest(d).get("fills") == "shell-guard")
-    return [D75_LINE] if fillers == ["rigger-shellwise", "rigger-windows"] else []
+    both = fillers == ["rigger-shellwise", "rigger-windows"]
+    return [D75_LINE] if both and os.name == "nt" else []
 
 
 def part_command(index, subagent=False):

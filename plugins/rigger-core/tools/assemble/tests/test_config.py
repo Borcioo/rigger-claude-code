@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -230,14 +231,15 @@ class ResolveTests(unittest.TestCase):
         self.assertIsNotNone(snapshot.write_snapshot(tmp, "s1", data))
 
     def test_slots_trust_and_review_above_level_one_apply(self):
-        # D32: slots (levels 2-4), trust (level 3) and review (D61) take effect; shell_guard, company and
+        # D32: slots (levels 2-4), trust (level 3), review (D61) and shell_guard (D76) take effect; company and
         # leak_guard stay recorded only. effective["slots"] is the plain merge, before the trust filter.
+        own = os.path.abspath("sw")
         l3 = {
             "schema": 1,
             "slots": {"testing": {"target": "x:y"}},
             "trust": {"project_commands": ["reviewer"]},
             "review": {"paths": {"*.php": "rules/php.md"}},
-            "shell_guard": {"shellwise_path": "/opt/sw"},
+            "shell_guard": {"shellwise_path": own},
             "leak_guard": {"denylist": "~/deny.txt"},
         }
         l4 = {"schema": 1, "company": "company-deploy",
@@ -250,10 +252,10 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(got.effective["review"], {"paths": {"*.php": "rules/php.md"}})
         source3, source4 = "L3:" + PATHS[3], "L4:" + PATHS[4]
         self.assertEqual(got.sources[("review", "paths", "*.php")], source3)
+        self.assertEqual(got.effective.get("shell_guard"), {"shellwise_path": own})
         self.assertEqual(
             got.inactive,
             {
-                ("shell_guard", "shellwise_path"): source3,
                 ("leak_guard", "denylist"): source3,
                 ("company",): source4,
             },
@@ -522,6 +524,46 @@ class TurnGuardTests(unittest.TestCase):
         self.assertIn("turn_guard key poll unknown", notices[0])
         clean, notices = config.validate_level({"turn_guard": "off"}, 4, "w")
         self.assertEqual((clean, len(notices)), ({}, 1))
+
+
+class ShellGuardTests(unittest.TestCase):
+    """D76: shell_guard.shellwise_path takes effect at level 3 only; every other level drops it with a notice."""
+
+    def test_level_three_path_applies(self):
+        path = os.path.abspath("own-shellwise")
+        got = resolve(l3={"schema": 1, "shell_guard": {"shellwise_path": path}})
+        self.assertEqual(got.effective.get("shell_guard"), {"shellwise_path": path})
+        self.assertEqual(got.sources[("shell_guard", "shellwise_path")], "L3:" + PATHS[3])
+        self.assertEqual((got.inactive, got.notices), ({}, []))
+
+    def test_other_levels_drop_it_with_a_notice(self):
+        block = {"shell_guard": {"shellwise_path": os.path.abspath("own-shellwise")}}
+        cases = (
+            (dict(l1=dict(level_one(), **block)), "rigger: config %s key shell_guard not allowed at level 1; ignored"
+             % PATHS[1]),
+            (dict(l2=[("company-a", block)]), "rigger: config module company-a key shell_guard not allowed at level 2; "
+             "ignored"),
+            (dict(l4=dict({"schema": 1}, **block)), "rigger: config %s key shell_guard not allowed at level 4; ignored"
+             % PATHS[4]),
+        )
+        for kwargs, notice in cases:
+            with self.subTest(level=notice):
+                got = resolve(**kwargs)
+                self.assertNotIn("shell_guard", got.effective)
+                self.assertEqual((got.inactive, got.notices), ({}, [notice]))
+
+    def test_bad_value_is_dropped_with_one_notice(self):
+        for value, word in (("own-shellwise", "must be an absolute path"), (5, "must be an absolute path"),
+                            ("", "must be an absolute path")):
+            with self.subTest(value=value):
+                got = resolve(l3={"schema": 1, "shell_guard": {"shellwise_path": value}})
+                self.assertEqual(got.effective.get("shell_guard"), {})
+                self.assertEqual(len(got.notices), 1, got.notices)
+                self.assertIn("shell_guard.shellwise_path " + word, got.notices[0])
+                self.assertIn(PATHS[3], got.notices[0])
+        got = resolve(l3={"schema": 1, "shell_guard": {"path": "x"}})
+        self.assertEqual(got.effective.get("shell_guard"), {})
+        self.assertEqual(got.notices, ["rigger: config %s shell_guard key path unknown; ignored" % PATHS[3]])
 
 
 class LoadTests(unittest.TestCase):
