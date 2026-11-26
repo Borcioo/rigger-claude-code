@@ -1,7 +1,7 @@
-"""What test_rules.py and test_commit_gate.py both need; not a test file."""
+"""What test_commit_gate.py needs; not a test file."""
 import os
 
-GUARD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shell_guard.py")
+GUARD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "commit_shadow.py")
 
 
 def _bounded(fn, seconds):

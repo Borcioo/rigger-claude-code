@@ -31,7 +31,7 @@ HOME_ENV = ("USERPROFILE", "HOME", "APPDATA")
 SAVED_ENV = {name: os.environ.get(name) for name in HOME_ENV}
 FAKE_HOME = tempfile.mkdtemp(prefix="sg-gate-home-")
 os.environ.update(USERPROFILE=FAKE_HOME, HOME=FAKE_HOME, APPDATA=os.path.join(FAKE_HOME, "AppData", "Roaming"))
-import shell_guard  # noqa: E402
+import commit_shadow as shell_guard  # noqa: E402
 from rules_common import GUARD, _bounded  # noqa: E402
 
 # The commit rule. Most cases call commit_row on real repositories, since a hook process per case would add up; what
@@ -780,10 +780,10 @@ def commit_gate_checks(root, settle):
         # Bytecode lands in the data folder, not beside the scripts or in the cwd.
         copied = os.path.join(parent, "copy")
         os.makedirs(copied)
-        for name in ("shell_guard.py", "turn_evidence.py"):
+        for name in ("commit_shadow.py", "turn_evidence.py"):
             shutil.copy(os.path.join(os.path.dirname(GUARD), name), copied)
         out = os.path.join(parent, "bytecode")
-        proc, use_id = hook("Bash", "git commit -m m", repo, before, out, guard=os.path.join(copied, "shell_guard.py"), cwd=repo)
+        proc, use_id = hook("Bash", "git commit -m m", repo, before, out, guard=os.path.join(copied, "commit_shadow.py"), cwd=repo)
         want("through a copy of the scripts", gate_row(out, use_id), verdict="stale")
         results.append(("no __pycache__ beside the scripts", os.path.exists(os.path.join(copied, "__pycache__")), False))
         results.append(("no __pycache__ in the cwd", os.path.exists(os.path.join(repo, "__pycache__")), False))

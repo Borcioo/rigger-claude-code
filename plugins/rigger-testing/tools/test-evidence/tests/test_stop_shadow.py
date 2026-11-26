@@ -993,7 +993,7 @@ class LabCountsRows(StopCase):
                  "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": use_id,
                  "tool_input": {"command": "git commit -m change"}}
         env = dict(os.environ, CLAUDE_PLUGIN_DATA=self.data)
-        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", os.path.join(TOOL_DIR, "shell_guard.py"),
+        proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S", os.path.join(TOOL_DIR, "commit_shadow.py"),
                                "--only-git"], env=env, cwd=self.base, input=json.dumps(event).encode("utf-8"),
                               capture_output=True, timeout=LONG_WAIT)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"", b""))

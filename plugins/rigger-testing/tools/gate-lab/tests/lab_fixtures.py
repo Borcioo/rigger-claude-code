@@ -8,7 +8,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAB = os.path.dirname(HERE)
 sys.dont_write_bytecode = True
-sys.path[:0] = [LAB, os.path.join(os.path.dirname(LAB), "shell-guard")]
+sys.path[:0] = [LAB, os.path.join(os.path.dirname(LAB), "test-evidence")]
 import turn_evidence as te  # noqa: E402
 
 SID_A = "aaaaaaaa-1111-4111-8111-111111111111"

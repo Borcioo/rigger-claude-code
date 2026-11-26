@@ -28,7 +28,7 @@ import sys
 # The installed plugin folder stays as shipped.
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "shell-guard")]
+sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "test-evidence")]
 import report  # noqa: E402
 import turn_evidence as te  # noqa: E402
 
