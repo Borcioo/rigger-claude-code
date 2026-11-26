@@ -49,7 +49,8 @@ SEP = " %s " % DOT
 STATUSES = ("open", "doing", "blocked", "done")
 ITEM_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
-# Claude Code's session ids are UUIDs; clean moves and deletes only files named by one, never README.md.
+# Claude Code's session ids are UUIDs: clean archives another session's files only when a UUID names them, never
+# README.md. Paths for one named session (restore, its own log, archived files) take any SESSION_ID.
 SESSION_FILE_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 BRANCH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./+-]{0,199}")
@@ -573,12 +574,12 @@ def cmd_check(ctx, args, opts):
 
 # --- clean ------------------------------------------------------------------------------------------------------
 
-def session_of(name):
+def session_of(name, pattern=SESSION_FILE_ID):
     """The session id of a per-session file name, or None for a shared or foreign file."""
     if name in SHARED or name.startswith("."):
         return None
     ident, dot, rest = name.partition(".")
-    if not dot or not rest or not SESSION_FILE_ID.fullmatch(ident):
+    if not dot or not rest or not pattern.fullmatch(ident):
         return None
     return ident
 
@@ -706,8 +707,6 @@ def delete_old(ctx, archive):
     """(files deleted, stopped by the budget)."""
     deleted = 0
     for entry in regular_files(archive):
-        if session_of(entry.name) is None:   # a foreign file an older version moved here stays
-            continue
         try:
             if ctx.now - entry.stat(follow_symlinks=False).st_mtime <= ARCHIVE_DAYS * DAY:
                 continue
@@ -728,7 +727,8 @@ def rotate_logs(ctx, archive):
     rotated = 0
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(ctx.now))
     for entry in regular_files(ctx.state_dir):
-        session = session_of(entry.name)
+        own = entry.name == ctx.session + ".log.md"   # this session's own log, whatever its id's shape
+        session = ctx.session if own else session_of(entry.name)
         if not session or entry.name != session + ".log.md":
             continue
         try:
@@ -803,7 +803,7 @@ def restore_files(state_dir, session, now):
     archive = os.path.join(state_dir, "archive")
     moves, old_stamps = [], []
     for entry in regular_files(archive):
-        if session_of(entry.name) != session:
+        if session_of(entry.name, SESSION_ID) != session:
             continue
         rest = entry.name[len(session) + 1:]
         if rest == STAMP:
