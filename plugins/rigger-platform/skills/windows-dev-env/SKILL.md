@@ -158,7 +158,7 @@ Call Windows tools (`php`, `composer`, `wp`, `node`) directly, not through `bash
   `[System.IO.File]::WriteAllText($p, $s, (New-Object System.Text.UTF8Encoding($false)))` when a
   BOM would break the consumer.
 - After a scripted edit of a file with non-ASCII text, check the diff for mojibake before moving on.
-- Source edits use the Edit tool or `safe-edit.ps1` (the "Text encoding" rule); a content script
+- Source edits use the Edit tool or `safe_edit.py` of rigger-testing (the "Text encoding" rule); a content script
   that matches escapes uses raw strings (`r"""…"""`). After a scripted edit,
   `rg -n '[\x00-\x08\x0B\x0C\x0E-\x1F]' <file>` finds stray control bytes (`"\b"` in a non-raw string is a backspace, `"\'"` a bare quote).
 - PowerShell, .NET, node `Intl` and jsdom format by the Windows culture (with a culture such as

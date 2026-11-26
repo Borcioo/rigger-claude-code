@@ -283,6 +283,28 @@ def _state_items(scenario, roots, pieces) -> bool:
     return True
 
 
+SAFE_EDIT_WORDING = [  # phase 3b: the tool that rigger-windows shipped is rigger-testing's safe_edit.py
+    (b"`safe-edit.ps1 -Run` (needs rigger-windows).",
+     b'`python "<rigger-testing plugin folder>/tools/safe-edit/safe_edit.py"` with `--run` (needs rigger-testing).'),
+    (b"`safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows)",
+     b"`safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)"),
+]
+
+
+def _safe_edit_wording(scenario, roots, pieces) -> bool:
+    """The two rules that name the in-place red-run tool name rigger-testing's safe_edit.py (phase 3b)."""
+    done = False
+    for i, (key, text) in enumerate(pieces.get("rigger-rules", [])):
+        for old, new in SAFE_EDIT_WORDING:
+            if old in text:
+                if text.count(old) != 1:
+                    raise AssertionError("the frozen piece %s holds %r other than once" % (key, old))
+                text = text.replace(old, new)
+                done = True
+        pieces["rigger-rules"][i] = (key, text)
+    return done
+
+
 # D40's fixed list, in the order it is applied; every entry must apply in at least one scenario.
 ALLOWED = [
     ("the rigger-rules table moves to rigger-core and merges the three tables", _merged_table),
@@ -297,6 +319,7 @@ ALLOWED = [
     ("the lo-fi trap leaves ## Plans: main session for the web-ui-traps skill", _lofi_leaves_plans),
     ("the web-ui-traps trigger row names lo-fi screens", _ui_row_names_lofi),
     ("the state-file section sends work items through the state tool", _state_items),
+    ("the safe-edit wording names rigger-testing's safe_edit.py", _safe_edit_wording),
 ]
 
 

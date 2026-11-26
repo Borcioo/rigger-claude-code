@@ -28,7 +28,7 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
 
 - `/rigger-core:doctor`: checks the machine (Claude Code version, the hook shell, `git`, Python as
   the hooks find it, the Rigger plugins and settings) and offers one block of install commands, run
-  only after your yes. It reports `rigger-rules` and `rigger-lessons` (and `rigger-windows` on
+  only after your yes. It reports `rigger-rules` and `rigger-lessons` (and `rigger-platform` on
   Windows) as MISSING when they are not installed: they are the recommended set, not a hard
   dependency of this plugin. With Python it also prints the assembler's rows: `rules-assembly` (OK
   with the module and section counts, or WARN with the first problem), one `rule-override` per
@@ -83,7 +83,7 @@ first plugin. The rules print on `startup`, `clear` and `compact` (from a snapsh
   in its place. Lines starting `rigger:` at the top of part 1 report a skipped plugin, a bad config
   file, a replaced or duplicate rule, and slot problems. Rules that fit in no part are named in
   `rigger: rules left out over the hook cap: <ids>` at the end of the last part.
-- **rigger-core older than another Rigger plugin:** rigger-rules, rigger-windows, rigger-wp,
+- **rigger-core older than another Rigger plugin:** rigger-rules, rigger-platform, rigger-wp,
   rigger-lessons and rigger-talk each run `hooks/core_check.sh <name>` on `startup|clear|compact`. When that
   plugin runs from its cache install and no installed rigger-core holds `rules/skills.md`, it
   prints `Rigger rules not loaded for <name>: rigger-core is older than <name> (run claude plugin update rigger-core)`.

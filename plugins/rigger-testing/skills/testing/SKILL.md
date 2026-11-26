@@ -84,9 +84,9 @@ The Tests rule holds what must hold; this skill is how to meet it with fewer, st
   result differs from the default (a holiday on a weekday), so deleting the table turns it red.
 - Where the stack has a mutation tool, run it on the changed files (see `rigger-core:stack-tooling`)
   for branch mutations; table rows, stages and wiring stay hand mutations.
-- With rigger-windows installed, `<rigger-windows root>/tools/safe-edit/safe-edit.ps1 -Run`
-  mutates in place, runs and restores (usage in its header); never restore a mutation with
-  `git checkout`.
+- `python "<rigger-testing plugin folder>/tools/safe-edit/safe_edit.py"` with `--path`, `--find`,
+  `--replace`, `--count`, `--run` and `--expect-ran` mutates in place, runs and restores (usage in its
+  header); never restore a mutation with `git checkout`.
 - A scratch copy of a worktree deletes its `.git` first: the copied pointer makes git act on the
   real worktree.
 - Python: a mutant that keeps the file's size and mtime second can load a stale `.pyc`; run each
