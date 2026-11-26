@@ -4,7 +4,7 @@ python lessons_lint.py --archive DIR [--classes FILE] [--repo REPO ...] [--rule-
     FILE defaults to DIR/classes.txt. Test guards resolve against every REPO in turn (default: DIR's
     parent). Rule checkers are each --rule-checker FILE plus every REPO's
     plugins/*/tools/*/lessons_guard.py and plugins/*/tools/*/rule_checker.py; a live:<rule id> guard whose rule id a checker claims (its
-    RULES), or in a case whose tools name a shell, passes only when one of them confirms it.
+    RULES or ALIASES), or in a case whose tools name a shell, passes only when one of them confirms it.
     Config key lessons.allowed_paths (levels 2-3, read through rigger-core) adds globs where a global
     rule may live. Prints one `path: problem` line per problem.
     Exit 0: at least one case file and no problem. Exit 1: any problem.
@@ -237,13 +237,16 @@ def load_checkers(paths):
 
 
 def claims(module, rule):
-    """True when the checker's RULES (a set, list or tuple of rule ids) holds `rule`."""
+    """True when the checker's RULES (a set, list or tuple of rule ids) holds `rule`, or the keys of its
+    ALIASES (a dict of old rule id to the rule that replaced it) do."""
     rules = getattr(module, "RULES", ())
-    return isinstance(rules, (set, frozenset, list, tuple)) and rule in rules
+    aliases = getattr(module, "ALIASES", {})
+    return ((isinstance(rules, (set, frozenset, list, tuple)) and rule in rules)
+            or (isinstance(aliases, dict) and rule in aliases))
 
 
 def rule_guard_problem(value, meta, checkers):
-    """None if a `live:<rule id>` guard is acceptable. A rule id a loaded checker claims (its RULES) goes
+    """None if a `live:<rule id>` guard is acceptable. A rule id a loaded checker claims (its RULES or ALIASES) goes
     to the checkers that claim it, whatever the case's tools say. Otherwise, in a case whose tools name a
     shell it is a shell hook rule: one of the loaded checkers must confirm it. Any other rule id is
     accepted."""

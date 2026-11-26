@@ -333,14 +333,21 @@ def download(data_dir, pin, target, base_url, *, launch=None, clock=time.time):
         return Status("downloading", version, target, "", "another session is downloading")
     work = tempfile.mkdtemp(prefix=".work-", dir=root)
     try:
+        # A session start after the one that spawned this child may have set an override: its result stands.
+        if _override_left(root):
+            return Status("override-kept", version, target, "", "an override is on record")
         _write_status(root, version, target, "downloading")
         path = _install(root, work, pin, asset, target, base_url, launch)
+        if _override_left(root):
+            return Status("override-kept", version, target, "", "an override is on record")
         _write_atomic(os.path.join(root, "current"), (path + "\n").encode("utf-8"))
         _write_status(root, version, target, "ready")
         _prune(root, version)
         return Status("ready", version, target, path, "")
     except Exception as exc:   # every failure is one reason line, never a traceback
         reason = _one_line(exc if isinstance(exc, Refused) else "%s: %s" % (type(exc).__name__, exc))
+        if _override_left(root):
+            return Status("override-kept", version, target, "", "an override is on record")
         try:
             _write_status(root, version, target, "failed", reason)
         except OSError:

@@ -17,7 +17,7 @@
     "plugins/rigger-core/tools/token-audit/tests/test_archive.py": ["rigger-lessons", "rigger-rules", "rigger-windows"],
     "plugins/rigger-lessons/tests/test_batch_apply.py": ["rigger-rules"],
     "plugins/rigger-lessons/tests/test_lessons_batch.py": ["rigger-core", "rigger-rules"],
-    "plugins/rigger-lessons/tests/test_lessons_lint.py": ["rigger-core", "rigger-rules"],
+    "plugins/rigger-lessons/tests/test_lessons_lint.py": ["rigger-core", "rigger-rules", "rigger-shellwise"],
     "plugins/rigger-lessons/tests/test_lessons_rules.py": ["rigger-core"],
     "plugins/rigger-lessons/tests/test_proposal_check.py": ["rigger-rules"],
     "plugins/rigger-review/tests/test_review_module.py": ["rigger-core"],

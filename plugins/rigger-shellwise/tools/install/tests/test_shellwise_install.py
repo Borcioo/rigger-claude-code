@@ -514,6 +514,53 @@ class ConfigOverrideTests(Base):
         self.assertEqual((self.status_file()["state"], self.status_file()["reason"]), ("failed", reason))
         self.assertEqual(spawns.calls, [])
 
+    def test_download_started_earlier_keeps_a_later_override(self):
+        """Session start A starts a download child; session start B then accepts or refuses an override. The
+        child, whether it begins after B (early), is mid-download (late) or then fails (late-fail), leaves B's
+        `current` and status: a refused override never runs the downloaded binary."""
+        personal = os.path.join(self.config, "rigger", "config.json")
+        for kind in ("refused", "accepted"):
+            for timing in ("early", "late", "late-fail"):
+                with self.subTest(kind=kind, timing=timing):
+                    shutil.rmtree(self.root, ignore_errors=True)
+                    if os.path.exists(personal):
+                        os.remove(personal)
+                    self.server.requests.clear()
+                    self.server.release.clear()
+                    self.server.gated = timing != "early"
+                    pin = self.serve()
+                    spawns = Spawns()
+                    self.assertEqual(self.start(pin, spawns),
+                                     "shellwise: no binary (downloading); commands run unguarded\n")
+                    self.assertEqual(len(spawns.calls), 1)
+                    results = []
+                    child = threading.Thread(target=lambda: results.append(self.download(pin)))
+                    if timing != "early":
+                        child.start()
+                        self.assertTrue(wait_for(lambda: self.server.requests, 10), "the child never asked")
+                    path = self.override("shellwise 0.2.0" if kind == "accepted" else "shellwise 0.1.0")
+                    self.set_override(path)
+                    self.start(pin, Spawns())
+                    if timing == "early":
+                        child.start()
+                    if timing == "late-fail":
+                        del self.server.files[pin["assets"][TARGET]["name"]]
+                    self.server.release.set()
+                    child.join(20)
+                    self.assertFalse(child.is_alive())
+                    if timing == "late":   # the child got as far as placing its binary
+                        self.assertTrue(os.path.isfile(self.binary_path()))
+                    self.assertTrue(os.path.isfile(os.path.join(self.root, "status.json")))
+                    row = self.status_file()
+                    if kind == "accepted":
+                        self.assertIsNotNone(self.current())
+                        self.same(self.current().rstrip("\n"), path)
+                        self.assertEqual((row["state"], row["version"]), ("override", "0.2.0"))
+                    else:
+                        self.assertIsNone(self.current())
+                        self.assertEqual((row["state"], row["reason"]),
+                                         ("failed", "override %s: version 0.1.0 below the pin 0.1.1" % path))
+
     def test_override_set_in_the_project_is_not_used(self):
         self.set_override(self.override("shellwise 0.2.0"), where="project")
         spawns = Spawns()
@@ -605,6 +652,30 @@ class SessionStartTests(Base):
         self.assertTrue(line.startswith("shellwise: no binary (") and line.endswith("; commands run unguarded\n"))
         self.assertIn("download failed", line)
         self.assertNotIn("Traceback", line)
+
+    def test_failed_download_is_retried_at_the_next_start(self):
+        pin = self.serve()
+        self.assertEqual(self.download(pin, base=dead_url()).state, "failed")
+        self.assertEqual(self.status_file()["state"], "failed")
+        spawns = Spawns()
+        line = self.session_start(pin, spawns)
+        self.assertEqual(len(spawns.calls), 1)
+        self.assertTrue(line.startswith("shellwise: no binary (download failed: ")
+                        and line.endswith("; retrying); commands run unguarded\n"), line)
+
+    def test_vanished_binary_is_downloaded_again(self):
+        """`current` still names the binary, but the file is gone (quarantined): the next start downloads it
+        again and says so, though the ready line was announced before."""
+        pin = self.serve()
+        self.assertEqual(self.download(pin).state, "ready")
+        self.assertEqual(self.session_start(pin, Spawns()), "shellwise: v0.1.1 ready\n")
+        os.remove(self.binary_path())
+        self.assertIsNotNone(self.current())
+        self.assertEqual(si.resolve(self.data, pin, None, target=TARGET).state, "missing")
+        spawns = Spawns()
+        self.assertEqual(self.session_start(pin, spawns),
+                         "shellwise: no binary (downloading); commands run unguarded\n")
+        self.assertEqual(len(spawns.calls), 1)
 
     def test_session_start_is_bounded(self):
         target = si.host_target()
