@@ -538,6 +538,7 @@ if [ -n "$standalone" ] && [ -n "$ver" ] &&
   get "$settings" /enabledPlugins/shellwise@shellwise && [ "$jtype" = n ] && [ "$jval" = true ] &&
   get "$settings" /enabledPlugins/rigger-shellwise@rigger && [ "$jtype" = n ] && [ "$jval" = true ]; then
   check shell-guard-double WARN "shellwise@shellwise $standalone is enabled next to rigger-shellwise: two shellwise hooks check every command" "$how_plugins"
+  fix shell-guard-double 'claude plugin disable shellwise@shellwise'
 fi
 if ! plugin_row superpowers superpowers@superpowers-marketplace WARN; then
   fix superpowers 'claude plugin marketplace add obra/superpowers-marketplace'

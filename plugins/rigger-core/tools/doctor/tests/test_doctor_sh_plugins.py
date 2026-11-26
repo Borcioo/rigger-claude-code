@@ -208,7 +208,8 @@ class DoctorShTests(DoctorShCase):
                     self.assertEqual(result.fixes.get("plugin rigger-windows"), fixes)
 
     def test_shellwise_plugin_next_to_rigger_shellwise_is_one_warn(self):
-        # Both installed for the user and enabled: one WARN row and no FIX; any other state: no row.
+        # Both installed for the user and enabled: one WARN row whose FIX disables shellwise's own plugin; any
+        # other state: no row and no FIX.
         warn = ("WARN", "shellwise@shellwise 0.2.0 is enabled next to rigger-shellwise: two shellwise hooks check "
                         "every command")
         cases = (
@@ -231,7 +232,8 @@ class DoctorShTests(DoctorShCase):
                 self.write_config(settings, installed, self.good_marketplaces())
                 result = self.run_doctor()
                 self.assertEqual(result.checks.get("shell-guard-double", (None, None))[:2], row or (None, None))
-                self.assertNotIn("shell-guard-double", result.fixes)
+                self.assertEqual(result.fixes.get("shell-guard-double"),
+                                 ["claude plugin disable shellwise@shellwise"] if row else None)
         for broken in ("settings.json", "plugins/installed_plugins.json"):
             with self.subTest(not_valid_json=broken):
                 settings, installed = self.good_settings(), self.good_installed()
