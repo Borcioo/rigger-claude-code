@@ -8,7 +8,8 @@ format. Releases are tagged `v<version>`.
 ### Added
 
 - Doctor warns once when shellwise's own plugin (`shellwise@shellwise`) is enabled next to rigger-shellwise, so
-  two shellwise hooks check every command.
+  two shellwise hooks check every command; its fix disables `shellwise@shellwise`.
+- rigger-shellwise on Linux arm64: the static `aarch64-unknown-linux-musl` build, so the guard runs there too.
 
 ### Changed
 
