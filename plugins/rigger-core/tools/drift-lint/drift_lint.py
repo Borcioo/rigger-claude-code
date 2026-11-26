@@ -327,6 +327,7 @@ def config_names(config_dir, project_dir, environ):
         found = discover.discover(Path(config_dir), Path(project_dir), environ, Path(ASSEMBLE).parent.parent)
         personal_path = Path(config_dir, "rigger", "config.json")
         personal, notices = config.load_level(personal_path, 3)
+        notices = list(found.notices) + notices   # a company module that does not load says so
         blocks = [(2, "module " + module.name, module.config) for module in found.modules
                   if module.layer == "company" and isinstance(module.config, dict)] + [(3, config._shown(personal_path, 300), personal)]
         for level, where, data in blocks:
@@ -363,6 +364,7 @@ class Linter:
         self.file, self.upstream, self.plugin_root, self.heading = None, False, None, ""
         self.keys = {}  # scanned file -> its baseline key
         self.rules, self.rules_read = set(), 0  # realpaths of the plugins' rules files; how many were scanned
+        self.manifests_read = 0  # rigger-module.json files whose triggers check_trigger_loads read
         self.plugins_rules = set()  # the part of them found through --plugins-dir
 
     # ----- inventory -------------------------------------------------------------------------
@@ -445,10 +447,12 @@ class Linter:
             except (OSError, ValueError, AttributeError) as exc:
                 self.read_error(path, f"cannot read the manifest ({type(exc).__name__})")
                 continue
-            if not isinstance(rows, list) or not all(isinstance(row, dict) and isinstance(row.get("load", []), list)
-                                                     for row in rows):
-                self.read_error(path, "triggers must be a list of rows whose load is a list")
+            if not isinstance(rows, list) or not all(
+                    isinstance(row, dict) and isinstance(row.get("id"), str) and isinstance(row.get("load", []), list)
+                    and all(isinstance(skill, str) for skill in row.get("load", [])) for row in rows):
+                self.read_error(path, "triggers must be a list of rows with a string id and a list of skill names")
                 continue
+            self.manifests_read += 1
             for row in rows:
                 row_id = row.get("id")
                 for skill in row.get("load", []):
@@ -783,7 +787,8 @@ def main(argv=None):
         for _, path, lineno, check, ref in upstream_hits:
             print(f"{path}:{lineno}  {check}  {ref}")
     print(f"# drift-lint: {len(files)} files, {len(main_hits)} findings, {baselined} baselined, "
-          f"{len(upstream_hits)} in upstream copies, {linter.rules_read} rules files")
+          f"{len(upstream_hits)} in upstream copies, {linter.rules_read} rules files, "
+          f"{linter.manifests_read} trigger manifests")
     return 1 if main_hits else 0
 
 

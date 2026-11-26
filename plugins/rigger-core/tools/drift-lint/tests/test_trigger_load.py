@@ -115,6 +115,10 @@ def main():
         code, lines = run(planted)
         check("a load naming a skill no module has is one finding, naming the trigger and the skill, at the load's line",
               loads(lines), [(["alpha", "rigger-module.json"], 15, "alpha.broken loads beta:ghost")])
+        check("the summary counts the trigger manifests read", lines[-1].endswith(", 2 trigger manifests"), True)
+        one = os.path.join(folder, "one-manifest")
+        plant(one, beta=None)
+        check("a plugin without a manifest is not counted", run(one)[1][-1].endswith(", 1 trigger manifests"), True)
 
         control = os.path.join(folder, "control")
         plant(control, alpha=ALPHA.replace('"beta:ghost"', '"beta:other"'))
@@ -150,7 +154,10 @@ def main():
 
         for label, alpha in (("not JSON", "{ not json"), ("triggers is an object", '{"triggers": {}}'),
                              ("a load is a string", '{"triggers": [{"id": "a.b", "load": "alpha:present"}]}'),
-                             ("a row is a list", '{"triggers": [["alpha:present"]]}')):
+                             ("a row is a list", '{"triggers": [["alpha:present"]]}'),
+                             ("a load entry is an object", '{"triggers": [{"id": "a.b", "load": [{}]}]}'),
+                             ("a load entry is a number", '{"triggers": [{"id": "a.b", "load": [1]}]}'),
+                             ("an id is a number", '{"triggers": [{"id": 1, "load": ["beta:ghost"]}]}')):
             bad = os.path.join(folder, "bad-" + label.replace(" ", "-"))
             plant(bad, alpha=alpha, beta=BETA)
             code, lines = run(bad)

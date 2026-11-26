@@ -118,6 +118,17 @@ class DriftConfigTests(unittest.TestCase):
                 self.assertIn(notice, err)
                 self.assertNotIn("Traceback", err)
 
+    def test_a_company_module_that_does_not_load_says_so(self):
+        """Its drift_lint lists are not read, so the lint names the module instead of dropping them silently."""
+        self.company({"remote_commands": ADDED})
+        write(os.path.join(self.dirs[0], "rigger-module.json"), "{ not json")
+        code, found, err = self.run_lint()
+        self.assertEqual((code, found), (1, sorted(ADDED + [UNKNOWN])))
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertTrue(err.startswith("rigger: "), err)
+        self.assertIn("rigger-module.json", err)
+        self.assertNotIn("Traceback", err)
+
     def test_config_module_missing_leaves_the_defaults(self):
         tools = os.path.join(self.tmp, "core-copy", "tools")
         script = os.path.join(tools, "drift-lint", "drift_lint.py")
@@ -125,6 +136,12 @@ class DriftConfigTests(unittest.TestCase):
         shutil.copyfile(SCRIPT, script)
         shutil.copytree(os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "assemble"),
                         os.path.join(tools, "assemble"), ignore=shutil.ignore_patterns("__pycache__", "tests"))
+        # the core's manifests too: without them discover says the copied core is skipped
+        core = os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT)))
+        for name in ("rigger-module.json", os.path.join(".claude-plugin", "plugin.json")):
+            os.makedirs(os.path.dirname(os.path.join(os.path.dirname(tools), name)), exist_ok=True)
+            shutil.copyfile(os.path.join(core, name), os.path.join(os.path.dirname(tools), name))
+        shutil.copytree(os.path.join(core, "rules"), os.path.join(os.path.dirname(tools), "rules"))
         self.personal({"schema": 1, "drift_lint": {"remote_commands": ADDED}})
         # control: the copy reads config, and leaves no bytecode in the copied config module's folder
         self.assertEqual(self.run_lint(script), (1, [UNKNOWN], ""))
