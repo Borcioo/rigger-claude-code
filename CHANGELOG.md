@@ -5,6 +5,8 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-26
+
 ### Changed
 
 - Stop shadow: a personal `test_evidence.phrases` list now replaces a company module's list of the same
@@ -13,6 +15,15 @@ format. Releases are tagged `v<version>`.
 
 ### Fixed
 
+- rigger-shellwise installer: a stale or half-written lock is taken over, an override wins over the pin in the
+  documented order, and only idle work folders are pruned.
+- safe-edit refuses symbolic and hard links and invalid regexes, and clears leftover temp files.
+- State clean moves only session-named files; a named session's restore, log rotation and deletion work for any
+  session id.
+- Doctor recommends rigger-shellwise on every system and reports disabled dependencies and lost binaries;
+  session start names rigger-windows' replacements.
+- mem-check and drift-lint name a config they could not load; a capped run's note survives another run's block.
+- Documentation: plugin count, doctor levels, core dependents and the migration steps.
 - 0.8.0 notes misdescribed which plugins print the rigger-core-missing line: not every plugin that needs
   rigger-core (rigger-shellwise prints none), but every plugin whose rules or skills rigger-core loads.
 
