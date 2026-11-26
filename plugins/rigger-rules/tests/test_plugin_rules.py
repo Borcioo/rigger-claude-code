@@ -374,7 +374,7 @@ class CrossPluginWordingTests(unittest.TestCase):
             "safe-edit/safe_edit.py\"` with `--run` (needs rigger-testing).",
             self.text("tests.md"))
         self.assertIn(
-            "go through the Edit tool or `safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)",
+            "go through the Edit tool or `safe_edit.py --path FILE --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)",
             self.text("defects.md"))
 
     def test_only_a_main_session_loads_the_git_skill(self):
@@ -404,8 +404,8 @@ class StateFileTests(unittest.TestCase):
         lines = rules_text("rigger-core", "state-file.md").decode("utf-8").split("\n")
         self.assertEqual(heading_lines("\n".join(lines)), ["## State file for long sessions"])
         self.assertEqual(lines[1], "- **Long sessions keep a state file; they never hand off.** Main session only (subagents never")
-        self.assertEqual(lines[11:13], [
-            "  handoff.",
+        self.assertEqual(lines[10:12], [
+            "  without asking or writing a handoff.",
             "- **The state file stays under 9 000 characters,** all that comes back after compaction."])
         self.assertNotIn("coordinator", "\n".join(lines))
         self.assertEqual(lines[-2:], ["  on stale items named at session start.", ""])
