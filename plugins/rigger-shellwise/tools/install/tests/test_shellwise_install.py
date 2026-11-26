@@ -26,6 +26,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODULE = os.path.join(os.path.dirname(HERE), "shellwise_install.py")
 sys.path.insert(0, os.path.dirname(HERE))
+CORE = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", "rigger-core"))
 import shellwise_install as si  # noqa: E402
 
 WINDOWS = os.name == "nt"
@@ -157,6 +158,11 @@ class Base(unittest.TestCase):
         self.root = os.path.join(self.data, "shellwise")
         self.server = Server()
         self.addCleanup(self._clean)
+        # --session-start reads the personal config: never the real one.
+        self.no_config = os.path.join(self.data, "no-config")
+        env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.no_config})
+        env.start()
+        self.addCleanup(env.stop)
 
     def _clean(self):
         self.server.close()
@@ -447,6 +453,128 @@ class OverrideTests(Base):
         self.assertIn("timed out", status.reason)
 
 
+class ConfigOverrideTests(Base):
+    """D76: --session-start reads shell_guard.shellwise_path through rigger-core's config module, found by its
+    installPath in a copy laid out like the plugin cache; an accepted override is what `current` names."""
+
+    override = OverrideTests.override
+    pin_for = OverrideTests.pin_for
+
+    def setUp(self):
+        super().setUp()
+        self.config = os.path.join(self.data, "config")
+        self.project = os.path.join(self.data, "project")
+        os.makedirs(self.project)
+        core = os.path.join(self.config, "plugins", "cache", "rigger", "rigger-core", "0.0.0")
+        shutil.copytree(os.path.join(CORE, "tools", "assemble"), os.path.join(core, "tools", "assemble"),
+                        ignore=shutil.ignore_patterns("__pycache__", "tests"))
+        self.write_json(os.path.join(self.config, "plugins", "installed_plugins.json"),
+                        {"version": 2, "plugins": {"rigger-core@rigger": [{"scope": "user", "installPath": core}]}})
+        env = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config, "CLAUDE_PROJECT_DIR": self.project})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def write_json(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(json.dumps(data).encode("utf-8"))
+
+    def set_override(self, path, where="personal"):
+        target = os.path.join(self.config, "rigger", "config.json") if where == "personal" else \
+            os.path.join(self.project, ".claude", "rigger.json")
+        self.write_json(target, {"schema": 1, "shell_guard": {"shellwise_path": path}})
+
+    def start(self, pin, spawns):
+        out = io.BytesIO()
+        argv = ["--session-start", "--data", self.data, "--pin", self.write_pin(pin), "--base-url",
+                self.server.url, "--target", TARGET]
+        self.assertEqual(si.main(argv, spawn=spawns, out=out, launch=LAUNCH), 0)
+        return out.getvalue().decode("utf-8")
+
+    def test_accepted_override_is_current_and_announced_once(self):
+        path = self.override("shellwise 0.2.0")
+        self.set_override(path)
+        spawns = Spawns()
+        self.assertEqual(self.start(self.pin_for("0.1.1"), spawns), "shellwise: v0.2.0 ready\n")
+        self.assertIsNotNone(self.current())
+        self.same(self.current().rstrip("\n"), path)
+        self.assertEqual((self.status_file()["state"], self.status_file()["version"]), ("override", "0.2.0"))
+        self.assertEqual(self.start(self.pin_for("0.1.1"), spawns), "")
+        self.assertEqual(spawns.calls, [])
+
+    def test_refused_override_leaves_the_slot_unfilled(self):
+        pin = self.serve()
+        self.assertEqual(self.download(pin).state, "ready")   # a downloaded binary the launcher could fall back to
+        path = self.override("shellwise 0.1.0")
+        self.set_override(path)
+        spawns = Spawns()
+        reason = "override %s: version 0.1.0 below the pin 0.1.1" % path
+        self.assertEqual(self.start(pin, spawns), "shellwise: no binary (%s); commands run unguarded\n" % reason)
+        self.assertIsNone(self.current())
+        self.assertEqual((self.status_file()["state"], self.status_file()["reason"]), ("failed", reason))
+        self.assertEqual(spawns.calls, [])
+
+    def test_override_set_in_the_project_is_not_used(self):
+        self.set_override(self.override("shellwise 0.2.0"), where="project")
+        spawns = Spawns()
+        self.assertEqual(self.start(self.pin_for("0.1.1"), spawns),
+                         "shellwise: no binary (downloading); commands run unguarded\n")
+        self.assertEqual(len(spawns.calls), 1)
+        self.assertIsNone(self.current())
+
+    def test_removed_override_goes_back_to_the_download(self):
+        path = self.override("shellwise 0.2.0")
+        self.set_override(path)
+        self.assertEqual(self.start(self.pin_for("0.1.1"), Spawns()), "shellwise: v0.2.0 ready\n")
+        os.remove(os.path.join(self.config, "rigger", "config.json"))
+        spawns = Spawns()
+        self.assertEqual(self.start(self.pin_for("0.1.1"), spawns),
+                         "shellwise: no binary (downloading); commands run unguarded\n")
+        self.assertIsNone(self.current())
+        self.assertFalse(os.path.exists(os.path.join(self.root, "status.json")))   # no stale override row
+        self.assertEqual(len(spawns.calls), 1)
+
+    def test_removed_refused_override_goes_back_to_the_download(self):
+        self.set_override(self.override("shellwise 0.1.0"))
+        self.assertTrue(self.start(self.pin_for("0.1.1"), Spawns()).startswith("shellwise: no binary (override "))
+        os.remove(os.path.join(self.config, "rigger", "config.json"))
+        spawns = Spawns()
+        self.assertEqual(self.start(self.pin_for("0.1.1"), spawns),
+                         "shellwise: no binary (downloading); commands run unguarded\n")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "status.json")))
+        self.assertEqual(len(spawns.calls), 1)
+
+    def test_override_is_not_read_without_a_loadable_rigger_core(self):
+        listing = os.path.join(self.config, "plugins", "installed_plugins.json")
+
+        def break_core():
+            broken = os.path.join(self.data, "broken-core")
+            os.makedirs(os.path.join(broken, "tools", "assemble"), exist_ok=True)
+            with open(os.path.join(broken, "tools", "assemble", "config.py"), "wb") as fh:
+                fh.write(b"raise RuntimeError('broken')\n")
+            self.write_json(listing, {"version": 2, "plugins": {"rigger-core@rigger": [{"installPath": broken}]}})
+
+        for name, change in (("no plugin list", lambda: os.remove(listing)), ("config.py does not load", break_core)):
+            with self.subTest(name):
+                shutil.rmtree(self.root, ignore_errors=True)
+                self.set_override(self.override("shellwise 0.2.0"))
+                change()
+                spawns = Spawns()
+                self.assertEqual(self.start(self.pin_for("0.1.1"), spawns),
+                                 "shellwise: no binary (downloading); commands run unguarded\n")
+                self.assertEqual(len(spawns.calls), 1)
+
+    def test_no_asset_is_written_to_the_status(self):
+        out = io.BytesIO()
+        argv = ["--session-start", "--data", self.data, "--pin", self.write_pin(self.pin_for("0.1.1")),
+                "--target", "riscv64-unknown-linux-gnu"]
+        self.assertEqual(si.main(argv, spawn=Spawns(), out=out), 0)
+        self.assertEqual(out.getvalue().decode("utf-8"),
+                         "shellwise: no binary (no asset for riscv64-unknown-linux-gnu); commands run unguarded\n")
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "status.json")))
+        self.assertEqual(self.status_file()["state"], "no-asset")
+
+
 class PinChangeTests(Base):
     def test_pin_change_replaces_the_cached_binary(self):
         self.assertEqual(self.download(self.serve("0.1.1")).state, "ready")
@@ -463,6 +591,7 @@ class SessionStartTests(Base):
     def test_no_network_is_one_line(self):
         pin = self.serve()
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "RIGGER_", "HARNESS_"))}
+        env["CLAUDE_CONFIG_DIR"] = self.no_config
         proc = subprocess.run([sys.executable, "-I", "-X", "utf8", MODULE, "--child", "--data", self.data, "--pin",
                                self.write_pin(pin), "--base-url", dead_url(), "--target", TARGET],
                               capture_output=True, timeout=60, env=env)
@@ -486,6 +615,7 @@ class SessionStartTests(Base):
         with self.subTest(mode="detached spawn"):
             env = {k: v for k, v in os.environ.items()
                    if not k.upper().startswith(("CLAUDE_", "RIGGER_", "HARNESS_"))}
+            env["CLAUDE_CONFIG_DIR"] = self.no_config
             started = time.monotonic()
             proc = subprocess.run([sys.executable, "-I", "-X", "utf8", MODULE, "--session-start", "--data", self.data,
                                    "--pin", self.write_pin(pin), "--base-url", self.server.url],
@@ -509,6 +639,8 @@ class SessionStartTests(Base):
             self.assertEqual(self.server.requests, [])
             self.assertFalse(os.path.exists(self.binary_path(target=target)))
             self.assertIsNone(self.current())
+            self.assertTrue(os.path.isfile(os.path.join(self.root, "status.json")))
+            self.assertEqual(self.status_file()["state"], "failed")   # the doctor row reads it
 
     def test_spawn_flags(self):
         with mock.patch.object(si.subprocess, "Popen") as popen:

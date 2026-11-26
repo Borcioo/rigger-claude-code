@@ -2,8 +2,8 @@
 
 `triggers` (levels 1-4), `expects` (level 4), `slots` (levels 1-4), `trust` (level 3) and `review`
 (levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base), `lessons` (levels 2-3, read
-by rigger-lessons' lint), `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py) and `load` (levels
-1-4, read by mem_check.py) apply.
+by rigger-lessons' lint), `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py), `load` (levels
+1-4, read by mem_check.py) and `shell_guard` (level 3, read by rigger-shellwise's installer) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -14,6 +14,7 @@ such characters escaped.
 
 import copy
 import json
+import os
 import unicodedata
 
 import manifest
@@ -39,7 +40,7 @@ KEYS = {
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
 ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons", "turn_guard",
-                             "load"))
+                             "load", "shell_guard"))
 LOAD_MIN_FREE_GB = (0, 1024)  # load.min_free_gb, a number (D80)
 LOAD_HEAVY_AGENTS = (1, 8)  # load.max_heavy_agents, a whole number (D80)
 REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
@@ -251,6 +252,20 @@ def _turn_guard(value: dict, where: str) -> Tuple[dict, List[str]]:
     return clean, notices
 
 
+def _shell_guard(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """shell_guard.shellwise_path (D76): an absolute path, or null; a bad value is dropped, so the download stays."""
+    clean = {}
+    notices = []
+    for key, item in value.items():
+        if key != "shellwise_path":
+            notices.append("rigger: config %s shell_guard key %s unknown; ignored" % (where, _shown(key)))
+        elif item is None or (isinstance(item, str) and os.path.isabs(item)):
+            clean[key] = item
+        else:
+            notices.append("rigger: config %s shell_guard.shellwise_path must be an absolute path; ignored" % where)
+    return clean, notices
+
+
 def _load(value: dict, where: str) -> Tuple[dict, List[str]]:
     """load.min_free_gb and load.max_heavy_agents (D80), read by mem_check.py; a bad value is dropped, so its
     per-system default stays. Which level may loosen a limit is mem_check's rule, not this shape check."""
@@ -323,6 +338,9 @@ def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]
             notices.extend(found)
         if key == "load":
             value, found = _load(value, where)
+            notices.extend(found)
+        if key == "shell_guard":
+            value, found = _shell_guard(value, where)
             notices.extend(found)
         clean[key] = value
     return clean, notices
