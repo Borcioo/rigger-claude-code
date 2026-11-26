@@ -114,8 +114,59 @@ gets an exact entry in `ALLOWED_DOMAINS`; an accepted exception is an exact `pat
 - `.claude/gates.json` opts this repo in to the shadow checks of `rigger-testing`: with
   `"commit": "shadow"` each `git commit` logs whether a passing check (the `checks` patterns) ran
   after the newest file it commits, and at Stop whether a closing claim rests on a check after the
-  last edit; neither ever blocks. `scope_commit` and `scope_stop` name the files that count. See
-  "Shadow gates" in `plugins/rigger-testing/tools/test-evidence/README.md`.
+  last edit; neither ever blocks. `scope_commit` and `scope_stop` name the files that count. The file lives
+  at `.claude/gates.json` in the repository root; rigger-testing reads it, in
+  `tools/test-evidence/commit_shadow.py` (the commit rule) and `tools/test-evidence/stop_shadow.py` (the
+  Stop rule). Their rows go to rigger-testing's plugin data folder, where `tools/gate-lab/` reads them.
+  See "Shadow gates" in `plugins/rigger-testing/tools/test-evidence/README.md`.
+
+## Updating shellwise
+
+`plugins/rigger-shellwise/pin.json` pins one shellwise release; the module downloads that release at
+session start and trusts only the SHA-256 values committed there. A new release is a pin bump. Do it
+on a branch, with a network connection:
+
+1. **Download all assets** of the release (4 archives, 4 `.sha256` files and `SHA256SUMS`) into a new
+   empty folder, from `https://github.com/Borcioo/shellwise/releases/download/v<version>/<asset>`
+   (the installer's `DEFAULT_BASE` has the same form). The archive names are
+   `shellwise-v<version>-<target>.zip` for `x86_64-pc-windows-msvc` and
+   `shellwise-v<version>-<target>.tar.gz` for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and
+   `x86_64-apple-darwin`.
+2. **The hash check.** Compute each archive's SHA-256 yourself and compare it with three sources: its
+   `.sha256` file, its line in `SHA256SUMS` and the `digest` of
+   `gh release view v<version> --repo Borcioo/shellwise --json assets`. All four values must agree for
+   every archive; stop at the first mismatch. The `.sha256` of the Windows archive writes ` *<name>`:
+   compare the first field only.
+3. **Look inside each archive.** Each holds a top-level folder `shellwise-v<version>-<target>/` with
+   `LICENSE`, `README.md`, `CHANGELOG.md` and the binary (`shellwise.exe` on Windows, `shellwise`
+   elsewhere), and nothing else. The installer unpacks only that one binary member. Run the binary of
+   your own system: `--version` must print `shellwise <version>`.
+4. **Rules.** `explain <id>` must exit 0 for every id in `RULES` of
+   `plugins/rigger-shellwise/tools/rule-checker/rule_checker.py`; list the release's rule ids
+   (the `docs/rules/` folder of its tag) and add each new one, drop each removed one. Probe the
+   rows of `docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md` (`check --shell <shell> --cwd <repo> --json`
+   with your command on stdin) and record each row the new binary answers differently in the PR body. Compare the
+   release's `examples/integration-config.toml` with `plugins/rigger-shellwise/shellwise.toml`: keep
+   `gate_commands = ["safe-edit*", "safe_edit*"]`, and probe that no `config-*` finding appears with the
+   file.
+5. **Edit.** `pin.json`: `version`, the four asset names and the four `sha256` values. Then the files
+   that repeat them: `VERSION` and `TABLE` in `plugins/rigger-shellwise/tests/test_pin.py`, `RULES` in
+   `rule_checker.py` with its copy and the captured `check --json` replies in
+   `tools/rule-checker/tests/test_rule_checker.py`, and the shellwise version named in the comment of
+   `plugins/rigger-core/tools/slot-check/slot_check.py` when the deny reason changed.
+6. **Test.**
+
+   ```
+   python -I plugins/rigger-shellwise/tests/test_pin.py
+   python -I plugins/rigger-shellwise/tests/test_launcher.py
+   python -I plugins/rigger-shellwise/tools/install/tests/test_shellwise_install.py
+   python -I plugins/rigger-shellwise/tools/rule-checker/tests/test_rule_checker.py
+   python -I scripts/run_tests.py --changed-modules
+   ```
+
+   The stub session cases of `plugins/rigger-core/tools/assemble/tests/test_stub_session.py` install a
+   real pinned archive: give them the downloaded folder in `SHELLWISE_ASSETS` (they also need `claude` on PATH), and they check
+   the archive against the new `pin.json`. Without it they skip.
 
 ## Pull requests
 

@@ -5,8 +5,94 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Migration
+
+- Install the new plugins one per call (`claude plugin install` installs only the first plugin it is
+  given, exits 0 and says nothing about the rest), update rigger-core (an install adds or re-enables it
+  but leaves an installed one at its old version), then run `/rigger-core:doctor`:
+
+  ```text
+  claude plugin install rigger-shellwise@rigger
+  claude plugin install rigger-platform@rigger
+  claude plugin install rigger-testing@rigger
+  claude plugin install rigger-review@rigger
+  claude plugin update rigger-core@rigger
+  ```
+
+  `rigger-testing` and `rigger-review` are already there if you took 0.7.0. `rigger-platform` matters
+  on Windows only (its rule and skills require it); macOS and Linux may skip it.
+- **From rigger-windows:** while it is enabled, every session start prints
+  `rigger: rigger-windows is still enabled; disable it (claude plugin disable rigger-windows@rigger)`.
+  Run that command, then uninstall the plugin. If you had added its shell-guard hook to
+  `settings.json` by hand, remove that entry; with rigger-shellwise installed it would run twice.
+- **No binary to install by hand.** rigger-shellwise downloads its pinned binary in the background at
+  its first session start (see "Updating shellwise" in `CONTRIBUTING.md`). Until the download is ready,
+  and on a system with no asset for it, that session prints
+  `shellwise: no binary (<reason>); commands run unguarded` and commands run. Doctor shows the
+  `shell-guard` slot with its state and `fails closed`. `SHELLWISE=off` in the environment switches the
+  guard off; `shell_guard.shellwise_path` (personal config, an absolute path) replaces the downloaded
+  binary when its `--version` is at or above the pin.
+- **Gate rows:** a repository's `.claude/gates.json` keeps its format. Shadow rows and gate-lab data now
+  start in rigger-testing's data folder; rows written before stay in rigger-windows' data folder, and
+  `replay.py` and `report.py` read them when given that folder with `--data` (and `--from-shadow`).
+- **Herd docs:** move `<config dir>/rigger-windows/herd-docs/` to `<config dir>/rigger-platform/herd-docs/`;
+  the old folder is still read for one release when the new one is absent.
+- **Allow marker:** a command that must pass the guard carries `# shellwise: allow`. The old
+  `# shell-guard: allow` marker is not accepted.
+
 ### Changed
 
+- **Shell guard.** The `shell-guard` slot defaults to `rigger-shellwise` on every system, so macOS and
+  Linux get a shell guard for the first time. The Python guard and its 8 PreToolUse handlers are gone.
+  Commands are checked by shellwise `v0.1.1`: all 24 old rule ids have a counterpart, and
+  `bash-ps-call-operator`, which the rule map listed as dropped, is a rule in the release (PowerShell's
+  call operator `& "path"` typed in a Bash command). `shellwise.toml` is the release's example config with
+  `gate_commands = ["safe-edit*", "safe_edit*"]`; it raises 11 rules and turns on `git-no-verify`.
+  Where the real binary differs from the rule map: on Windows only `bash-ps-call-operator` (denied now,
+  the map said dropped); on Linux 12 rows answer differently, because the Bash tool is `bash` there and
+  the Git Bash rules (`bash-backslash-collapse`, `bash-cd-slash-d`, `bash-msys-path-mangle`,
+  `bash-powershell-syntax`, `bash-unquoted-backslash-path`, `bash-vendor-bin-shebang`,
+  `bash-versioned-php`) do not apply, `bash-too-long` is `inline-script-too-long`, and `bat-metachar`,
+  `ps-bad-parameter` (`ls`) and `ps-bare-bash` are Windows facts.
+- **Known gap.** `gate-truncated-pipeline` fires in Bash for `| tee log | head` always, and without
+  `tee` only when the producer's program name matches `gate_commands`. A gate started as
+  `python -I scripts/gate.py | head` or `python safe_edit.py … | head` is not caught: a script host
+  other than pwsh is not matched.
+- **Commit shadow.** The commit rule moved to rigger-testing (`tools/test-evidence/commit_shadow.py`,
+  one handler for Bash and one for PowerShell on `*commit*`). It writes its row also for a command the
+  guard denies. `TEST_EVIDENCE=off` turns the two handlers off.
+- **mem-check** is a rigger-core tool and runs on Windows, Linux and macOS. `load.min_free_gb` and
+  `load.max_heavy_agents` (config levels 1 to 4) set its limits; a project file may only make them
+  stricter.
+- **safe-edit** is `python safe_edit.py` in rigger-testing, with the same options as long flags
+  (`--path --find --replace --count --run --expect-ran --working-directory --restore`), the same exit
+  codes and messages; the rules name it through a placeholder.
+- **drift-lint** is a rigger-core tool and gains the check `trigger-load` (a trigger row whose `load`
+  names a skill no module has). The stop-shadow word lists are data in
+  `rigger-testing/tools/test-evidence/phrases.json`.
+- **Config keys:** `test_evidence.phrases` and `drift_lint.remote_commands` / `drift_lint.project_bins`
+  (levels 2 and 3) add to those lists; `lessons.allowed_paths` (levels 2 and 3) adds allowed paths to
+  the lessons lint; `turn_guard.enabled` (levels 2 to 4, default `true`) is below.
+- **Lanes and state.** `/rigger-core:coordinate` runs one session per lane, with standby sessions for
+  later parts. The state file's work items are changed through `tools/state/state.py`; a session start
+  archives idle sessions' state files (14 days), deletes archived ones (60 days), rotates logs, gives a
+  resumed session its files back and names stale items (a merged PR, a branch that is gone).
+- **Turn guard.** A session's turn end is held while its own background gate or test command runs
+  (`gate.py`, `run_tests.py`, `pytest`, `python -m unittest`, `npm test`, `go test`, …): the Stop hook
+  waits up to 4 s, then blocks with one line naming the run, at most 3 times per task. It never holds a
+  coordinator, a `claude -p` run or a session with `turn_guard.enabled` set to `false`. In a config
+  with no state folder it makes the folder for its block count; when the count still cannot be written,
+  it holds the first Stop of a chain, and allows the chained one with a one-line note that the block count
+  cannot be written and the turn ends without holding again, so a turn is held at most once.
+- **Review and testing modules.** A command reviewer's `{scope}` carries the `review.paths` results; both
+  modules print the install line above when rigger-core is missing. `--check` and doctor report a
+  company or personal section that replaces an id the lower layer no longer has (`stale override`), and
+  a plugin whose dependency is not installed or not allowed across marketplaces (`dependency` row).
+- **Rules text.** The lo-fi trap moved into `web-ui-traps`; three testing and orchestration sentences, one
+  verification sentence and the WordPress hunk-list sentence were added.
+- **Verification.** The exit criteria ran against a stub, not a real model:
+  `docs/superpowers/spikes/phase-3b/exit-criteria.md`. The one download of the pinned asset ran on
+  Windows and under WSL.
 - `rigger-windows` is gone (phase 3b): its Windows rule and skills are `rigger-platform`, its shell guard is
   `rigger-shellwise`, `mem-check` is a `rigger-core` tool, and `safe-edit.ps1` is `safe_edit.py` in
   `rigger-testing`. The rules and skills name those modules.

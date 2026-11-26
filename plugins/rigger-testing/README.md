@@ -32,6 +32,15 @@ a `Test-change: <reason>` line.
 `tools/test-evidence/stop_shadow.py` (an asynchronous `Stop` handler) only write rows under the plugin's data
 folder, in a repo that opts in with `.claude/gates.json`; they print nothing and never block. `TEST_EVIDENCE=off`
 turns the commit handlers off. Read `tools/test-evidence/README.md`; `tools/gate-lab/` replays and scores the rows offline.
+The Stop shadow's claim, negation, disclosure and status word lists are data in
+`tools/test-evidence/phrases.json`; config key `test_evidence.phrases` (levels 2 and 3) adds
+lists, so no language is fixed in code.
+
+## Red run in place
+
+`tools/safe-edit/safe_edit.py` breaks one file on purpose, runs your test command and always puts the file
+back: `python safe_edit.py --path FILE --find TEXT --replace TEXT [--count N] [--run COMMAND --expect-ran REGEX]
+[--working-directory DIR]`, or `--path FILE --restore` after a killed run. Its header lists the exit codes.
 
 ## Tests
 
@@ -42,6 +51,7 @@ turns the commit handlers off. Read `tools/test-evidence/README.md`; `tools/gate
   that opts in, and none with `TEST_EVIDENCE=off`.
 - `tools/test-evidence/tests/` and `tools/gate-lab/tests/`: the shadow gates, their transcript reader and the
   gate lab.
+- `tools/safe-edit/tests/test_safe_edit.py`: the red run in place.
 
 ## Evals
 

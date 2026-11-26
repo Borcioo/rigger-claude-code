@@ -15,6 +15,9 @@ rows (`triggers` in `rigger-module.json`, each with `requires: os:windows`, ids 
 appear in rigger-core's one Skill triggers table. Subagents get the same, except the built-in Explore
 and Plan agents and rigger-core's implementer and mapper, which get nothing.
 
+A `SessionStart` handler (`hooks/core_check.sh rigger-platform`) prints one line when rigger-core is not
+installed. The module holds no other hook.
+
 ## Skills
 
 - `rigger-platform:windows-dev-env`: shells, PowerShell and Git Bash traps, text encoding, line
