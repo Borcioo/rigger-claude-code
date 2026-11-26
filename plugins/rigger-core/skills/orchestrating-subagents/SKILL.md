@@ -49,7 +49,7 @@ findings fixed once at the phase's end.
 - Keep to the machine's load rule (on Windows with rigger-platform installed:
   `rigger-platform:windows-dev-env` "Machine load") and the e2e lock rules in
   `rigger-core:e2e-playwright-speed` §9. Light agents (reviews, Python or pwsh unit tests, docs)
-  have no count limit; a build or test agent starts only while `mem-check` exits 0 on Windows (`python "<rigger-core plugin folder>/tools/mem-check/mem_check.py"`
+  have no count limit; a build or test agent starts only while `mem-check` exits 0 on Windows, Linux or macOS (`python "<rigger-core plugin folder>/tools/mem-check/mem_check.py"`
   prints the minimum); elsewhere check free memory with the OS's tool.
   Heavy jobs (WSL, Docker, wp-env, e2e) run at most 2 at once.
   Without a lock, count the heavy jobs you dispatched that are still running, and wait while the
