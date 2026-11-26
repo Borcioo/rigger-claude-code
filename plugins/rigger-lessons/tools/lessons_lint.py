@@ -3,7 +3,7 @@
 python lessons_lint.py --archive DIR [--classes FILE] [--repo REPO ...] [--rule-checker FILE ...]
     FILE defaults to DIR/classes.txt. Test guards resolve against every REPO in turn (default: DIR's
     parent). Rule checkers are each --rule-checker FILE plus every REPO's
-    plugins/*/tools/*/lessons_guard.py; a live:<rule id> guard whose rule id a checker claims (its
+    plugins/*/tools/*/lessons_guard.py and plugins/*/tools/*/rule_checker.py; a live:<rule id> guard whose rule id a checker claims (its
     RULES), or in a case whose tools name a shell, passes only when one of them confirms it.
     Config key lessons.allowed_paths (levels 2-3, read through rigger-core) adds globs where a global
     rule may live. Prints one `path: problem` line per problem.
@@ -55,7 +55,8 @@ INSTALLED = re.compile(r"(?:^|/)plugins/(?:cache|marketplaces)/", re.I)
 # A live:<rule id> guard in a case whose tools name one of these is a shell hook rule: a rule checker
 # must confirm it (as must any rule id a loaded checker claims).
 SHELL_TOOLS = ("powershell", "bash", "git-bash")
-CHECKER_GLOB = ("plugins", "*", "tools", "*", "lessons_guard.py")
+CHECKER_NAMES = ("lessons_guard.py", "rule_checker.py")
+CHECKER_GLOB = ("plugins", "*", "tools", "*")
 
 # error_text is measured the way error lines are matched: whitespace folded, then secrets, paths,
 # ids and digits replaced by <placeholders>, which do not count towards its length.
@@ -204,10 +205,11 @@ def test_guard_problem(value, rel, name, repo):
 
 
 def find_checkers(repos, given=()):
-    """The `given` checker files, then every repo's plugins/*/tools/*/lessons_guard.py in repo
-    order; each real file once."""
+    """The `given` checker files, then every repo's plugins/*/tools/*/lessons_guard.py and
+    plugins/*/tools/*/rule_checker.py in repo order; each real file once."""
     found, seen = [], set()
-    discovered = [path for repo in repos for path in sorted(glob.glob(os.path.join(repo, *CHECKER_GLOB)))]
+    discovered = [path for repo in repos for name in CHECKER_NAMES
+                  for path in sorted(glob.glob(os.path.join(repo, *CHECKER_GLOB, name)))]
     for path in list(given) + discovered:
         real = os.path.normcase(os.path.realpath(path))
         if real not in seen:
@@ -252,7 +254,8 @@ def rule_guard_problem(value, meta, checkers):
         return None
     if not checkers:
         return (f"guard {value}: the case's tools name a shell, so a rule checker must confirm the guard, "
-                "and none is loaded (--rule-checker FILE, or a --repo with plugins/*/tools/*/lessons_guard.py)")
+                "and none is loaded (--rule-checker FILE, or a --repo with plugins/*/tools/*/lessons_guard.py "
+                "or rule_checker.py)")
     for module in claiming or checkers:
         try:
             problem = module.rule_guard_problem(rule, meta)
@@ -474,7 +477,7 @@ def check_case(name, meta, body, own, classes, classes_name, by_name, class_proj
 def lint(archive, classes_path=None, repo=None, rule_checkers=(), allowed=()):
     """(number of case files, problem lines). Test guards resolve against `repo` (one folder or a
     list; by default the archive's parent folder). Rule checkers: the `rule_checkers` files, then
-    each repo's plugins/*/tools/*/lessons_guard.py. `allowed` globs add places a global rule may live."""
+    each repo's plugins/*/tools/*/lessons_guard.py and rule_checker.py. `allowed` globs add places a global rule may live."""
     classes_path = classes_path or os.path.join(archive, CLASSES_FILE)
     repos = repo_list(repo) if repo else [os.path.dirname(os.path.abspath(archive))]
     classes, problems = read_classes(classes_path)
@@ -507,7 +510,7 @@ def main(argv=None):
                         help="folder that test guards (live:<file>::<test>) resolve against; repeat for "
                              "several (default: ARCHIVE/..)")
     parser.add_argument("--rule-checker", action="append", default=[],
-                        help="a rule checker file (lessons_guard.py) for live:<rule id> guards; repeatable")
+                        help="a rule checker file (lessons_guard.py, rule_checker.py) for live:<rule id> guards; repeatable")
     args = parser.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if not os.path.isdir(args.archive):

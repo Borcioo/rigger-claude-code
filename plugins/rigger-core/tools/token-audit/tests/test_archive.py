@@ -1,5 +1,5 @@
-"""python -I test_archive.py - the lessons archive: the rigger-lessons lint with the rigger-windows
-shell-guard rule checker, `token_audit.py archive` and the history files, on transcripts and a
+"""python -I test_archive.py - the lessons archive: the rigger-lessons lint with a stub rule checker
+module, the rigger-windows shell-guard rule checker, `token_audit.py archive` and the history files, on transcripts and a
 lessons repo built in temp folders.
 """
 import calendar
@@ -228,18 +228,38 @@ def check_installed(tool, cmd, cwd=None):
 def unused():
     return Finding("quoted-not-a-rule", True, "m")
 '''
+# Stands in for a shell-guard filler's rule checker module: claims bat-metachar and denies a powershell
+# probe holding `^` with it; `warn` gives a finding that does not deny, `boom` raises.
+STUB_CHECKER = '''RULES = frozenset(("bat-metachar",))
+SHELLS = ("powershell", "bash", "git-bash")
+
+
+def rule_guard_problem(rule, meta):
+    probe = meta.get("probe")
+    if not isinstance(probe, str) or not probe.strip():
+        return "guard live:%s: needs a probe" % rule
+    if "boom" in probe:
+        raise ValueError("boom")
+    shells = [t for t in meta.get("tools") or [] if t in SHELLS]
+    if not shells:
+        return "guard live:%s: tools names no shell" % rule
+    got = []
+    for shell in shells:
+        found = "bat-metachar" if shell == "powershell" and "^" in probe and "warn" not in probe else "no deny"
+        if found == rule:
+            return None
+        got.append("%s: %s" % (shell, found))
+    return "guard live:%s: the stub does not deny the probe with %s (%s)" % (rule, rule, "; ".join(got))
+'''
 PROBE = "probe: \"composer require 'a/b:^1'\"\n"
-GUARD_DIR = "plugins/rigger-windows/tools/shell-guard"
+CHECKER = "plugins/stub-filler/tools/rule-checker/rule_checker.py"
 
 
 def build_repo(repo):
-    """A repo with the shell-guard rule checker (a fake hook), a named test and a four-case archive that
-    passes the lint."""
-    with open(GUARD, encoding="utf-8") as fh:
-        checker = fh.read()
+    """A repo with a stub rule checker (found by the lint's plugins/*/tools/*/rule_checker.py glob), a named
+    test and a four-case archive that passes the lint."""
     files = {
-        GUARD_DIR + "/shell_guard.py": FAKE_SHELL_GUARD,
-        GUARD_DIR + "/lessons_guard.py": checker,
+        CHECKER: STUB_CHECKER,
         "tools/x/tests/test_x.py": "def test_guarded_thing():\n    pass\n# def test_commented_out():\n"
                                    "test_called_only()\ncheck(\"a named check\", 1, 1)\n",
         "tools/x/test_outside.py": "def test_outside():\n    pass\n",
@@ -299,6 +319,45 @@ def lint_with(repo, rel, text, run=None):
                 fh.write(before)
 
 
+def check_windows_checker(root):
+    """rigger-windows' lessons_guard.py over a fake shell_guard.py next to it, called as the lint calls it."""
+    def checker(name, shell_guard):
+        folder = os.path.join(root, name)
+        os.makedirs(folder)
+        shutil.copy(GUARD, folder)
+        with open(os.path.join(folder, "shell_guard.py"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(shell_guard)
+        modules, problems = ll.load_checkers([os.path.join(folder, "lessons_guard.py")])
+        return modules[0].rule_guard_problem if modules and not problems else problems
+
+    meta = {"tools": ["composer", "powershell"], "probe": "composer require 'a/b:^1'"}
+    guard = checker("fake", FAKE_SHELL_GUARD)
+    rows = {
+        "denies the probe": ("bat-metachar", meta, None),
+        "names a rule the probe does not get": ("quoted-not-a-rule", meta, "guard live:quoted-not-a-rule: "
+            "check_installed does not deny the probe with quoted-not-a-rule (PowerShell: bat-metachar)"),
+        "probe the hook lets through": ("bat-metachar", dict(meta, probe="composer require 'a/b:1'"),
+            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (PowerShell: no deny)"),
+        "finding that does not deny": ("bat-metachar", dict(meta, probe="composer require 'a/b:^1' warn"),
+            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (PowerShell: no deny)"),
+        "shell the hook does not deny in": ("bat-metachar", dict(meta, tools=["bash"]),
+            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar (Bash: no deny)"),
+        "check that raises": ("bat-metachar", dict(meta, probe="boom 'a/b:^1'"),
+            "guard live:bat-metachar: check_installed does not deny the probe with bat-metachar "
+            "(PowerShell: raised ValueError)"),
+        "no probe": ("bat-metachar", {"tools": ["powershell"]},
+            "guard live:bat-metachar: needs a probe: a command of the failure shape that the hook denies"),
+    }
+    for name, (rule, case_meta, expected) in rows.items():
+        check(f"rigger-windows checker: {name}", guard(rule, case_meta), expected)
+    no_check = checker("no-check-installed", "def check(tool, cmd):\n    return []\n")
+    check("rigger-windows checker: shell_guard.py without check_installed",
+          no_check("bat-metachar", meta).endswith("shell_guard.py has no check_installed"), True)
+    broken = checker("broken", "def check_installed(:\n")
+    check("rigger-windows checker: shell_guard.py that does not load",
+          "shell_guard.py (SyntaxError" in broken("bat-metachar", meta), True)
+
+
 def check_lint(repo):
     lessons = build_repo(repo)
     count, problems = ll.lint(lessons, repo=repo)
@@ -313,35 +372,32 @@ def check_lint(repo):
     third_none = third_good.replace("guard: live:tools/x/tests/test_x.py::a named check", "guard: none")
     check("lint: a repeat with guard none and a guard_reason passes",
           lint_with(repo, third, third_none.replace("kind:", "guard_reason: a judgement no check sees\nkind:")), [])
-    guard_py = GUARD_DIR + "/shell_guard.py"
     cases = {
         "kind outside the set": (first, good.replace("kind: env-defect", "kind: bug"), "kind must be one of"),
         "class not in classes.txt": (first, good.replace("class: wrong-client", "class: wrong-clients"),
                                      "class 'wrong-clients' is not in classes.txt"),
         "live guard naming a rule the probe does not get": (
             first, live.replace("guard: live:bat-metachar", "guard: live:quoted-not-a-rule"),
-            "check_installed does not deny the probe with quoted-not-a-rule (PowerShell: bat-metachar)"),
+            "the stub does not deny the probe with quoted-not-a-rule (powershell: bat-metachar)"),
         "live guard whose probe the hook lets through": (
-            first, live.replace("^1", "1"), "check_installed does not deny the probe with bat-metachar (PowerShell: no deny)"),
+            first, live.replace("^1", "1"), "the stub does not deny the probe with bat-metachar (powershell: no deny)"),
         "live guard whose finding does not deny": (
-            first, live.replace("^1'", "^1' warn"), "does not deny the probe with bat-metachar (PowerShell: no deny)"),
+            first, live.replace("^1'", "^1' warn"), "does not deny the probe with bat-metachar (powershell: no deny)"),
         "live guard probed in a shell the hook does not deny in": (
-            first, live.replace("tools: [powershell]", "tools: [bash]"), "with bat-metachar (Bash: no deny)"),
-        "live shell-guard guard whose tools name no shell": (
+            first, live.replace("tools: [powershell]", "tools: [bash]"), "with bat-metachar (bash: no deny)"),
+        "live claimed guard whose tools name no shell still goes to its checker": (
             first, live.replace("tools: [powershell]", "tools: [composer]"), "tools names no shell"),
-        "live guard whose check raises": (first, live.replace("composer require", "boom"), "PowerShell: raised ValueError"),
+        "live guard whose check raises": (first, live.replace("composer require", "boom"),
+                                          "rule_checker.py raised ValueError: boom"),
         "live shell-guard guard without a probe": (first, live.replace(PROBE, ""), "needs a probe"),
         "live shell-guard guard with an empty probe": (first, live.replace(PROBE, 'probe: ""\n'),
                                                        "probe must be a non-empty string"),
         "probe on a test guard": (first, live.replace(
             "guard: live:bat-metachar", "guard: live:tools/x/tests/test_x.py::test_guarded_thing"),
             "probe is only for a live rule guard"),
-        "shell_guard.py without check_installed": (guard_py, "def check(tool, cmd):\n    return []\n",
-                                                   "shell_guard.py has no check_installed"),
-        "shell_guard.py that does not load": (guard_py, "def check_installed(:\n", "shell_guard.py (SyntaxError"),
-        "rule checker that does not load": (GUARD_DIR + "/lessons_guard.py", "def rule_guard_problem(:\n",
+        "rule checker that does not load": (CHECKER, "def rule_guard_problem(:\n",
                                             "rule checker cannot load (SyntaxError"),
-        "rule checker without rule_guard_problem": (GUARD_DIR + "/lessons_guard.py", "def other():\n    pass\n",
+        "rule checker without rule_guard_problem": (CHECKER, "def other():\n    pass\n",
                                                     "rule checker has no rule_guard_problem"),
         "proposed guard without a proposal line": (first, good.replace(PROPOSAL, ""),
                                                    "guard proposed needs a body line"),
@@ -506,7 +562,7 @@ def check_lint(repo):
           lint_names(lessons, os.path.join(repo, "lessons")),
           ["2026-10-25-mysql-again.md: guard live:bat-metachar: the case's tools name a shell, so a rule checker "
            "must confirm the guard, and none is loaded (--rule-checker FILE, or a --repo with "
-           "plugins/*/tools/*/lessons_guard.py)",
+           "plugins/*/tools/*/lessons_guard.py or rule_checker.py)",
            "2026-10-28-mysql-third.md: guard live:tools/x/tests/test_x.py::a named check: "
            "test file tools/x/tests/test_x.py not found",
            "2026-11-01-call-case.md: guard live:tools/x/tests/test_x.py::test_guarded_thing: "
@@ -515,7 +571,7 @@ def check_lint(repo):
     os.makedirs(elsewhere, exist_ok=True)
     check("lint: test guards resolve in any of several repos, and a --rule-checker file is loaded",
           names(ll.lint(lessons, repo=[elsewhere, repo], rule_checkers=[
-              os.path.join(repo, *GUARD_DIR.split("/"), "lessons_guard.py")])[1], lessons), [])
+              os.path.join(repo, *CHECKER.split("/"))])[1], lessons), [])
     other_rule = live.replace("tools: [powershell]", "tools: [composer]").replace("live:bat-metachar",
                                                                                  "live:some-lint-rule")
     check("lint: a live rule guard no checker claims, in a case whose tools name no shell, is accepted as written",
@@ -534,6 +590,7 @@ def check_lint(repo):
     check("rule checker: tools that name no shell are a problem when it is asked directly",
           real[0].rule_guard_problem("bat-metachar", dict(composer, tools=["composer"])),
           "guard live:bat-metachar: tools names no shell (powershell, bash, git-bash) to run the probe in")
+    check_windows_checker(os.path.join(repo, "windows-checker"))
     check("lint: a live guard may name a PowerShell Test-Case",
           ll.guard_problem("live:tools/x/tests/x.tests.ps1::refuses a run", repo), None)
     check("lint: ... but not one that is only in a comment",
