@@ -1359,6 +1359,14 @@ class CheckTests(unittest.TestCase):
             ("tdd before testing", lambda: [lay.module("mod-d", {"rules/d.md": ("## D\n\nd\n", "both")}, triggers=[
                 {"id": "mod-d.t", "before": "b", "load": ["slot:process.tdd", "slot:testing"]}])],
              "trigger mod-d.t loads process.tdd without testing before it"),
+            ("unknown slot", lambda: [lay.module("mod-e", {"rules/e.md": ("## E\n\ne\n", "both")}, triggers=[
+                {"id": "mod-e.t", "before": "b", "load": ["slot:no-such-slot"]}])],
+             "trigger mod-e.t load slot:no-such-slot resolves to nothing"),
+            # the worker slot names an agent of rigger-core, which has no skill of that name
+            ("slot naming a missing skill", lambda: [lay.module("mod-f", {"rules/f.md": ("## F\n\nf\n", "both")},
+                                                                triggers=[{"id": "mod-f.t", "before": "b",
+                                                                           "load": ["slot:worker"]}])],
+             "trigger mod-f.t load slot:worker resolves to nothing"),
         ]
         code, out, err = self.check(lay.core, lay.testing, good)
         self.assertEqual(code, 0, out + err)  # control: the base set, with one table and a filled slot, is clean
@@ -1555,6 +1563,15 @@ class StaleOverrideTests(unittest.TestCase):
         head = out.decode("utf-8").splitlines()[0].split("\t")
         self.assertEqual(head[:3], ["CHECK", "rules-assembly", "OK"])  # the session notice has its own row
 
+    def test_a_heading_twice_in_one_company_file_is_one_row(self):
+        lay = self.layout
+        self.lower()
+        lay.module("acme", {"rules/tests.md": ("## Testz\n\ny\n## Testz\n\nz\n", "both")}, layer="company")
+        self.assertEqual([row[1] for row in self.doctor_rows()], ["stale-override tests.testz"])
+        self.assertEqual([n for n in lay.assemble().notices if "stale" in n],
+                         ["rigger: stale override tests.testz in acme/rules/tests.md: the lower rules file has no such "
+                          "id, so both rules print (run /rigger-core:doctor)"])
+
     def test_session_notice_is_one_bounded_line(self):
         # Nobody runs doctor daily: the session that gets both rules says so, in one line.
         lay = self.layout
@@ -1630,7 +1647,7 @@ class DependencyRowTests(unittest.TestCase):
         return [line.split("\t") for line in lines if line.split("\t")[1].startswith("dependency ")]
 
     def test_missing_dependency_is_an_error_row(self):
-        for name, installed, enabled in (("not installed", False, True), ("installed, disabled", True, False)):
+        for name, installed, enabled in (("not installed", False, True), ("not installed, disabled", False, False)):
             with self.subTest(name):
                 self.tearDown()
                 self.setUp()
@@ -1641,6 +1658,26 @@ class DependencyRowTests(unittest.TestCase):
                     ["CHECK", "dependency mod-b@core-fx", "MISSING", "needs core-a@core-fx: not installed or not "
                      "enabled, so mod-b@core-fx does not load", "assemble.py --doctor"],
                     ["FIX", "dependency mod-b@core-fx", "claude plugin install core-a@core-fx"]])
+
+    def test_an_installed_but_disabled_dependency_gets_the_enable_command(self):
+        for name, market in (("same marketplace", "core-fx"), ("other marketplace, no allowlist", "company-fx")):
+            with self.subTest(name):
+                self.tearDown()
+                self.setUp()
+                self.marketplace("core-fx")
+                self.marketplace("company-fx")
+                self.plugin("mod-b@" + market, ["core-a@core-fx"])
+                self.plugin("core-a@core-fx", enabled=False)
+                self.assertEqual(self.rows(), [
+                    ["CHECK", "dependency mod-b@" + market, "MISSING", "needs core-a@core-fx: installed but not "
+                     "enabled, so mod-b@%s does not load" % market, "assemble.py --doctor"],
+                    ["FIX", "dependency mod-b@" + market, "claude plugin enable core-a@core-fx"]])
+
+    def test_an_empty_install_path_is_skipped_for_the_manifest(self):
+        self.marketplace("core-fx")
+        self.plugin("mod-b@core-fx", ["core-a"])
+        self.installed["mod-b@core-fx"].insert(0, {"scope": "project", "installPath": "", "version": "0.0.1"})
+        self.assertEqual(self.rows()[0][:3], ["CHECK", "dependency mod-b@core-fx", "MISSING"])
 
     def test_cross_marketplace_without_allowlist_names_the_fix(self):
         self.marketplace("core-fx")
@@ -1720,13 +1757,37 @@ class ShellwiseSlotRowTests(Base):
         self.assertEqual(len(rows), 1, out)
         return rows[0][2], rows[0][3]
 
+    def binary(self, folder="rigger-shellwise-inline", name="shellwise"):
+        """The binary and the `current` file naming it, as the installer leaves them; returns the binary's path."""
+        root = self.layout.config / "plugins" / "data" / folder / "shellwise"
+        path = root / "v0.1.1" / "x86_64-unknown-linux-gnu" / name
+        write(path, b"binary")
+        write(root / "current", (str(path) + "\n").encode("utf-8"))
+        return path
+
     def test_ready(self):
         self.status({"state": "ready"})
+        self.binary()
         self.assertEqual(self.slot_row(), ("OK", self.CELL + "state ready, v0.1.1"))
 
     def test_override(self):
         self.status({"state": "override", "version": "0.2.0"})
+        self.binary()
         self.assertEqual(self.slot_row(), ("OK", self.CELL + "state override, v0.2.0"))
+
+    def test_ready_without_its_binary_warns(self):
+        for name, damage in (("no current file", lambda path: os.remove(str(path.parent.parent.parent / "current"))),
+                             ("current names a removed file", lambda path: os.remove(str(path))),
+                             ("current is empty", lambda path: write(path.parent.parent.parent / "current", b"\n")),
+                             ("current names a folder", lambda path: write(path.parent.parent.parent / "current",
+                                                                         (str(path.parent) + "\n").encode("utf-8")))):
+            for state in ("ready", "override"):
+                with self.subTest(name, state=state):
+                    shutil.rmtree(str(self.layout.config / "plugins"), ignore_errors=True)
+                    self.status({"state": state})
+                    damage(self.binary())
+                    self.assertEqual(self.slot_row(), ("WARN", self.CELL + "state %s, v0.1.1: binary missing; "
+                                                       "commands run unguarded" % state))
 
     def test_downloading(self):
         self.status({"state": "downloading"})

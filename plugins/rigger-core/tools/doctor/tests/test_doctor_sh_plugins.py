@@ -475,8 +475,10 @@ class DoctorShTests(DoctorShCase):
     def test_hook_slot_rows_name_the_filler_and_its_failure_mode(self):
         # An expected filler set above level 1 that is enabled gives OK, not MISSING.
         self.personal_config({"slots": {"lessons": {"kind": "hook", "target": "rigger-lessons"}}})
-        self.write_file(self.config / "plugins" / "data" / "rigger-shellwise-rigger" / "shellwise" / "status.json",
-                        json.dumps({"state": "ready", "version": "0.1.1"}))
+        data = self.config / "plugins" / "data" / "rigger-shellwise-rigger" / "shellwise"
+        self.write_file(data / "status.json", json.dumps({"state": "ready", "version": "0.1.1"}))
+        self.write_file(data / "v0.1.1" / "shellwise", "binary")   # ready means `current` names the binary
+        self.write_file(data / "current", "%s\n" % (data / "v0.1.1" / "shellwise"))
         result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", REPO_PLUGINS / "rigger-shellwise")
         self.assertRow(result, "slot lessons", "OK", "rigger-lessons (failure mode: undeclared)")
         self.assertRow(result, "slot shell-guard", "OK", "rigger-shellwise (fails closed); state ready, v0.1.1")
@@ -583,6 +585,18 @@ class DoctorShTests(DoctorShCase):
         self.assertEqual(json.loads(text)["triggers"], {
             "personal.mine-1": {"before": "old UI words", "load": ["rigger-core:web-ui-traps"]},
             "rigger-core.git-workflow": {"before": "old git words", "load": ["rigger-core:git-workflow"]},
+        })
+
+    def test_two_rows_with_one_shipped_load_list_keep_two_ids(self):
+        """Both rows load what one shipped row loads: the first takes its id, the second a personal one."""
+        self.write_file(self.config / "rigger" / "rules.d" / "mine.md", (
+            "| Before | Skill |\n|---|---|\n| old git words | `rigger-core:git-workflow` |\n"
+            "| other git words | `rigger-core:git-workflow` |\n"))
+        result = self.run_assembly()
+        text = self.table_json(result.checks["rules-d-table rules.d/mine.md"][1], self.config / "rigger" / "config.json")
+        self.assertEqual(json.loads(text)["triggers"], {
+            "rigger-core.git-workflow": {"before": "old git words", "load": ["rigger-core:git-workflow"]},
+            "personal.mine-2": {"before": "other git words", "load": ["rigger-core:git-workflow"]},
         })
 
     def test_empty_slot_rows_say_why_above_level_one(self):
