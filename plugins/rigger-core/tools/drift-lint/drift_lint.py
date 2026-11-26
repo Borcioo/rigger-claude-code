@@ -4,7 +4,8 @@ python -I tools/drift-lint/drift_lint.py [options]
 
 One finding per line: `file:line  check  reference`. Checks: path (absolute, ~, $HOME and
 $env:USERPROFILE paths), repo-path (tools/... and templates/... in the skill repos, the skill's own
-folder or the plugin holding the file), skill, agent, command; read (a missing or unreadable input,
+folder or the plugin holding the file), skill, agent, command, trigger-load (a trigger row of a repo plugin's
+rigger-module.json loads a skill that no plugin has, as `plugin:skill`); read (a missing or unreadable input,
 0 files scanned) and
 stale-baseline (a baseline entry matching no finding). Findings listed in the baseline file are
 suppressed. Findings in upstream copies (wp-*, wordpress-router, wpds, blueprint) are
@@ -312,11 +313,13 @@ class Linter:
         self.findings = []
         self.known_skills, self.known_agents, self.installed_roots = plugin_inventory(args.plugins_dir)
         self.known_agents |= BUILTIN_AGENTS
+        self.module_skills = set(self.known_skills)  # the skills modules have: installed plugins, then the repos' plugins
         self.commands = CommandIndex(args.path)
         self.plugin_roots = []
         for repo in args.repo:
             for name, path in repo_plugins(repo).items():
                 add_plugin(name, path, self.known_skills, self.known_agents)
+                add_plugin(name, path, self.module_skills, set())
                 self.plugin_roots.append(path)
         self.file, self.upstream, self.plugin_root, self.heading = None, False, None, ""
         self.keys = {}  # scanned file -> its baseline key
@@ -386,6 +389,35 @@ class Linter:
         if self.args.plugins_given and not self.plugins_rules:  # rules files of --repo do not count
             self.read_error(self.args.plugins_dir, "0 rules files read")
         return unique
+
+    def check_trigger_loads(self):
+        """A trigger row of a repo plugin's rigger-module.json whose `load` names a skill no module has.
+
+        A plugin without a manifest is skipped; a manifest that cannot be read or whose triggers have the wrong shape
+        is a `read` finding. Finding: `<manifest>:<line of the skill>  trigger-load  <trigger id> loads <skill>`."""
+        for plugin in self.plugin_roots:
+            path = os.path.join(plugin, "rigger-module.json")
+            if not os.path.isfile(path):
+                continue
+            self.keys[path] = baseline_key(path, os.path.join(plugin, "rules"))
+            try:
+                lines = read_lines(path)
+                rows = json.loads(chr(10).join(lines)).get("triggers", [])
+            except (OSError, ValueError, AttributeError) as exc:
+                self.read_error(path, f"cannot read the manifest ({type(exc).__name__})")
+                continue
+            if not isinstance(rows, list) or not all(isinstance(row, dict) and isinstance(row.get("load", []), list)
+                                                     for row in rows):
+                self.read_error(path, "triggers must be a list of rows whose load is a list")
+                continue
+            for row in rows:
+                row_id = row.get("id")
+                for skill in row.get("load", []):
+                    if skill in self.module_skills:
+                        continue
+                    start = next((n for n, text in enumerate(lines) if f'"{row_id}"' in text), 0)
+                    lineno = next((n + 1 for n in range(start, len(lines)) if f'"{skill}"' in lines[n]), 0)
+                    self.findings.append((False, path, lineno, "trigger-load", f"{row_id} loads {skill}"))
 
     def rule_files(self, folder):
         """*.md directly in a plugin's rules folder, which a plugin may not have."""
@@ -681,6 +713,7 @@ def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     linter = Linter(args)
     files = linter.collect()
+    linter.check_trigger_loads()
     for path, upstream in files:
         linter.scan(path, upstream)
     findings, baselined = linter.findings, 0
