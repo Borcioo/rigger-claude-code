@@ -322,13 +322,28 @@ def _install(root, work, pin, asset, target, base_url, launch):
     return final
 
 
-def _prune(root, version):
-    """Removes the cached binaries of other versions (a pin change) and the work folders of killed downloads;
-    a busy one stays until next time. The caller holds the lock."""
+def _last_write(folder):
+    """The newest mtime of a flat folder and its entries, or None when one cannot be read. A download keeps
+    writing its archive, which does not move the folder's own mtime."""
+    try:
+        return max([os.stat(folder).st_mtime] + [os.stat(os.path.join(folder, n)).st_mtime
+                                                 for n in os.listdir(folder)])
+    except OSError:
+        return None
+
+
+def _prune(root, version, now):
+    """Removes the cached binaries of other versions (a pin change) and the work folders of killed downloads:
+    those nothing wrote to for LOCK_STALE, so a slow download whose lock was taken over keeps its own. A busy
+    one stays until next time. The caller holds the lock."""
     for name in os.listdir(root):
+        path = os.path.join(root, name)
         old = name.startswith("v") and name != "v" + version
-        if (old or name.startswith(".work-")) and os.path.isdir(os.path.join(root, name)):
-            shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+        if name.startswith(".work-"):
+            written = _last_write(path)
+            old = written is not None and now - written > LOCK_STALE
+        if old and os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def download(data_dir, pin, target, base_url, *, launch=None, clock=time.time):
@@ -352,7 +367,7 @@ def download(data_dir, pin, target, base_url, *, launch=None, clock=time.time):
             return Status("override-kept", version, target, "", "an override is on record")
         _write_atomic(os.path.join(root, "current"), (path + "\n").encode("utf-8"))
         _write_status(root, version, target, "ready")
-        _prune(root, version)
+        _prune(root, version, clock())
         return Status("ready", version, target, path, "")
     except Exception as exc:   # every failure is one reason line, never a traceback
         reason = _one_line(exc if isinstance(exc, Refused) else "%s: %s" % (type(exc).__name__, exc))
