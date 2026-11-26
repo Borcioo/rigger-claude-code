@@ -12,7 +12,9 @@ suppressed. Findings in upstream copies (wp-*, wordpress-router, wpds, blueprint
 listed in their own section and do not change the exit code. Exit 1 when the main section has a
 finding, 0 otherwise. The summary line counts the plugins' rules files read (repo plugins and the
 installed plugins of --plugins-dir, each file once); --plugins-dir given and 0 rules files read through
-it (rules files of --repo do not count) is a `read` finding.
+it (rules files of --repo do not count) is a `read` finding. Company modules and the personal config
+(<config>/rigger/config.json) may add command names the command check skips (drift_lint.remote_commands,
+drift_lint.project_bins); a config notice goes to stderr and changes neither the findings nor the exit code.
 """
 import argparse
 import bisect
@@ -66,6 +68,8 @@ ASSIGNMENTS = {"=", "=>", ":=", "+=", "==", "->"}
 REMOTE_COMMANDS = {"htpasswd", "rrsync"}
 # Skip class "project-local tool": installed per project (npm/composer bin), run through npx or vendor/bin.
 PROJECT_BINS = {"wp-env", "biome", "astro", "knip", "mago", "vue-tsc", "playwright"}
+# Both are defaults: config key drift_lint.remote_commands / drift_lint.project_bins (levels 2-3) adds names.
+ASSEMBLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assemble")
 SHELL_LANGS = {"", "bash", "sh", "shell", "console", "powershell", "pwsh", "ps1", "ps", "cmd", "bat", "zsh"}
 
 DRIVE_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/](?:(?!\s[A-Za-z]:[\\/])[^`'\"<>|*?;\n])*")
@@ -307,10 +311,43 @@ def scan_quotes(text):
     return text, quote
 
 
+def config_names(config_dir, project_dir, environ):
+    """({list: lowercased names}, notices): what drift_lint.remote_commands and drift_lint.project_bins add in
+    company modules (level 2) and the personal config (level 3), each block checked by rigger-core's config module.
+    A config that cannot be read adds nothing and leaves its notice; the lint runs on the defaults."""
+    names = {"remote_commands": set(), "project_bins": set()}
+    sys.path.insert(0, ASSEMBLE)
+    wrote, sys.dont_write_bytecode = sys.dont_write_bytecode, True   # nothing written into the plugin's folder
+    try:
+        import config
+        import discover
+        from pathlib import Path
+        found = discover.discover(Path(config_dir), Path(project_dir), environ, Path(ASSEMBLE).parent.parent)
+        personal_path = Path(config_dir, "rigger", "config.json")
+        personal, notices = config.load_level(personal_path, 3)
+        blocks = [(2, "module " + module.name, module.config) for module in found.modules
+                  if module.layer == "company" and isinstance(module.config, dict)] + [(3, config._shown(personal_path, 300), personal)]
+        for level, where, data in blocks:
+            if "drift_lint" in data:
+                clean, problems = config.validate_level({"drift_lint": data["drift_lint"]}, level, where)
+                notices += problems
+                for key in names:
+                    names[key].update(name.lower() for name in (clean.get("drift_lint") or {}).get(key) or [])
+    except Exception as error:
+        return {key: set() for key in names}, ["drift-lint: config not read (%s); default command lists only" % error]
+    finally:
+        sys.dont_write_bytecode = wrote
+        sys.path.remove(ASSEMBLE)
+    return names, notices
+
+
 class Linter:
     def __init__(self, args):
         self.args = args
         self.findings = []
+        added, self.config_notices = config_names(args.config_dir, os.getcwd(), os.environ)
+        self.remote_commands = REMOTE_COMMANDS | added["remote_commands"]
+        self.project_bins = PROJECT_BINS | added["project_bins"]
         self.known_skills, self.known_agents, self.installed_roots = plugin_inventory(args.plugins_dir)
         self.known_agents |= BUILTIN_AGENTS
         self.module_skills = set(self.known_skills)  # the skills modules have: installed plugins, then the repos' plugins
@@ -661,8 +698,7 @@ class Linter:
             if not self.skipped(name, tokens) and not self.commands.found(name):
                 self.hit(lineno, "command", name)
 
-    @staticmethod
-    def skipped(name, tokens):
+    def skipped(self, name, tokens):
         low = name.lower()
         if low in SHELL_WORDS or low in CMDLETS:
             return True
@@ -674,7 +710,7 @@ class Linter:
             return True  # skip class "code statement"
         if FILE_NAME.search(name):
             return True  # skip class "file name": a script named, not a command on PATH
-        return low in REMOTE_COMMANDS or low in PROJECT_BINS
+        return low in self.remote_commands or low in self.project_bins
 
 
 def parse_args(argv):
@@ -696,7 +732,7 @@ def parse_args(argv):
     if not args.repo:
         sys.stderr.write(f"drift-lint: no repos; pass --repo or set {REPOS_ENV}\n")
         raise SystemExit(2)
-    claude = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(args.home, ".claude")
+    claude = args.config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(args.home, ".claude")
     # A plugin-only config has no CLAUDE.md, skills or agents: only an input named on the command line must exist.
     args.required = {p for p in (args.claude_md or []) + [args.user_skills, args.agents_dir, args.plugins_dir] if p}
     args.claude_md = args.claude_md or [os.path.join(claude, "CLAUDE.md")]
@@ -712,6 +748,8 @@ def parse_args(argv):
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     linter = Linter(args)
+    for notice in linter.config_notices:   # stderr: stdout holds only findings and the summary line
+        sys.stderr.write(notice + "\n")
     files = linter.collect()
     linter.check_trigger_loads()
     for path, upstream in files:

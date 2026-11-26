@@ -583,6 +583,53 @@ class TestEvidencePhrasesTests(unittest.TestCase):
         self.assertEqual((clean, len(notices)), ({}, 1))
 
 
+class DriftLintListsTests(unittest.TestCase):
+    """D95: drift_lint.remote_commands and drift_lint.project_bins (levels 2-3) add command names; a bad one is
+    dropped with a notice."""
+
+    BLOCK = {"remote_commands": ["deploytool"], "project_bins": ["bintool", "vite"]}
+
+    def test_lists_apply_at_levels_two_and_three(self):
+        got = resolve(l3={"schema": 1, "drift_lint": self.BLOCK})
+        self.assertEqual((got.effective.get("drift_lint"), got.notices, got.inactive), (self.BLOCK, [], {}))
+        self.assertEqual(got.sources[("drift_lint", "project_bins")], "L3:" + PATHS[3])
+        got = resolve(l2=[("acme", {"drift_lint": {"remote_commands": ["deploytool"]}})])
+        self.assertEqual((got.effective.get("drift_lint"), got.notices, got.inactive),
+                         ({"remote_commands": ["deploytool"]}, [], {}))
+
+    def test_other_levels_drop_it_with_a_notice(self):
+        for level in (1, 4):
+            with self.subTest(level=level):
+                clean, notices = config.validate_level({"schema": 1, "drift_lint": self.BLOCK}, level, "w")
+                self.assertEqual(clean, {"schema": 1})
+                self.assertEqual(notices, ["rigger: config w key drift_lint not allowed at level %d; ignored" % level])
+        self.assertNotIn("drift_lint", resolve(l4={"schema": 1, "drift_lint": self.BLOCK}).effective)
+
+    def test_bad_shapes_are_dropped_with_a_notice(self):
+        where = PATHS[3]
+        name = "must be one command name of at most 64 characters (letters, digits, . _ + -)"
+        rows = (
+            ("unknown key", {"commands": ["x"]}, {},
+             ["rigger: config %s drift_lint key commands unknown; ignored" % where]),
+            ("a list that is an object", {"project_bins": {}, "remote_commands": ["ok"]}, {"remote_commands": ["ok"]},
+             ["rigger: config %s drift_lint.project_bins must be a list of command names; ignored" % where]),
+            ("bad entries", {"remote_commands": [7, "", "two words", "a\nb", "x" * 65, "x" * 64, "ok"]},
+             {"remote_commands": ["x" * 64, "ok"]},
+             ["rigger: config %s drift_lint.remote_commands entry %s ignored: %s" % (where, shown, name)
+              for shown in ("7", "''", "'two words'", "'a\\nb'", repr("x" * 65))]),
+            ("too many entries", {"project_bins": ["b%d" % n for n in range(51)]},
+             {"project_bins": ["b%d" % n for n in range(50)]},
+             ["rigger: config %s holds 51 drift_lint.project_bins entries; the last 1 ignored (at most 50 per file)"
+              % where]),
+        )
+        for what, block, kept, expected in rows:
+            with self.subTest(what):
+                got = resolve(l3={"schema": 1, "drift_lint": block})
+                self.assertEqual((got.notices, got.effective.get("drift_lint")), (expected, kept))
+        clean, notices = config.validate_level({"drift_lint": ["deploytool"]}, 3, "w")
+        self.assertEqual((clean, notices), ({}, ["rigger: config w key drift_lint must be an object; ignored"]))
+
+
 class ShellGuardTests(unittest.TestCase):
     """D76: shell_guard.shellwise_path takes effect at level 3 only; every other level drops it with a notice."""
 
