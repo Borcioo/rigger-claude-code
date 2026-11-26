@@ -3,7 +3,6 @@
 For Claude Code on native Windows. It ships:
 
 - **`safe-edit.ps1`**: a "red run" tool. A red run breaks one file on purpose, runs the tests to prove they fail, and always puts the file back.
-- **`drift-lint`**: finds rule and skill files that point at things that no longer exist.
 - **`mem-check`**: a memory-headroom gate for heavy jobs; it prints the commit charge against a ceiling and exits 1 when the headroom is too low. Read its `INSTALL.md` for usage and exit codes.
 - the `windows-dev-env`, `php-herd-tooling` and `node-versions` skills.
 

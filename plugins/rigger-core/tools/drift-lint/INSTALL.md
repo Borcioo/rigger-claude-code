@@ -32,6 +32,7 @@ The config folder is `CLAUDE_CONFIG_DIR` when it is set, else `~/.claude`; below
 | `repo-path` | `tools\…`, `templates\…` (either slash) | it exists in a skill repo, the skill's own folder, or the `<repo>\plugins\<plugin>` that holds the file (a sibling plugin does not count) |
 | `skill` | `skill:<name>`, ``load/see `<name>` ``, `` `<name>` skill``, a `Skill` table column | a skill folder in the scanned roots, a `~/.claude/skills` entry, or a skill of an installed or `<repo>\plugins` plugin (`plugin:name` too) |
 | `agent` | `subagent_type: <name>`, `` `<name>` agent``, ``agent type `<name>` ``, an `Agent` table column | `~/.claude/agents/<name>.md`, a built-in type, or `plugin:agent` of an installed plugin or with `<repo>\plugins\<plugin>\agents\<agent>.md` |
+| `trigger-load` | each `load` entry of a trigger row in a `<repo>\plugins\<plugin>\rigger-module.json` | it is `plugin:skill` of a skill folder in a `<repo>` plugin or an installed plugin (a bare name does not count); a manifest that cannot be read, or whose triggers have the wrong shape, is a `read` finding |
 | `command` | first word of each command in a code span of 2+ words and in shell or untagged blocks (split on pipes, `&&`, `;`) | a cmdlet, alias or builtin on the allowlist, or found on PATH (plus Git's `usr\bin`) |
 
 ## Run
@@ -82,6 +83,7 @@ to the baseline is reviewed like code: real drift is fixed in the rule file, nev
 
 ```
 python -I tools/drift-lint/tests/test_drift_lint.py
+python -I tools/drift-lint/tests/test_trigger_load.py   # every platform
 ```
 
 Creates its fixtures (including one junction, a symlink on POSIX) under `%TEMP%` and removes them.

@@ -21,11 +21,11 @@ and change it by forking.
 
 | Plugin | Install | Adds | Depends on |
 |---|---|---|---|
-| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps, testing), agents (mapper, implementer, worker, reviewer), context-guard and compact-guard hooks, token-audit, variant-run, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
+| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps, testing), agents (mapper, implementer, worker, reviewer), context-guard and compact-guard hooks, token-audit, variant-run, drift-lint, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
 | `rigger-rules` | default | the working rules, injected at session start and into subagents, plus every `*.md` file of your own `rules.d` folder | `rigger-core` |
 | `rigger-lessons` | default | lessons inbox count at session start, the capture rule, the `curate-lessons` skill, a lint for lessons, and opt-in background curation batches | `rigger-core` |
 | `rigger-talk` | opt-in | reply-format rules (language, length, report order) for the main session, configured through `userConfig` | `rigger-core` |
-| `rigger-windows` | opt-in, native Windows only | rules (shell, skill triggers), shell-guard hooks (deny commands certain to fail in PowerShell or Git Bash), `safe-edit.ps1`, drift-lint, `mem-check`, skills windows-dev-env, php-herd-tooling, node-versions | `rigger-core` |
+| `rigger-windows` | opt-in, native Windows only | rules (shell, skill triggers), shell-guard hooks (deny commands certain to fail in PowerShell or Git Bash), `safe-edit.ps1`, `mem-check`, skills windows-dev-env, php-herd-tooling, node-versions | `rigger-core` |
 | `rigger-wp` | opt-in, for WordPress developers | the `rigger-wp-traps` skill, the rule that says when to load it, the `wp-outbound-block` template, and the upstream WordPress agent skills behind `wordpress-router` | `rigger-core` |
 | `rigger-panel` | opt-in | the `/harness` command and four panes beside the chat: Rigger (the session's context, cost and limits, harness state), Issues (the GitHub issues assigned to you, read-only, through `gh`), Plan (the task list) and Environments (the project's `.claude/environments.json`) | none to run; the Rigger pane's version and Compaction rows read `rigger-core` files and its Lessons row reads the `rigger-lessons` inbox (a `?` without them) |
 
