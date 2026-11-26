@@ -18,7 +18,18 @@ if os.name != "nt":
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "drift_lint.py")
 FINDING = re.compile(r"^(.+):(\d+)  (\S+)  (.*)$")
+CLEARED = ("CLAUDE_", "HARNESS_", "RIGGER_")
 failures, passed = [], 0
+
+
+def lint_env(home=None, **values):
+    """The environment drift-lint runs in: none of the session's Claude, harness or Rigger variables (company modules
+    of RIGGER_MODULE_DIRS and a personal config add skip names), and with home the config folder <home>/.claude."""
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(CLEARED)}
+    if home is not None:
+        env["CLAUDE_CONFIG_DIR"] = os.path.join(home, ".claude")
+    env.update(values)
+    return env
 
 
 def check(name, got, want):
@@ -102,7 +113,8 @@ class Fixture:
         args = ["--plugins-dir", self.plugins, "--repo", repo or self.market, "--home", self.home,
                 "--path", os.pathsep.join([self.bin, self.git_cmd]), "--claude-md", self.claude,
                 "--user-skills", self.empty, "--agents-dir", self.agents, "--baseline", self.no_baseline, *extra]
-        proc = subprocess.run([sys.executable, "-I", SCRIPT, *args], capture_output=True, timeout=60, cwd=cwd)
+        proc = subprocess.run([sys.executable, "-I", SCRIPT, *args], capture_output=True, timeout=60, cwd=cwd,
+                              env=lint_env(self.home))
         return proc.returncode, proc.stdout.decode("utf-8")
 
     def market_hits(self, skill, rules="Nothing here.\n", *extra, **kwargs):
@@ -119,14 +131,15 @@ class Fixture:
         """The script with only args plus the plugins, repo, home and PATH of the fixture."""
         args = ["--plugins-dir", self.plugins, "--repo", self.repo, "--home", self.home,
                 "--path", os.pathsep.join([self.bin, self.git_cmd]), *args]
-        proc = subprocess.run([sys.executable, "-I", script, *args], capture_output=True, timeout=60)
+        proc = subprocess.run([sys.executable, "-I", script, *args], capture_output=True, timeout=60,
+                              env=lint_env(self.home))
         return proc.returncode, proc.stdout.decode("utf-8")
 
     def run_no_repo(self, text, env_repos, *extra):
         """The script with no --repo; HARNESS_DRIFT_REPOS = env_repos (unset when None).
         (exit code, stdout, stderr)."""
         write(self.claude, text)
-        env = {k: v for k, v in os.environ.items() if k != "HARNESS_DRIFT_REPOS"}
+        env = lint_env(self.home)
         if env_repos is not None:
             env["HARNESS_DRIFT_REPOS"] = env_repos
         args = ["--plugins-dir", self.plugins, "--home", self.home, "--path", os.pathsep.join([self.bin, self.git_cmd]),
@@ -204,7 +217,7 @@ def real_tree_gate(folder):
     write(os.path.join(home, ".claude", "CLAUDE.md"))
     os.makedirs(os.path.join(home, ".claude", "skills"))
     os.makedirs(os.path.join(home, ".claude", "agents"))
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=os.path.join(home, ".claude"), HOME=home, USERPROFILE=home)
+    env = lint_env(home, HOME=home, USERPROFILE=home)
     base = os.path.join(HERE, "repo-baseline.txt")
 
     def run(cwd):
@@ -700,15 +713,13 @@ def main():
         proc = subprocess.run([sys.executable, "-I", SCRIPT, "--home", home2, "--repo", fx.repo, "--claude-md", fx.claude,
                                "--skills-root", fx.skills, "--user-skills", fx.empty, "--agents-dir", fx.agents,
                                "--path", os.pathsep.join([fx.bin, fx.git_cmd]), "--baseline", fx.no_baseline],
-                              capture_output=True, timeout=60)
+                              capture_output=True, timeout=60, env=lint_env(home2))
         check("rules: without --plugins-dir, 0 rules files is not an error",
               (proc.returncode, "rules files read" in proc.stdout.decode("utf-8")), (0, False))
 
         # the config folder: CLAUDE_CONFIG_DIR wins over ~/.claude, and a plugin-only one is no error
         def run_config(config, *extra, skills=fx.skills):
-            env = dict(os.environ)
-            env.pop("CLAUDE_CONFIG_DIR", None)
-            env.update({"CLAUDE_CONFIG_DIR": config} if config else {})
+            env = lint_env(**({"CLAUDE_CONFIG_DIR": config} if config else {}))
             proc = subprocess.run([sys.executable, "-I", SCRIPT, "--home", os.path.join(folder, "home3"), "--repo", fx.repo,
                                    "--skills-root", skills, "--path", os.pathsep.join([fx.bin, fx.git_cmd]), *extra],
                                   capture_output=True, timeout=60, env=env)

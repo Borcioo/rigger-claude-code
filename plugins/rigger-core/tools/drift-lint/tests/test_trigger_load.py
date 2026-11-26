@@ -81,7 +81,9 @@ def run(root, repo=None, folder=None):
     """(exit code, output lines) of the script on the planted repo, with an empty config folder."""
     config = os.path.join(folder or root, "config")
     os.makedirs(config, exist_ok=True)
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=config, HOME=config, USERPROFILE=config)
+    # none of the session's Claude, harness or Rigger variables: RIGGER_MODULE_DIRS modules add drift_lint config
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_"))}
+    env.update(CLAUDE_CONFIG_DIR=config, HOME=config, USERPROFILE=config)
     proc = subprocess.run([sys.executable, "-I", "-X", "utf8", SCRIPT, "--repo", repo or root, "--home", config],
                           capture_output=True, timeout=120, env=env, cwd=repo or root)
     return proc.returncode, proc.stdout.decode("utf-8").replace("\r\n", "\n").splitlines()
