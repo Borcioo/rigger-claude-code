@@ -63,9 +63,10 @@ def _core_assemble_dir(config_dir):
 
 
 def _config_words(config_dir, project_dir, environ):
-    """{category: [words]} that test_evidence.phrases adds in company modules (level 2) and the personal config
-    (level 3), as rigger-core's config module checks them; {} when rigger-core cannot be found or loaded, so the
-    shipped lists stand alone (this is a shadow: it must not fail)."""
+    """{category: [words]} that test_evidence.phrases adds: the company modules (level 2) and the personal config
+    (level 3) merged by rigger-core's config module, so a personal null removes a company list and a personal
+    list replaces it; {} when rigger-core cannot be found or loaded, so the shipped lists stand alone (this is a
+    shadow: it must not fail)."""
     folder = _core_assemble_dir(config_dir)
     if folder is None:
         return {}
@@ -79,16 +80,13 @@ def _config_words(config_dir, project_dir, environ):
         discover = importlib.import_module("discover")
         core = os.path.dirname(os.path.dirname(folder))
         found = discover.discover(pathlib.Path(config_dir), pathlib.Path(project_dir), environ, pathlib.Path(core))
-        personal, _ = config.load_level(pathlib.Path(config_dir, "rigger", "config.json"), 3)
-        blocks = [(2, module.config) for module in found.modules if module.layer == "company"
-                  and isinstance(module.config, dict)] + [(3, personal)]
-        words = {key: [] for key in CATEGORIES}
-        for level, data in blocks:
-            clean, _ = config.validate_level({"test_evidence": data.get("test_evidence")}, level, "")
-            phrases = (clean.get("test_evidence") or {}).get("phrases") or {}
-            for key in CATEGORIES:
-                words[key].extend(phrases.get(key) or [])
-        return words
+        path = pathlib.Path(config_dir, "rigger", "config.json")
+        personal, _ = config.load_level(path, 3)
+        company = [(module.name, module.config) for module in found.modules
+                   if module.layer == "company" and isinstance(module.config, dict)]
+        merged = config.resolve({}, company, personal, {}, {3: path}).effective
+        phrases = (merged.get("test_evidence") or {}).get("phrases") or {}
+        return {key: list(phrases.get(key) or []) for key in CATEGORIES}
     except Exception:
         return {}
     finally:
@@ -307,6 +305,7 @@ def log_stop(event, deadline):
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
     if not data:
         return
+    started = time.monotonic()
     try:
         phrases = load_phrases(event)
         claim = closing_claim(message, phrases)
@@ -314,7 +313,6 @@ def log_stop(event, deadline):
             return
     except PhrasesError:   # no list to tell a claim by: the row says so, once per closing
         phrases = claim = None
-    started = time.monotonic()
     sys.pycache_prefix = os.path.join(data, "pycache")
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # the launcher's -I drops the script folder
     import turn_evidence as reader

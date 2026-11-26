@@ -291,6 +291,74 @@ class SafeEditTests(unittest.TestCase):
         self.assertEqual(self.text(path), "guard = on\n")
         self.assertFalse(os.path.exists(backup))
 
+    def test_a_value_that_starts_with_a_dash_goes_with_an_equals_sign(self):
+        path = self.fixture("dash.txt", "-old\n")
+        code, lines = self.safe_edit("--path", path, "--find=-old", "--replace=-new")
+        self.assertEqual((code, self.text(path)), (0, "-new\n"), lines)
+
+    def test_an_expect_ran_that_is_no_regex_is_refused_before_the_file_is_touched(self):
+        for bad in ("# tests [", "a{999999999999}"):
+            with self.subTest(bad):
+                path = self.fixture("badregex.txt", "guard = on\n")
+                marker = os.path.join(self.work, "ran")
+                code, lines = self.safe_edit(*self.red_args(path, expect=bad, code="open(%r, 'w').close()" % marker))
+                self.assertEqual(code, 2, lines)
+                self.assertTrue(lines[0].startswith("safe-edit: REFUSED — --expect-ran is not a usable regex: "), lines)
+                self.assertEqual(self.text(path), "guard = on\n")
+                self.assertFalse(os.path.exists(marker), "the command ran")
+
+    def assert_link_refused(self, path, other):
+        for what, argv in (("edit", ["--find", "on", "--replace", "off"]), ("restore", ["--restore"])):
+            with self.subTest(what):
+                code, lines = self.safe_edit("--path", path, *argv)
+                self.assertEqual(code, 2, lines)
+                self.assertEqual(lines, ["safe-edit: REFUSED — %s is a symlink or has other hard links; replacing "
+                                         "it would cut the link. Edit it with the Edit tool, or name the real "
+                                         "file." % path])
+                self.assertEqual((self.text(path), self.text(other)), ("guard = on\n", "guard = on\n"))
+
+    def test_a_hard_linked_file_is_refused_and_stays_linked(self):
+        other = self.fixture("real.txt", "guard = on\n")
+        path = os.path.join(self.work, "hard.txt")
+        os.link(other, path)
+        self.assert_link_refused(path, other)
+        self.assertEqual(os.stat(path).st_nlink, 2)
+
+    def test_a_symlink_is_refused_and_stays_a_link(self):
+        other = self.fixture("target.txt", "guard = on\n")
+        path = os.path.join(self.work, "soft.txt")
+        try:
+            os.symlink(other, path)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest("this account cannot make a symlink: %s" % exc)
+        self.assert_link_refused(path, other)
+        self.assertTrue(os.path.islink(path))
+
+    def test_the_temp_files_of_a_killed_write_are_removed_at_the_next_start(self):
+        path = self.fixture("leftover.txt", "guard = on\n")
+        temps = [path + ".safe-edit-tmp", path + ".safe-edit-backup.safe-edit-tmp"]
+        for temp in temps:
+            with open(temp, "wb") as handle:
+                handle.write(b"half")
+        code, lines = self.safe_edit("--path", path, "--restore")
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(lines[:2], ["safe-edit: removed %s, left by a killed write." % temp for temp in temps])
+        self.assertEqual([temp for temp in temps if os.path.exists(temp)], [])
+        self.assertEqual(self.text(path), "guard = on\n")
+
+    def test_windows_without_pwsh_runs_the_command_through_sh(self):
+        asked = []
+
+        def which(name):
+            asked.append(name)
+            return None
+
+        self.assertEqual(platform_shell(which=which, windows=True), ["sh", "-c"])
+        self.assertEqual(platform_shell(which=lambda name: "found-pwsh", windows=True),
+                         ["found-pwsh", "-NoProfile", "-Command"])
+        self.assertEqual(platform_shell(which=which, windows=False), ["sh", "-c"])
+        self.assertEqual(asked, ["pwsh"])
+
     def test_platform_shell_is_recorded_in_the_backup(self):
         path = self.fixture("shell.txt", "guard = on\n")
         seen = os.path.join(self.work, "backup-seen.json")

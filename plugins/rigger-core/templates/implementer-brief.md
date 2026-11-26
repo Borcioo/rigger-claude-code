@@ -61,8 +61,8 @@ the `implementer` slot's agent, pass both groups as RISK.
 - If rigger-platform is installed (Windows): absolute paths for `[IO.File]`/`[IO.Directory]`; commit with
   `git commit -m @'…'@` or `-F <file>`, never `-F -`; no `node_modules`/`vendor` junctions in
   worktrees (removing the worktree empties the target; a `vendor` junction makes Composer load the
-  main checkout's code); source edits only with the Edit tool or `safe_edit.py --find TEXT
-  --replace TEXT --count N` (rigger-testing), never a heredoc or regex script; superpowers helper scripts (`sdd-workspace`, `task-brief`,
+  main checkout's code); source edits only with the Edit tool or `safe_edit.py --path FILE
+  --find TEXT --replace TEXT --count N` (rigger-testing), never a heredoc or regex script; superpowers helper scripts (`sdd-workspace`, `task-brief`,
   `review-package`) only through the Bash tool (Git Bash) by absolute path — `bash` typed in
   PowerShell starts WSL.
 - Red runs: in a worktree, or in place — with rigger-testing installed — through

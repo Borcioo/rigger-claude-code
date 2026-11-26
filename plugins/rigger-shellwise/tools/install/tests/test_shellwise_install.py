@@ -348,6 +348,7 @@ class TrustTests(Base):
                 ("dotdot", fmt, members(extra=[(top + "../x", b"x", "file", None)])),
                 ("absolute", fmt, members(extra=[("/abs/x", b"x", "file", None)])),
                 ("second-binary", fmt, members(extra=[(top + "bin/" + exe, good, "file", None)])),
+                ("drive-letter", fmt, members(extra=[("C:x", b"x", "file", None)])),
             ]
         linked = [row for row in members() if not row[0].endswith(exe)] + [(top + "payload", good, "file", None)]
         cases += [
@@ -361,7 +362,8 @@ class TrustTests(Base):
                 self.assert_refused(self.download(self.serve(fmt=fmt, rows=rows)), "archive")
 
     def test_version_mismatch_after_unpack_fails(self):
-        for output, sleep in (("shellwise 0.1.0", 0), ("something else", 0), ("shellwise 0.1.1", 30)):
+        for output, sleep in (("shellwise 0.1.0", 0), ("something else", 0), ("shellwise 0.1.1", 30),
+                              ("shellwise 0.1.10", 0), ("shellwise 0.1.1 extra", 0)):
             with self.subTest(output=output, sleep=sleep):
                 shutil.rmtree(self.root, ignore_errors=True)
                 pin = self.serve(rows=members(binary=fake_binary(output, sleep)))
@@ -405,6 +407,103 @@ class LockTests(Base):
         status = self.download(pin, clock=lambda: 1660.0)
         self.assertEqual(status.state, "ready", status.reason)
         self.assertEqual(self.server.requests, [name])
+
+
+    def test_a_lock_that_starts_in_the_future_is_taken_over(self):
+        pin = self.serve()
+        self.write_lock(start=5000.0, pid=1)
+        status = self.download(pin, clock=lambda: 1000.0)
+        self.assertEqual(status.state, "ready", status.reason)
+
+    def test_a_lock_still_being_written_is_held_though_its_mtime_leads_the_clock(self):
+        pin = self.serve()
+        os.makedirs(self.root)
+        path = os.path.join(self.root, "lock")
+        open(path, "wb").close()
+        behind = os.stat(path).st_mtime - 0.5
+        self.assertEqual(self.download(pin, clock=lambda: behind).state, "downloading")
+        self.assertEqual(self.server.requests, [])
+
+    def test_a_take_over_that_another_writer_won_holds_nothing(self):
+        self.write_lock(start=1000.0, pid=1)
+        theirs = b'{"pid": 2, "start": 2000.0}'
+        real = si._write_atomic
+
+        def lose(path, data):
+            real(path, data)
+            if os.path.basename(path) == "lock":
+                real(path, theirs)   # a second taker-over wrote last
+
+        with mock.patch.object(si, "_write_atomic", lose):
+            self.assertIsNone(si._acquire(self.root, lambda: 2000.0))
+        with open(os.path.join(self.root, "lock"), "rb") as fh:
+            self.assertEqual(fh.read(), theirs)
+
+    def work_folder(self, name, folder_age, archive_age):
+        """A download's work folder whose own mtime and archive mtime are that many seconds old."""
+        folder = os.path.join(self.root, name)
+        os.makedirs(folder)
+        archive = os.path.join(folder, "archive")
+        with open(archive, "wb") as fh:
+            fh.write(b"half")
+        now = time.time()
+        os.utime(archive, (now - archive_age, now - archive_age))
+        os.utime(folder, (now - folder_age, now - folder_age))
+        return folder
+
+    def test_only_work_folders_nothing_wrote_to_for_the_stale_time_are_removed(self):
+        """A takeover: the holder before may still be downloading. Its folder is old, its archive is not."""
+        pin = self.serve()
+        stale = si.LOCK_STALE + 60
+        self.write_lock(start=time.time() - stale, pid=1)
+        self.work_folder(".work-killed", stale, stale)
+        self.work_folder(".work-slow-holder", stale, 5)
+        self.work_folder(".work-just-made", 5, stale)
+        status = self.download(pin)
+        self.assertEqual(status.state, "ready", status.reason)
+        self.assertEqual(sorted(n for n in os.listdir(self.root) if n.startswith(".work-")),
+                         [".work-just-made", ".work-slow-holder"])
+
+    def test_a_work_folder_that_cannot_be_read_is_kept(self):
+        folder = self.work_folder(".work-busy", si.LOCK_STALE + 60, si.LOCK_STALE + 60)
+        real = os.listdir
+
+        def busy(path):
+            if os.path.basename(path) == ".work-busy":
+                raise PermissionError(13, "held", path)
+            return real(path)
+
+        with mock.patch.object(si.os, "listdir", busy):
+            si._prune(self.root, "0.1.1", time.time())
+        self.assertTrue(os.path.isdir(folder), "an unreadable folder was removed")
+
+    def test_an_empty_lock_older_than_the_stale_time_is_taken_over(self):
+        """A kill between creating the lock and writing it leaves it empty: only its mtime dates it."""
+        pin = self.serve()
+        os.makedirs(self.root)
+        path = os.path.join(self.root, "lock")
+        open(path, "wb").close()
+        past = time.time() - si.LOCK_STALE - 60
+        os.utime(path, (past, past))
+        status = self.download(pin)
+        self.assertEqual(status.state, "ready", status.reason)
+        self.assertFalse(os.path.exists(path))
+
+    def test_a_work_folder_that_cannot_be_made_frees_the_lock_and_says_why(self):
+        pin = self.serve()
+
+        def full(*args, **kwargs):
+            raise OSError("no space left")
+
+        with mock.patch.object(si.tempfile, "mkdtemp", full):
+            try:
+                status = self.download(pin)
+            except Exception as exc:   # whatever escapes, the lock must be free
+                status = exc
+        self.assertFalse(os.path.exists(os.path.join(self.root, "lock")), "the lock stayed: %r" % (status,))
+        self.assertEqual(getattr(status, "state", status), "failed")
+        self.assertIn("no space left", status.reason)
+        self.assertEqual(self.status_file()["state"], "failed")
 
 
 class OverrideTests(Base):
@@ -560,6 +659,34 @@ class ConfigOverrideTests(Base):
                         self.assertIsNone(self.current())
                         self.assertEqual((row["state"], row["reason"]),
                                          ("failed", "override %s: version 0.1.0 below the pin 0.1.1" % path))
+
+    def test_the_override_is_on_record_before_current_changes(self):
+        """A download child asks `_override_left` before it writes `current`: the status must already say so."""
+        pin = self.serve()
+        self.assertEqual(self.download(pin).state, "ready")
+        real_write, real_remove = si._write_atomic, si._remove
+        for kind, version, state in (("accepted", "0.2.0", "override"), ("refused", "0.1.0", "failed")):
+            with self.subTest(kind=kind):
+                for name in ("status.json", "current"):
+                    real_remove(os.path.join(self.root, name))
+                real_write(os.path.join(self.root, "current"), b"downloaded\n")
+                self.set_override(self.override("shellwise " + version))
+                seen = []
+
+                def write(path, data):
+                    if os.path.basename(path) == "current":
+                        seen.append(si._override_left(self.root))
+                    return real_write(path, data)
+
+                def remove(path):
+                    if os.path.basename(path) == "current":
+                        seen.append(si._override_left(self.root))
+                    return real_remove(path)
+
+                with mock.patch.object(si, "_write_atomic", write), mock.patch.object(si, "_remove", remove):
+                    self.start(pin, Spawns())
+                self.assertEqual(seen, [True])
+                self.assertEqual(self.status_file()["state"], state)
 
     def test_override_set_in_the_project_is_not_used(self):
         self.set_override(self.override("shellwise 0.2.0"), where="project")

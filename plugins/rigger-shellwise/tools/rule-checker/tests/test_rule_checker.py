@@ -13,8 +13,10 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 PLUGIN = HERE.parents[2]
@@ -270,6 +272,38 @@ class NoBinaryTests(Base):
                 self.assertTrue(problem.startswith("guard live:bash-cd-slash-d: no checker (no shellwise binary: "),
                                 problem)
         self.assertEqual(self.calls(), [])
+
+    def problem_with(self, launch):
+        try:
+            return rc.rule_guard_problem("bash-cd-slash-d", {"tools": ["git-bash"], "probe": "x"},
+                                         data_dir=str(self.data), launch=launch, windows=True)
+        except Exception as exc:  # every failure is a problem line, never a crash of the lint
+            return exc
+
+    def test_a_binary_that_does_not_answer_in_time_is_a_problem(self):
+        slow = "import time\ntime.sleep(20)\n" if WINDOWS else "#!/bin/sh\nexec sleep 20\n"
+        self.binary.write_bytes(slow.encode("utf-8"))
+        with mock.patch.object(rc, "CHECK_BOUND", 1.0):
+            started = time.monotonic()
+            problem = self.problem_with(LAUNCH)
+        self.assertLess(time.monotonic() - started, 10.0)
+        self.assertIsInstance(problem, str)
+        self.assertEqual(problem, "guard live:bash-cd-slash-d: shellwise check gave no readable reply "
+                                  "(gitbash: timed out after 1 s)")
+
+    def test_a_binary_the_system_cannot_run_is_a_problem(self):
+        self.binary.write_bytes(b"\x00 not a program")
+        problem = self.problem_with(None)  # run as itself: no interpreter in front
+        self.assertIsInstance(problem, str)
+        self.assertTrue(problem.startswith("guard live:bash-cd-slash-d: shellwise check gave no readable reply "
+                                           "(gitbash: cannot run ("), problem)
+
+    @unittest.skipIf(WINDOWS, "POSIX only: Windows has no exec bit")
+    def test_a_binary_without_the_exec_bit_is_no_checker(self):
+        self.binary.chmod(0o644)
+        problem = self.problem_with(None)
+        self.assertEqual(problem, "guard live:bash-cd-slash-d: no checker (no shellwise binary: %s is not an "
+                                  "executable file)" % self.binary)
 
     def test_current_with_crlf_names_the_binary(self):
         self.write_current(str(self.binary) + "\r\n")

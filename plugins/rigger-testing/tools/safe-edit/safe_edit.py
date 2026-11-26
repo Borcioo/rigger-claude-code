@@ -16,6 +16,8 @@ red run safe:
   exactly as that run left it; if it changed since, the script refuses and says so.
 
 Line endings and a UTF-8 BOM are kept: in a CRLF file, a newline in --find/--replace becomes CRLF.
+A value that starts with `-` goes with `=`: `--find=-X` (`--find -X` reads -X as an option).
+A symlink or a file with other hard links is refused: replacing it would cut the link.
 
 --run requires --expect-ran (a regex, case-insensitive, matched against each output line), --expect-ran
 requires --run, an empty --run is refused. The command runs through the platform shell: `pwsh -NoProfile
@@ -39,6 +41,7 @@ import sys
 import time
 
 BACKUP_SUFFIX = ".safe-edit-backup"
+TEMP_SUFFIX = ".safe-edit-tmp"
 BOM = b"\xef\xbb\xbf"
 
 
@@ -67,7 +70,7 @@ def read_bytes(path):
 
 def write_bytes(path, data):
     """Replace `path` whole or not at all: a kill leaves the old content, never a truncated file."""
-    temp = path + ".safe-edit-tmp"
+    temp = path + TEMP_SUFFIX
     try:
         with open(temp, "wb") as handle:
             handle.write(data)
@@ -168,7 +171,14 @@ def _main(argv):
     if not os.path.isfile(args.path):
         raise Refused("no such file: %s" % args.path)
     file = os.path.abspath(args.path)
+    if os.path.islink(file) or os.stat(file).st_nlink > 1:
+        raise Refused("%s is a symlink or has other hard links; replacing it would cut the link. Edit it with the "
+                      "Edit tool, or name the real file." % file)
     backup = file + BACKUP_SUFFIX
+    for temp in (file + TEMP_SUFFIX, backup + TEMP_SUFFIX):
+        if os.path.lexists(temp):   # a write that was killed: its target is still whole
+            os.remove(temp)
+            say("safe-edit: removed %s, left by a killed write." % temp)
     if os.path.exists(backup):
         _settle_stale_backup(file, backup)
     if args.restore:
@@ -187,6 +197,11 @@ def _main(argv):
     if args.run and not args.expect_ran:
         raise Refused("--run needs --expect-ran '<regex>' matching a line only a test run prints (e.g. '# tests "
                       "[1-9]'); without it a command that ran no test counts as red.")
+    if args.expect_ran is not None:
+        try:
+            re.compile(args.expect_ran, re.IGNORECASE)
+        except (re.error, OverflowError, RecursionError) as exc:
+            raise Refused("--expect-ran is not a usable regex: %s" % exc)
 
     original = read_bytes(file)
     has_bom = original.startswith(BOM)

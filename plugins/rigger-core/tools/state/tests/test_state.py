@@ -341,6 +341,49 @@ class Clean(Case):
                                                              NO_TRANSCRIPT + ".md", EDGE_OUT + ".md",
                                                              OTHER + ".log.md"]))
 
+    def test_clean_moves_and_deletes_only_files_named_by_a_session_uuid(self):
+        """README.md or notes.md in the state folder is the user's: a name that is not a UUID is never a session."""
+        foreign = ("README.md", "notes.md", "my-plan.log.md", DEAD[:-1] + ".md", DEAD + "0.md",
+                   "0" + DEAD + ".md", DEAD.replace("-", "_", 1) + ".md")
+        for name in foreign:
+            self.put(name, "x", 20)
+        self.dead_session()
+        code, text = self.run_main("clean", "--now", NOW)
+        self.report_clean(text)
+        self.assertEqual((code, text), (0, "state: ok clean moved 3 deleted 0 rotated 0\n"))
+        self.assertEqual(self.listing(self.state), sorted(foreign))
+        self.assertEqual(st.session_of("AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE.md"), "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")
+        self.assertEqual(self.listing(self.archive), sorted(DEAD + suffix for suffix in (".md", ".log.md", ".parts.json")))
+
+    def test_a_session_id_that_is_no_uuid_keeps_restore_rotation_and_deletion(self):
+        """review-081 M-4: the UUID filter guards only other sessions' files in the state folder."""
+        with self.subTest("restore on check"):
+            self.put("s1.md", "# state\n", folder=self.archive)
+            self.put("s1.log.md", "# log\n", folder=self.archive)
+            code, text = self.run_main("check", "--now", NOW, session="s1")
+            self.assertNotIn("refused", text)
+            self.assertEqual(self.listing(self.state), ["s1.log.md", "s1.md", "s1.restored"], text)
+        with self.subTest("its own log rotates"):
+            shutil.rmtree(self.state)   # each case starts from an empty state folder
+            os.makedirs(self.archive)
+            self.put("s1.log.md", "line of log text\n" * 4000)   # 68,000 bytes, over LOG_MAX
+            code, text = self.run_main("clean", "--now", NOW, session="s1")
+            self.assertEqual((code, text), (0, "state: ok clean moved 0 deleted 0 rotated 1\n"))
+            self.assertLessEqual(os.path.getsize(os.path.join(self.state, "s1.log.md")), st.LOG_KEEP + 200)
+            # the same log seen by another session's clean is a foreign file: never cut
+            self.put("s1.log.md", "line of log text\n" * 4000)
+            code, text = self.run_main("clean", "--now", NOW)   # it may delete the part rotated above
+            self.assertEqual(code, 0, text)
+            self.assertTrue(text.endswith(" rotated 0\n"), text)
+            self.assertEqual(os.path.getsize(os.path.join(self.state, "s1.log.md")), 68000)
+        with self.subTest("an old archived file is deleted"):
+            shutil.rmtree(self.state)
+            os.makedirs(self.archive)
+            self.put("s1.parts.json", "{}", 90, folder=self.archive)
+            code, text = self.run_main("clean", "--now", NOW)
+            self.assertEqual(code, 0, text)
+            self.assertNotIn("s1.parts.json", self.listing(self.archive), text)
+
     def test_archive_resets_the_clock(self):
         self.dead_session()
         self.assertEqual(self.run_main("clean", "--now", NOW)[0], 0)

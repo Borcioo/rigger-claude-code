@@ -47,6 +47,8 @@ HEADING_PREFIX = "## "
 BLANK = " \t\r"  # what rules_start.sh trims from a heading line
 # Removed plugins (D84): still enabled, each gets one line with the command that disables it.
 REMOVED_PLUGINS = ("rigger-windows",)
+# What took over its shell guard, commit shadow and Stop shadow: named with the install command when not enabled.
+REPLACEMENTS = {"rigger-windows": ("rigger-shellwise", "rigger-testing")}
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 ASSEMBLE_DIR = Path(__file__).resolve().parent.parent / "assemble"
 
@@ -218,9 +220,20 @@ def collect(root, problems):
 
 
 def removed_warnings(listed):
-    """One line per enabled key of a removed plugin, its marketplace taken from the key."""
-    return ["%s%s is still enabled; disable it (claude plugin disable %s)" % (PREFIX, key.split("@")[0], key)
-            for key in listed if key.split("@")[0] in REMOVED_PLUGINS]
+    """One line per enabled key of a removed plugin, its marketplace taken from the key; a replacement that is not
+    enabled from that marketplace is named with its install command, so disabling leaves nothing unguarded."""
+    lines = []
+    for key in listed:
+        name, _, market = key.partition("@")
+        if name not in REMOVED_PLUGINS:
+            continue
+        line = "%s%s is still enabled; disable it (claude plugin disable %s)" % (PREFIX, name, key)
+        missing = ["%s (claude plugin install %s@%s)" % (other, other, market)
+                   for other in REPLACEMENTS.get(name, ()) if "%s@%s" % (other, market) not in listed]
+        if missing:
+            line += " after installing " + " and ".join(missing)
+        lines.append(line)
+    return lines
 
 
 def duplicate_warnings(found):

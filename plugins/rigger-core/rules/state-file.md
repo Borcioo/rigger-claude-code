@@ -6,10 +6,9 @@
   then goal, plan file, commits, running agents, `## Next step`, `## Items`, `## Keep verbatim`
   (exact errors, file:line, commands, ids, decisions and why), lessons. Rewrite it at each task
   boundary (commit, green tests, subagent result), refreshing Next step and Keep verbatim,
-  with `true`; set `false` before a step that must not be cut (merge, migration).
-  Compaction waits for `true`; after it, continue from Next step without
-  asking or writing a
-  handoff.
+  with `true`; set `false` before a step that must not be cut (merge, multi-file edit,
+  migration). Compaction waits for `true` (up to a hard cap); after it, continue from Next step
+  without asking or writing a handoff.
 - **The state file stays under 9 000 characters,** all that comes back after compaction.
   `## Next step` is the first section: rewrite it, never append to it, at most ~15 lines. History
   goes to `<session id>.log.md`, linked

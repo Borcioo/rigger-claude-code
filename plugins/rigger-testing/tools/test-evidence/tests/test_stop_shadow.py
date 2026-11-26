@@ -612,11 +612,10 @@ class NoRead(StopCase):
         self.session.edit("a.py")
         report = self.close("Which of the two do you prefer?", "TRANSCRIPT = %r\n%s" % (self.session.main, SPY))
         self.assertFalse(report["reader"])
-        # The word lists are read before any claim, from phrases.json; nothing else under the session's folders is.
-        self.assertEqual([path for path in report["opened"] if path.startswith(self.base)
-                          and not path.startswith(os.path.join(self.config, "plugins"))], [])
-        self.assertEqual([os.path.basename(path) for path in report["opened"] if path.endswith("phrases.json")],
-                         ["phrases.json"])
+        # Before any claim two files are read, wherever they are: the word lists and the plugin listing.
+        self.assertEqual([os.path.normcase(path) for path in report["opened"]],
+                         [os.path.normcase(os.path.join(self.tool, "phrases.json")),
+                          os.path.normcase(os.path.join(self.config, "plugins", "installed_plugins.json"))])
         self.assertFalse(os.path.exists(self.data))
 
     def test_the_spy_sees_a_claim_reading_the_transcript(self):
@@ -1095,6 +1094,25 @@ class PhraseLists(StopCase):
         self.assertEqual(self.outcome("Zrobione."), "flag")
         pyc = [path for path, folders, _ in os.walk(self.config) if "__pycache__" in folders and "rigger-core" in path]
         self.assertEqual(pyc, [])   # a Stop writes no bytecode into the installed core
+
+    def test_the_personal_config_removes_or_replaces_a_company_list(self):
+        self.install_core()
+        self.company({"claim": ["zrobione"]})
+        self.assertEqual(self.outcome("Zrobione."), "flag")   # control: the company word alone claims
+        self.personal({"claim": None})
+        self.assertIsNone(self.outcome("Zrobione."))
+        self.assertEqual(self.outcome("All done."), "flag")   # the shipped list is not removed
+        self.personal({"claim": ["gotowe"]})
+        self.assertIsNone(self.outcome("Zrobione."))
+        self.assertEqual(self.outcome("Gotowe."), "flag")
+        self.personal({"negation": ["nie"]})   # another category: the company list stays
+        self.assertEqual(self.outcome("Zrobione."), "flag")
+
+    def test_the_row_ms_counts_the_config_discovery(self):
+        slow = ("import time\nloaded = stop_shadow.load_phrases\n"
+                "def late(event):\n    time.sleep(0.5)\n    return loaded(event)\n"
+                "stop_shadow.load_phrases = late\n")
+        self.assertGreaterEqual(self.row(CLOSING, slow)["ms"], 500)
 
     def test_a_config_that_cannot_be_read_leaves_the_shipped_lists(self):
         for what in ("a personal file that is not JSON", "a list that is a string", "a core that does not load"):

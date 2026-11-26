@@ -395,6 +395,52 @@ class Config(Case):
         self.assertEqual(code, 0, text)
         self.assertTrue(text.endswith("(min 4 GiB), max heavy agents 2: OK\n"), text)
 
+    def test_a_boolean_agent_count_and_an_equal_project_value(self):
+        self.level(3, {"max_heavy_agents": True})
+        code, text = self.linux(5)
+        lines = text.splitlines()
+        self.assertEqual((code, len(lines)), (0, 2), text)
+        self.assertIn("load.max_heavy_agents must be a whole number from 1 to 8; ignored", lines[0])
+        self.assertTrue(lines[1].endswith("(min 4 GiB), max heavy agents 2: OK"), text)
+        # a project value equal to the level below is not looser: taken, with no notice
+        self.level(3, {"min_free_gb": 6, "max_heavy_agents": 3})
+        self.level(4, {"min_free_gb": 6, "max_heavy_agents": 3})
+        self.assertEqual(self.linux(7), (0, "mem-check: available 7.0 GiB, commit headroom 100.0 GiB, headroom "
+                                            "7.00 GiB (min 6 GiB), max heavy agents 3: OK\n"))
+
+    def test_output_is_utf8_whatever_the_console(self):
+        """A non-ASCII project path in a notice comes out as UTF-8 bytes, not in the pipe's default encoding
+        (cp1252 on Windows)."""
+        self.project = os.path.join(self.tmp, "projekt-Za" + chr(0x17C) + chr(0xF3) + chr(0x142) + chr(0x107))
+        os.makedirs(self.project)
+        self.environ["CLAUDE_PROJECT_DIR"] = self.project
+        self.level(4, {"min_free_gb": 1})
+        project = os.path.join(self.project, ".claude", "rigger.json")
+        seam = json.dumps({"meminfo": MEMINFO.format(available=5 * GIB // KIB, limit=100 * GIB // KIB, committed=1)})
+        env = dict({key: value for key, value in os.environ.items() if not key.startswith(("CLAUDE_", "RIGGER_"))},
+                   **self.environ)
+        proc = subprocess.run([sys.executable, "-I", SCRIPT, "--system", "linux", "--reading-json", seam], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        self.assertEqual((proc.returncode, proc.stderr), (0, b""))
+        expected = ("mem-check: project config %s load.min_free_gb 1 is looser than 4; ignored\n" % project)
+        self.assertEqual(proc.stdout.replace(b"\r\n", b"\n").splitlines(True)[0], expected.encode("utf-8"))
+
+    def test_a_config_that_does_not_load_is_named_in_the_output(self):
+        for name, where in (("machine", lambda: os.path.join(self.config, "rigger", "config.json")),
+                            ("project", lambda: os.path.join(self.project, ".claude", "rigger.json"))):
+            with self.subTest(level=name):
+                shutil.rmtree(self.tmp)
+                self.setUp()
+                path = where()
+                os.makedirs(os.path.dirname(path))
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("{not json")
+                code, text = self.linux(5)
+                lines = text.splitlines()
+                self.assertEqual((code, len(lines)), (0, 2), text)
+                self.assertTrue(lines[0].startswith("rigger: config %s ignored: not valid JSON (" % path), lines[0])
+                self.assertTrue(lines[1].endswith("(min 4 GiB), max heavy agents 2: OK"), text)
+
 
 class Json(Case):
     def test_json_output_carries_the_verdict_and_exit_code(self):

@@ -492,9 +492,9 @@ else
 fi
 
 required='rigger-core rigger-rules rigger-lessons'
-# Recommended on Windows (WARN when absent): the Windows rule and skills, and the shell-guard filler.
-recommended=
-[ "$os" != Windows ] || recommended='rigger-platform rigger-shellwise'
+# Recommended (WARN when absent): the shell-guard filler on every system, the Windows rule and skills on Windows.
+recommended=rigger-shellwise
+[ "$os" != Windows ] || recommended="rigger-platform $recommended"
 # Removed from the marketplace (D84): never installed or enabled by a FIX.
 removed=rigger-windows
 names="$required $recommended"
