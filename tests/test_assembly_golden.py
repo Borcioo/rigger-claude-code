@@ -28,8 +28,11 @@ import golden_baseline as gb  # noqa: E402
 
 WORK_PLUGINS = gb.ROOT / "plugins"
 MARKET = "rigger"
-WINDOWS_MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-windows",
+WINDOWS_MODULES = ("rigger-core", "rigger-rules", "rigger-lessons", "rigger-talk", "rigger-wp", "rigger-platform",
                    "rigger-panel", "rigger-review", "rigger-testing")
+# The baseline's `rigger-windows` is rigger-platform since phase 3b (D83); its rule and rows require os:windows, so a
+# host that is not Windows prints neither.
+OLD_WINDOWS_ROWS_SHOWN = os.name == "nt"
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
 SKIPPED_AGENTS = ("Explore", "Plan", "rigger-core:implementer", "rigger-core:mapper")
@@ -137,8 +140,9 @@ def _merged_table(scenario, roots, pieces) -> bool:
     others = []  # type: List[bytes]
     for module, key in (("rigger-windows", WINDOWS_TABLE), ("rigger-wp", WP_OLD)):
         where = _piece(pieces, module, key)
-        if where is not None:
-            others += split_table(pieces[module][where][1])[1]
+        if where is not None and (module != "rigger-windows" or OLD_WINDOWS_ROWS_SHOWN):
+            others += [row.replace(b"`rigger-windows:", b"`rigger-platform:")
+                       for row in split_table(pieces[module][where][1])[1]]
     if OLD_INTRO not in before:
         raise AssertionError("the frozen intro moved: %r" % before)
     merged = before.replace(OLD_INTRO, NEW_INTRO) + TABLE_HEADER + b"".join(core + others + slot_rows) + after
@@ -147,13 +151,15 @@ def _merged_table(scenario, roots, pieces) -> bool:
 
 
 def _review_row_joins(scenario, roots, pieces) -> bool:
-    """The review module's trigger row follows rigger-core's own rows in the merged table (phase 3a D56)."""
+    """The review module's trigger row follows rigger-core's own rows in the merged table (phase 3a D56), and the
+    platform module's rows (rigger-platform sorts before rigger-review)."""
     at = _piece(pieces, "rigger-core", SKILLS)
     if at is None or "rigger-review" not in scenario.modules():
         return False
     key, text = pieces["rigger-core"][at]
     before, rows, after = split_table(text)
-    core = [i for i, row in enumerate(rows) if b"`rigger-core:" in row and b"`superpowers:" not in row]
+    core = [i for i, row in enumerate(rows)
+            if (b"`rigger-core:" in row or b"`rigger-platform:" in row) and b"`superpowers:" not in row]
     if not core:
         raise AssertionError("the merged table holds no rigger-core row: %r" % text[:300])
     rows.insert(core[-1] + 1, REVIEW_ROW)
@@ -181,6 +187,20 @@ def _windows_table_goes(scenario, roots, pieces) -> bool:
     if not pieces["rigger-windows"]:
         del pieces["rigger-windows"]
         roots.discard("Plugin root: " + gb.root_text(FIXTURE.tree(scenario) / "rigger-windows"))
+    return True
+
+
+def _windows_becomes_platform(scenario, roots, pieces) -> bool:
+    """D83: the Windows rules module is rigger-platform, and its rules file lost the root-name preamble; its rule
+    requires os:windows, so off Windows nothing of it prints (no root line either)."""
+    old = pieces.pop("rigger-windows", None)
+    if old is None:
+        return False
+    tree = FIXTURE.tree(scenario)
+    roots.discard("Plugin root: " + gb.root_text(tree / "rigger-windows"))
+    if OLD_WINDOWS_ROWS_SHOWN:
+        roots.add("Plugin root: " + gb.root_text(tree / "rigger-platform"))
+        pieces["rigger-platform"] = [(key, text) for key, text in old if key != gb.PREAMBLE]
     return True
 
 
@@ -270,6 +290,7 @@ ALLOWED = [
     ("the testing slot names the testing module", _testing_cell),
     ("the rigger-windows table section goes", _windows_table_goes),
     ("the rigger-wp section keeps its sentence under a new heading", _wp_sentence),
+    ("rigger-windows' rules module is rigger-platform, Windows only, without its preamble", _windows_becomes_platform),
     ("rigger-core gains ## Slots for the main session", _slots_section),
     ("subagents get rigger-core's root line", _core_root_for_subagents),
     ("## Plans: main session names the table, not the slots", _plans_wording),
@@ -293,7 +314,7 @@ class Scenario:
     event: str = "SessionStart"
     source: Optional[str] = "startup"
     agent: Optional[str] = None
-    layout: str = "windows"  # or "macos": without rigger-windows
+    layout: str = "windows"  # or "macos": without rigger-platform
     eol: str = "lf"
     rules_d: str = ""  # "", "hostile", "main_budget" or "override"
     drop: str = ""
@@ -307,10 +328,12 @@ class Scenario:
         return self.event == "SubagentStart"
 
     def modules(self) -> List[str]:
-        return [m for m in WINDOWS_MODULES if not (self.layout == "macos" and m == "rigger-windows")]
+        return [m for m in WINDOWS_MODULES if not (self.layout == "macos" and m == "rigger-platform")]
 
     def plugins_with_rules(self) -> List[str]:
-        return [m for m in gb.PLUGINS_WITH_RULES if m in self.modules()]
+        # The frozen baseline calls rigger-platform rigger-windows.
+        return [m for m in gb.PLUGINS_WITH_RULES
+                if ("rigger-platform" if m == "rigger-windows" else m) in self.modules()]
 
     def baseline_key(self) -> tuple:
         return (self.event, self.source, self.agent, self.layout, self.eol, self.rules_d, self.drop, self.talk)
@@ -736,10 +759,13 @@ class GoldenTest(unittest.TestCase):
         frozen["rigger-rules"] = [line.replace(b"`rigger-core:testing`", b"`rigger-testing:testing`")
                                   .replace(UI_ROW_OLD, UI_ROW_NEW) for line in frozen["rigger-rules"]]
         self.assertEqual([len(frozen[m]) for m in ("rigger-rules", "rigger-windows", "rigger-wp")], [8, 3, 2])
-        every = frozen["rigger-rules"] + frozen["rigger-windows"] + frozen["rigger-wp"] + [REVIEW_ROW]
+        frozen["rigger-windows"] = [row.replace(b"`rigger-windows:", b"`rigger-platform:")
+                                    for row in frozen["rigger-windows"]]
+        shown = frozen["rigger-windows"] if OLD_WINDOWS_ROWS_SHOWN else []
+        every = frozen["rigger-rules"] + shown + frozen["rigger-wp"] + [REVIEW_ROW]
         core = [row for row in frozen["rigger-rules"] if b"`superpowers:" not in row]
         self.assertEqual(len(core), 5)
-        ordered = (core + [REVIEW_ROW] + frozen["rigger-windows"] + frozen["rigger-wp"]
+        ordered = (core + shown + [REVIEW_ROW] + frozen["rigger-wp"]
                    + [row for row in frozen["rigger-rules"] if b"`superpowers:" in row])
         for scenario in (SCENARIOS[0], next(s for s in SCENARIOS if s.agent == "general-purpose")):
             with self.subTest(scenario.id):

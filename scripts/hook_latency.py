@@ -695,7 +695,7 @@ CASES = {
     ("rigger-testing", "core_check.sh"): case_core_check,
     ("rigger-testing", "stop_shadow.py"): case_stop_shadow,
     ("rigger-testing", "weak_test_guard.py"): case_weak_test_guard,
-    ("rigger-windows", "core_check.sh"): case_core_check,
+    ("rigger-platform", "core_check.sh"): case_core_check,
     ("rigger-wp", "core_check.sh"): case_core_check,
 }  # type: Dict[Tuple[str, str], Builder]
 

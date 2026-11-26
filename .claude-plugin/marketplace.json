@@ -43,7 +43,12 @@
     {
       "name": "rigger-windows",
       "source": "./plugins/rigger-windows",
-      "description": "Native Windows only: shell guards, red-run and drift tools, and Windows, PHP (Herd) and Node skills"
+      "description": "Native Windows only: the safe-edit red-run tool and the mem-check memory-headroom gate"
+    },
+    {
+      "name": "rigger-platform",
+      "source": "./plugins/rigger-platform",
+      "description": "The Windows shell rule and the Windows, PHP (Herd) and Node skills; on Windows only, the rule and the skill triggers apply"
     },
     {
       "name": "rigger-shellwise",

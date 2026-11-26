@@ -20,7 +20,7 @@ script calls the launcher by full path, e.g. `"$HOME/.config/herd/bin/php83.bat"
 | `phpstan` | project-local: `vendor\bin\phpstan` from the project root |
 
 phpcs: always `--cache=<scratch root>\phpcs-cache-<project>` (`<scratch root>` is defined in
-`rigger-windows:windows-dev-env`), a folder outside the repo that keeps the working tree clean; a
+`rigger-platform:windows-dev-env`), a folder outside the repo that keeps the working tree clean; a
 project may instead set `<arg name="cache" value=".phpcs-cache"/>` and gitignore it. Timings and tool choice, if installed: `rigger-core:stack-tooling`.
 
 ## Picking a PHP version
@@ -110,7 +110,8 @@ never paste that output into a reply, PR, log or file.
 ## Herd docs (offline)
 
 The Herd doc pages are not shipped with this plugin (third-party docs). If
-`${CLAUDE_CONFIG_DIR:-~/.claude}/rigger-windows/herd-docs/` or
+`${CLAUDE_CONFIG_DIR:-~/.claude}/rigger-platform/herd-docs/` (when that is absent, for one release,
+`${CLAUDE_CONFIG_DIR:-~/.claude}/rigger-windows/herd-docs/`) or
 `${CLAUDE_SKILL_DIR}/references/herd-docs/` exists (a local copy of the 60 Windows doc pages, with an
 `INDEX.md` that lists path and "use when" per page): for any Herd question this body does not
 answer, `rg -n "<term>" <that folder>`, then read only the page needed.

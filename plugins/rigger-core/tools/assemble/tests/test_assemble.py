@@ -657,7 +657,7 @@ class SnapshotTests(Base):
 
 
 class FullLayoutTests(unittest.TestCase):
-    """All 10 repository modules plus a full rules.d."""
+    """All 11 repository modules plus a full rules.d."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -672,7 +672,7 @@ class FullLayoutTests(unittest.TestCase):
         shutil.rmtree(str(self.tmp), ignore_errors=True)
 
     def test_full_repo_layout_fits_with_full_rules_d(self):
-        self.assertEqual(len(self.layout.dirs), 9)
+        self.assertEqual(len(self.layout.dirs), 10)
         found = self.layout.assemble()
         self.assertNotIn(D75_LINE, found.notices)
         self.assertEqual(found.notices, [])
@@ -1434,7 +1434,7 @@ class CheckTests(unittest.TestCase):
         code, out, err = self.layout.cli("--check", CLAUDE_PLUGIN_ROOT=str(REPO_CORE), RIGGER_MODULE_DIRS="")
         lines = out.decode("utf-8").splitlines()
         self.assertEqual(code, 0, out + err)
-        self.assertRegex(lines[-1], r"^# check: modules 10, rules files (1[89]|[2-9]\d), findings 0$")
+        self.assertRegex(lines[-1], r"^# check: modules 11, rules files (1[89]|[2-9]\d), findings 0$")
         self.assertIn("# external: superpowers", lines)
 
     def test_check_without_modules_in_a_cache_layout_says_it_saw_one_module(self):

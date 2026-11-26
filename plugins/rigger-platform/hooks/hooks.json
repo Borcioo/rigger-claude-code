@@ -4,7 +4,7 @@
       {
         "matcher": "startup|clear|compact",
         "hooks": [
-          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\" rigger-windows", "timeout": 10 }
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/core_check.sh\" rigger-platform", "timeout": 10 }
         ]
       }
     ]
