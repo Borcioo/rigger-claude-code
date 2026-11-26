@@ -25,6 +25,7 @@ import rule_checker as rc  # noqa: E402
 WINDOWS = os.name == "nt"
 LAUNCH = (lambda path: [sys.executable, "-I", path]) if WINDOWS else None
 CONFIG = os.path.join(str(PLUGIN), "shellwise.toml")
+ENV_KEYS = ("CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE")
 
 # The 54 rule ids of shellwise v0.1.1 (docs/superpowers/spikes/phase-3b/shellwise-v0.1.1.md, RULES).
 PINNED = """
@@ -110,24 +111,32 @@ with open(sys.argv[0] + "." + shell + ".reply", "rb") as fh:
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="rule-checker-"))
-        self.data = self.tmp / "data with space"
+        self.root = self.tmp / "data root with space"  # stands in for <config dir>/plugins/data
+        self.data = self.root / "rigger-shellwise-rigger"
         self.binary = self.data / "shellwise" / "v0.1.1" / "t" / ("shellwise.exe" if WINDOWS else "shellwise")
         self.binary.parent.mkdir(parents=True)
         self.binary.write_bytes((STUB_PY if WINDOWS else STUB_SH).encode("utf-8"))
         self.binary.chmod(self.binary.stat().st_mode | stat.S_IXUSR)
         self.write_current(str(self.binary) + "\n")
-        self.saved_env = os.environ.get("CLAUDE_PLUGIN_DATA")
-        os.environ.pop("CLAUDE_PLUGIN_DATA", None)
+        # a fake config dir and home: the real ones are never read
+        self.saved_env = {key: os.environ.get(key) for key in ENV_KEYS}
+        for key in ENV_KEYS:
+            os.environ.pop(key, None)
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.tmp / "config")
+        os.environ["HOME"] = os.environ["USERPROFILE"] = str(self.tmp / "home")
 
     def tearDown(self):
-        if self.saved_env is None:
-            os.environ.pop("CLAUDE_PLUGIN_DATA", None)
-        else:
-            os.environ["CLAUDE_PLUGIN_DATA"] = self.saved_env
+        for key, value in self.saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         shutil.rmtree(str(self.tmp), ignore_errors=True)
 
-    def write_current(self, text):
-        (self.data / "shellwise" / "current").write_bytes(text.encode("utf-8"))
+    def write_current(self, text, data=None):
+        path = (data or self.data) / "shellwise" / "current"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode("utf-8"))
 
     def reply(self, shell, text):
         Path(str(self.binary) + "." + shell + ".reply").write_bytes((text + "\n").encode("utf-8"))
@@ -266,6 +275,71 @@ class NoBinaryTests(Base):
         self.write_current(str(self.binary) + "\r\n")
         self.reply("gitbash", CD_SLASH_D)
         self.assertIsNone(self.check("bash-cd-slash-d", ["git-bash"]))
+
+
+class DataFolderTests(Base):
+    """The checker finds rigger-shellwise's data folder itself: the lint runs in another plugin's process."""
+
+    def resolve(self):
+        if self.binary.parent.is_dir():
+            self.reply("gitbash", CD_SLASH_D)
+        try:
+            return self.check("bash-cd-slash-d", ["git-bash"], data_dir=None)
+        except Exception as exc:  # no folder, or several, is "no checker", never a crash of the lint
+            return exc
+
+    def sibling(self, name, current=True):
+        """Another data folder under the data root; with `current`, naming a file that is not there."""
+        folder = self.root / name
+        folder.mkdir()
+        if current:
+            self.write_current(str(self.tmp / "gone" / "shellwise") + "\n", folder)
+        return folder
+
+    def test_own_data_folder_is_used(self):
+        self.sibling("rigger-shellwise-inline")  # a second candidate the scan would refuse
+        os.environ["CLAUDE_PLUGIN_DATA"] = str(self.data)
+        self.assertIsNone(self.resolve())
+
+    def test_one_shellwise_folder_beside_another_plugins_data(self):
+        os.environ["CLAUDE_PLUGIN_DATA"] = str(self.sibling("rigger-lessons-rigger", current=False))
+        self.assertIsNone(self.resolve())
+
+    def test_inline_name_is_found(self):
+        inline = self.root / "rigger-shellwise-inline"
+        self.data.rename(inline)
+        self.write_current(str(inline / self.binary.relative_to(self.data)) + "\n", inline)
+        self.binary = inline / self.binary.relative_to(self.data)
+        os.environ["CLAUDE_PLUGIN_DATA"] = str(self.sibling("rigger-lessons-inline", current=False))
+        self.assertIsNone(self.resolve())
+
+    def test_config_dir_then_home_hold_the_data_root(self):
+        for name, base in (("CLAUDE_CONFIG_DIR", self.tmp / "config"), ("home", self.tmp / "home" / ".claude")):
+            with self.subTest(name):
+                if name == "home":
+                    os.environ.pop("CLAUDE_CONFIG_DIR")
+                (base / "plugins").mkdir(parents=True)
+                shutil.move(str(self.root), str(base / "plugins" / "data"))
+                self.root, self.data = base / "plugins" / "data", base / "plugins" / "data" / self.data.name
+                self.binary = self.data / "shellwise" / "v0.1.1" / "t" / self.binary.name
+                self.write_current(str(self.binary) + "\n")
+                self.assertIsNone(self.resolve())
+
+    def test_none_or_two_folders_are_no_checker(self):
+        os.environ["CLAUDE_PLUGIN_DATA"] = str(self.sibling("rigger-lessons-rigger", current=False))
+        self.sibling("rigger-shellwise-x", current=False)  # no shellwise/current: not a candidate
+        self.sibling("rigger-shellwise-inline")
+        two = self.resolve()
+        shutil.rmtree(str(self.root / "rigger-shellwise-inline"))
+        shutil.rmtree(str(self.data))
+        none = self.resolve()
+        for problem, count in ((two, 2), (none, 0)):
+            with self.subTest(count=count):
+                self.assertIsInstance(problem, str)
+                self.assertEqual(problem, "guard live:bash-cd-slash-d: no checker (no shellwise binary: %d "
+                                          "rigger-shellwise-* folders with shellwise/current in %s)"
+                                 % (count, self.root))
+        self.assertEqual(self.calls(), [])
 
 
 if __name__ == "__main__":

@@ -2,10 +2,17 @@
 
 A lessons case whose guard is `live:<rule id>` passes only when the pinned shellwise binary denies the
 case's `probe` with that rule (a finding of that rule at break or danger), in a shell the case's `tools`
-name. The binary is the one named on the line of `<CLAUDE_PLUGIN_DATA>/shellwise/current`, as for the
-hook launcher; without it every guard sent here is a problem that says `no checker`.
+name. The lesson lands in this machine's rules, so the check answers for this host's shell: `bash` is
+Git Bash on Windows and plain bash elsewhere.
+
+The binary is the one named on the line of `<data folder>/shellwise/current`, as for the hook launcher.
+The data folder is $CLAUDE_PLUGIN_DATA when its name starts with `rigger-shellwise-` (`<plugin>-<marketplace>`
+or `<plugin>-inline`); otherwise the one `rigger-shellwise-*` folder holding `shellwise/current` in the data
+root (the parent of $CLAUDE_PLUGIN_DATA, else `<CLAUDE_CONFIG_DIR or ~/.claude>/plugins/data`). No such
+folder, or more than one: every guard sent here is a problem that says `no checker`.
 """
 
+import glob
 import json
 import os
 import subprocess
@@ -37,16 +44,32 @@ DENY_LEVELS = ("break", "danger")
 # `tools` entries that name a shell. The Bash tool is Git Bash on Windows (as the hook analyses it).
 TOOL_NAMES = ("powershell", "bash", "git-bash")
 CHECK_BOUND = 30.0
+DATA_PREFIX = "rigger-shellwise-"
 
 
 def shell_for(tool, windows):
     return {"powershell": "pwsh", "git-bash": "gitbash", "bash": "gitbash" if windows else "bash"}[tool]
 
 
+def find_data_dir():
+    """(rigger-shellwise's data folder, None), or (None, reason)."""
+    own = os.environ.get("CLAUDE_PLUGIN_DATA")
+    if own and os.path.basename(os.path.normpath(own)).startswith(DATA_PREFIX):
+        return own, None
+    if own:
+        root = os.path.dirname(os.path.normpath(own))
+    else:
+        config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+        root = os.path.join(config, "plugins", "data")
+    hits = [path for path in sorted(glob.glob(os.path.join(glob.escape(root), DATA_PREFIX + "*", "shellwise", "current")))
+            if os.path.isfile(path)]
+    if len(hits) == 1:
+        return os.path.dirname(os.path.dirname(hits[0])), None
+    return None, "%d %s* folders with shellwise/current in %s" % (len(hits), DATA_PREFIX, root)
+
+
 def find_binary(data_dir):
     """(path, None) for the binary `current` names, or (None, reason)."""
-    if not data_dir:
-        return None, "CLAUDE_PLUGIN_DATA is not set"
     current = os.path.join(data_dir, "shellwise", "current")
     try:
         with open(current, encoding="utf-8") as fh:
@@ -101,7 +124,8 @@ def rule_guard_problem(rule, meta, *, data_dir=None, launch=None, windows=None):
     shells = list(dict.fromkeys(shell_for(t, windows) for t in tools if t in TOOL_NAMES))
     if not shells:
         return f"guard live:{rule}: tools names no shell ({', '.join(TOOL_NAMES)}) to run the probe in"
-    binary, reason = find_binary(data_dir if data_dir is not None else os.environ.get("CLAUDE_PLUGIN_DATA"))
+    folder, reason = (data_dir, None) if data_dir is not None else find_data_dir()
+    binary, reason = find_binary(folder) if folder else (None, reason)
     if binary is None:
         return f"guard live:{rule}: no checker (no shellwise binary: {reason})"
     target = ALIASES.get(rule, rule)

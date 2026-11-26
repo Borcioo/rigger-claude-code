@@ -95,7 +95,8 @@ python "${CLAUDE_PLUGIN_ROOT}/tools/lessons_lint.py" --archive <archive dir>
 Test guards (`live:<file>::<test>`) resolve against the archive dir's parent; add one `--repo <dir>`
 per repo the tests live in. A `live:<rule id>` guard is confirmed by a rule checker: the checker
 that claims the rule id (its `RULES`), whatever the case's tools say, or any loaded checker when the
-case's tools name a shell. A shell-guard filler names its checker in its `rigger-module.json`, as
+case's tools name a shell. The lesson lands in this machine's rules, so the check answers for this host's
+shell (`bash` is Git Bash on Windows). A shell-guard filler names its checker in its `rigger-module.json`, as
 `provides.shell-guard.rule_checker`. To find it, Read
 `plugins/installed_plugins.json` in the config dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`, written out as a path) and,
 for each plugin key, take the first `installPath` whose `rigger-module.json` has that field and holds the file it names; add
