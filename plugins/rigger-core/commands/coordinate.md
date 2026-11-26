@@ -41,8 +41,10 @@ one full gate runs on the machine at a time.
    other is a lane of one, and several small light parts may share a lane. A stage on another model
    gets its own session (a session's model is fixed when it starts), and a lane never reviews its own
    work: reviews run in a review session, fix rounds in the lane's session. List every stage up front
-   with its lane, model and whether it is heavy (runs the full suite or gate, a build, WSL, Docker or
-   e2e) or light (writes files and runs the tests they reach): running this command is the user's ask
+   with its lane, model and whether it is heavy (starts a heavy job: WSL, Docker, wp-env or e2e, the
+   list the 2-at-a-time limit below counts) or light (writes files and runs tests, the full gate a
+   side session runs before it reports included, which starts only while `mem-check` allows, as
+   every build or test does): running this command is the user's ask
    for each; a part that waits names the exact input it waits for. A lane's next part starts only
    after the previous part is merged: add it with `--waits-on <previous part>`, and `coord_state`
    refuses an earlier `move <part> started`.
