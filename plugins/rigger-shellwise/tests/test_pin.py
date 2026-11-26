@@ -19,6 +19,10 @@ TABLE = {
         "shellwise-v0.2.0-x86_64-unknown-linux-musl.tar.gz",
         "d76cc6d842285a247b6a8256ea8c03ef5fdfc7565f7ad9a4714c304e58b1e49c",
     ),
+    "aarch64-unknown-linux-musl": (
+        "shellwise-v0.2.0-aarch64-unknown-linux-musl.tar.gz",
+        "c9b5cfbb84103c71209257a1e7efc42a28fc4b63850e05e714187be0185b2b07",
+    ),
     "aarch64-apple-darwin": (
         "shellwise-v0.2.0-aarch64-apple-darwin.tar.gz",
         "5e6f5ee8a397239de38ce251b87e16f7f5b81687f8386c7fa1bfd95dcdf08da6",
@@ -41,19 +45,19 @@ class PinTests(unittest.TestCase):
         self.assertEqual(data["version"], VERSION)
         self.assertEqual(sorted(data), ["assets", "format", "version"])
 
-    def test_exactly_the_four_targets(self):
+    def test_exactly_the_five_targets(self):
         self.assertEqual(sorted(load_pin()["assets"]), sorted(TABLE))
 
     def test_each_target_has_its_asset_name_and_hash(self):
         assets = load_pin()["assets"]
-        self.assertEqual(len(assets), 4)
+        self.assertEqual(len(assets), 5)
         for target, (name, sha) in TABLE.items():
             with self.subTest(target=target):
                 self.assertEqual(assets[target], {"name": name, "sha256": sha})
 
     def test_hashes_are_64_lower_case_hex(self):
         assets = load_pin()["assets"]
-        self.assertEqual(len(assets), 4)
+        self.assertEqual(len(assets), 5)
         for target, asset in assets.items():
             with self.subTest(target=target):
                 self.assertRegex(asset["sha256"], r"\A[0-9a-f]{64}\Z")

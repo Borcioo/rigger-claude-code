@@ -47,6 +47,7 @@ FETCH_TIMEOUT = 60
 TARGETS = {
     ("win32", "AMD64"): "x86_64-pc-windows-msvc",
     ("linux", "x86_64"): "x86_64-unknown-linux-musl",   # static: no glibc version needed
+    ("linux", "aarch64"): "aarch64-unknown-linux-musl",
     ("darwin", "arm64"): "aarch64-apple-darwin",
     ("darwin", "x86_64"): "x86_64-apple-darwin",
 }

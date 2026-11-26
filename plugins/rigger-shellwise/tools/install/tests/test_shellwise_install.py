@@ -247,7 +247,7 @@ class TargetTests(Base):
     def test_target_table(self):
         rows = [("win32", "AMD64", "x86_64-pc-windows-msvc"), ("linux", "x86_64", "x86_64-unknown-linux-musl"),
                 ("darwin", "arm64", "aarch64-apple-darwin"), ("darwin", "x86_64", "x86_64-apple-darwin"),
-                ("linux", "aarch64", None), ("win32", "ARM64", None)]
+                ("linux", "aarch64", "aarch64-unknown-linux-musl"), ("linux", "riscv64", None), ("win32", "ARM64", None)]
         for plat, machine, target in rows:
             with self.subTest(plat=plat, machine=machine):
                 self.assertEqual(si.host_target(plat, machine), target)

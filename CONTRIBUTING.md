@@ -128,10 +128,11 @@ on a branch, with a network connection:
 
 1. **Download all assets** of the release (the archives, their `.sha256` files and `SHA256SUMS`) into a
    new empty folder, from `https://github.com/Borcioo/shellwise/releases/download/v<version>/<asset>`
-   (the installer's `DEFAULT_BASE` has the same form). The pin takes four archives:
+   (the installer's `DEFAULT_BASE` has the same form). The pin takes five archives:
    `shellwise-v<version>-<target>.zip` for `x86_64-pc-windows-msvc` and
-   `shellwise-v<version>-<target>.tar.gz` for `x86_64-unknown-linux-musl` (the static build: the
-   `-gnu` one needs a recent glibc), `aarch64-apple-darwin` and `x86_64-apple-darwin`.
+   `shellwise-v<version>-<target>.tar.gz` for `x86_64-unknown-linux-musl` and
+   `aarch64-unknown-linux-musl` (the static builds: the `-gnu` one needs a recent glibc),
+   `aarch64-apple-darwin` and `x86_64-apple-darwin`.
 2. **The hash check.** Compute each archive's SHA-256 yourself and compare it with three sources: its
    `.sha256` file, its line in `SHA256SUMS` and the `digest` of
    `gh release view v<version> --repo Borcioo/shellwise --json assets`. All four values must agree for
@@ -149,7 +150,7 @@ on a branch, with a network connection:
    release's `examples/integration-config.toml` with `plugins/rigger-shellwise/shellwise.toml`: keep
    `gate_commands = ["safe-edit*", "safe_edit*"]`, and probe that no `config-*` finding appears with the
    file.
-5. **Edit.** `pin.json`: `version`, the four asset names and the four `sha256` values. Then the files
+5. **Edit.** `pin.json`: `version`, the five asset names and the five `sha256` values. Then the files
    that repeat them: `VERSION` and `TABLE` in `plugins/rigger-shellwise/tests/test_pin.py`, `RULES` in
    `rule_checker.py` with its copy and the captured `check --json` replies in
    `tools/rule-checker/tests/test_rule_checker.py`, and the shellwise version named in the comment of
