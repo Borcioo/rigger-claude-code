@@ -1170,15 +1170,15 @@ its analysis cannot finish it blocks with `danger`, so it fails closed.
 | commit shadow rule inside `shell_guard.py`, `stop_shadow.py`, `turn_evidence.py`, `.claude/gates.json` format (`INSTALL.md` "Shadow gates") | **rigger-testing** `tools/test-evidence/` | These ask whether a check ran after the last edit, a testing question, not a command-shape one. The commit rule is extracted from `shell_guard.py` into its own handler on `Bash(*commit*)` and `PowerShell(*commit*)`. `tests/test_repo.py` handler counts change. |
 | `tools/gate-lab/` (replay and report of the shadow gates) | **rigger-testing** `tools/gate-lab/` | It measures the gates above. The `CLAUDE.md:21` pitfall path follows. |
 | `tools/safe-edit/safe-edit.ps1` (red run in place) | **rigger-testing** `tools/safe-edit/` | pwsh runs on all 3 OSes. Its references `tests.md:13`, `defects.md:37` and `testing/SKILL.md:85` become `{{tool:…}}` with `requires: plugin:rigger-testing`. Porting it to Python is the builder's call. |
-| `tools/drift-lint/` (dangling skill, agent, path references) | **rigger-core** `tools/drift-lint/` | It becomes a reader of manifests too, so a trigger `load` naming a missing skill is a drift finding. `CONTRIBUTING.md:37` path follows. |
+| `tools/drift-lint/` (dangling skill, agent, path references) | **rigger-core** `tools/drift-lint/` | It becomes a reader of manifests too, so a trigger `load` naming a missing skill is a drift finding. `CONTRIBUTING.md:42` path follows. |
 | `tools/mem-check/` (Windows commit-charge headroom) | **rigger-platform** | `run_tests.py:118` path follows. |
 | skills `windows-dev-env`, `node-versions`, `php-herd-tooling` | **rigger-platform** | Trigger rows carry `requires` on the OS (`os:windows` for `windows-dev-env`). `php-herd-tooling` and `node-versions` serve macOS too. The local docs folder `<config dir>/rigger-windows/herd-docs/` (`php-herd-tooling/SKILL.md:113`) becomes `<config dir>/rigger-platform/herd-docs/`, and the skill reads the old path for one release. |
-| `CONTRIBUTING.md:109-113` (this repo's `.claude/gates.json` opt-in, pointing at rigger-windows' INSTALL) | points at rigger-testing's `tools/test-evidence/` docs | The `gates.json` content does not change. |
+| `CONTRIBUTING.md:114-118` (this repo's `.claude/gates.json` opt-in, pointing at rigger-windows' INSTALL) | points at rigger-testing's `tools/test-evidence/` docs | The `gates.json` content does not change. |
 | `rules/windows.md` (PowerShell is the default shell, scripts over 10 lines via a file) | **rigger-platform**, `requires: os:windows` | The `Plugin root:` preamble goes, because `{{tool:}}` replaces root-relative names. |
 | `rules/windows-skills.md` | **rigger-platform** manifest `triggers` | The table merged into the one table in phase 2; the file no longer exists, its rows are triggers in `rigger-module.json`. |
 | 5 evals (`bash-in-powershell`, `commit-message-file-path`, `rmtree-readonly-objects`, `utf8-env-hides-bug`, `worktree-with-junctions`) | **rigger-platform** `evals/` | They test the platform skill and rules, not the guard. |
-| `hooks.json` `Stop` → `stop_shadow.py` | **rigger-testing** | async, as today (`tests/test_repo.py:376-385`). |
-| `bin/py.sh` copy | each new module gets the byte-identical copy | `tests/test_repo.py:197-202` |
+| `hooks.json` `Stop` → `stop_shadow.py` | **rigger-testing** | async, as today (`tests/test_repo.py:383-392`). |
+| `bin/py.sh` copy | each new module gets the byte-identical copy | `tests/test_repo.py:202-210` |
 
 Wording that says "with rigger-windows installed" changes to name the platform module or the
 testing module through placeholders or conditional wording:
