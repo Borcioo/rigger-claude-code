@@ -280,7 +280,10 @@ def main():
     if stop:
         reason, note = turn_end(event, state, guard)
         if reason:
-            sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
+            block = {"decision": "block", "reason": reason}
+            if note:
+                block["systemMessage"] = note
+            sys.stdout.write(json.dumps(block))
             return 0
     try:
         output = side_sessions(event, state, stop)
