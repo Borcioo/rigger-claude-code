@@ -66,8 +66,20 @@ def read_bytes(path):
 
 
 def write_bytes(path, data):
-    with open(path, "wb") as handle:
-        handle.write(data)
+    """Replace `path` whole or not at all: a kill leaves the old content, never a truncated file."""
+    temp = path + ".safe-edit-tmp"
+    try:
+        with open(temp, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.path.exists(path):
+            shutil.copymode(path, temp)
+        os.replace(temp, path)
+    except Exception:
+        if os.path.exists(temp):
+            os.remove(temp)
+        raise
 
 
 def platform_shell(which=shutil.which, windows=None):
