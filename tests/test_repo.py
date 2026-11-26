@@ -26,9 +26,8 @@ import run_tests  # noqa: E402
 import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
-PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows", "rigger-shellwise")
-# rigger-windows has no hooks since Task 25 moved its core check.
-PLUGINS_WITH_HOOKS = tuple(name for name in PLUGINS_WITH_PY_SH if name != "rigger-windows") + (
+PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-shellwise")
+PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + (
     "rigger-rules", "rigger-talk", "rigger-wp", "rigger-platform")
 # Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
 PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-platform", "rigger-wp", "rigger-lessons", "rigger-talk",
@@ -69,7 +68,6 @@ class ManifestTests(unittest.TestCase):
                 "rigger-rules",
                 "rigger-talk",
                 "rigger-wp",
-                "rigger-windows",
                 "rigger-platform",
                 "rigger-shellwise",
                 "rigger-panel",
@@ -109,14 +107,14 @@ class ManifestTests(unittest.TestCase):
             + sorted(ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
             + sorted(ROOT.glob("plugins/*/rigger-module.json"))
         )
-        self.assertEqual(len(manifests), 23)
+        self.assertEqual(len(manifests), 21)
         for path in manifests:
             with self.subTest(path=path.relative_to(ROOT).as_posix()):
                 self.assertFalse(find_key(load_json(path), "version"))
 
     def test_every_plugin_has_a_valid_module_manifest(self):
         roots = sorted(path.parent.parent for path in ROOT.glob("plugins/*/.claude-plugin/plugin.json"))
-        self.assertEqual(len(roots), 11)
+        self.assertEqual(len(roots), 10)
         for root in roots:
             with self.subTest(plugin=root.name):
                 module = manifest.load_manifest(root, "rigger", "installed")
@@ -131,7 +129,6 @@ class ManifestTests(unittest.TestCase):
             "rigger-review": ("reviewer", None, {"reviewer": reviewer}, ["reviewer"]),
             "rigger-testing": ("testing", None, {"testing": testing}, []),
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
-            "rigger-windows": (None, None, {}, []),
             "rigger-platform": (None, None, {}, []),
             "rigger-shellwise": ("shell-guard", "closed", {"shell-guard": {
                 "kind": "hook", "target": "rigger-shellwise",
@@ -149,31 +146,6 @@ class ManifestTests(unittest.TestCase):
                 got = (module.fills, module.failure_mode, module.provides, module.tests.get("contract"))
                 self.assertEqual(got, expected[root.name])
                 self.assertIn("fills", load_json(root / "rigger-module.json"))
-
-    def test_rigger_windows_manifest_names_only_its_files(self):
-        # Each task of PR C moves files out of rigger-windows: whatever its manifest and README
-        # still name must be in the plugin.
-        plugin = ROOT / "plugins" / "rigger-windows"
-        data = load_json(plugin / "rigger-module.json")
-        named = [("rules", item["file"]) for item in data["rules"]]
-        named += [("rule_checker", entry["rule_checker"]) for entry in data.get("provides", {}).values()
-                  if "rule_checker" in entry]
-        named += [("trigger", "skills/%s/SKILL.md" % skill.split(":", 1)[1])
-                  for trigger in data["triggers"] for skill in trigger["load"]]
-        self.assertFalse((plugin / "hooks").exists(), "Task 25 moved the only hook out")
-        readme = (plugin / "README.md").read_bytes().decode("utf-8")
-        named += [("README", path) for path in re.findall(r"`([\w.-]+(?:/[\w.*-]+)+/?)`", readme)]
-        # Task 25 moved its rules file, triggers and skills out: nothing is named any more.
-        self.assertEqual(named, [])
-        for source, path in named:
-            with self.subTest(source=source, path=path):
-                self.assertTrue((plugin / path).exists(), path)
-        for pattern in data["tests"]["paths"]:
-            with self.subTest(source="tests.paths", path=pattern):
-                self.assertTrue(list(plugin.glob(pattern.rstrip("/"))), pattern)
-        for slot in data["tests"].get("contract", []):
-            with self.subTest(source="tests.contract", path=slot):
-                self.assertTrue((plugin / "tests" / "contract" / slot).is_dir(), slot)
 
     def test_rules_lists_every_rules_file_once(self):
         checked = 0
@@ -1129,11 +1101,6 @@ class RunTestsPowerShellTests(unittest.TestCase):
                     code = run_tests.main(["--min-files", "1"], root=root)
                 self.assertEqual(code, expected_code, buffer.getvalue())
                 self.assertIn(expected, buffer.getvalue())
-
-    def test_real_ps1_file_is_discovered(self):
-        found = [path.relative_to(ROOT).as_posix() for path in run_tests.discover(ROOT)]
-        self.assertIn("plugins/rigger-windows/tools/safe-edit/tests/safe-edit.tests.ps1", found)
-        self.assertIn("plugins/rigger-windows/tools/mem-check/mem-check.tests.ps1", found)
 
 
 class RunTestsMainTests(unittest.TestCase):

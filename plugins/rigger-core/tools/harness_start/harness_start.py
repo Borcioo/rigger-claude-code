@@ -19,8 +19,11 @@ slots, as the session prints it, so a `{{skill:…}}` placeholder in its heading
 backticked name; a file that fails to render is compared raw. This check is silent when a file is
 missing or unreadable.
 
-Prints one line per duplicate, per overlapping heading and per settings or hooks file it cannot
-read, nothing when all is clean. Always exits 0.
+It also prints one line while a removed plugin (rigger-windows, D84) is still listed and enabled,
+from whichever marketplace, with the command that disables it.
+
+Prints one line per duplicate, per overlapping heading, per removed plugin and per settings or hooks
+file it cannot read, nothing when all is clean. Always exits 0.
 """
 
 import json
@@ -42,6 +45,8 @@ MATCH_ALL = ("", "*")
 CLAUDE_MD = "CLAUDE.md"
 HEADING_PREFIX = "## "
 BLANK = " \t\r"  # what rules_start.sh trims from a heading line
+# Removed plugins (D84): still enabled, each gets one line with the command that disables it.
+REMOVED_PLUGINS = ("rigger-windows",)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 ASSEMBLE_DIR = Path(__file__).resolve().parent.parent / "assemble"
 
@@ -177,9 +182,11 @@ def read_json(path, problems):
 
 
 def collect(root, problems):
-    """(handlers, [(plugin key, installPath)]) from the user settings and the enabled installed plugins."""
+    """(handlers, [(plugin key, installPath)], [plugin key]) from the user settings and the enabled installed
+    plugins; the last list holds every enabled key with a user-scope entry, its installPath readable or not."""
     found = []
     installs = []
+    listed = []
     enabled = {}
     for name in SETTINGS_FILES:
         path = root / name
@@ -198,6 +205,8 @@ def collect(root, problems):
         for entry in entries:
             if not isinstance(entry, dict) or entry.get("scope", "user") != "user":
                 continue
+            if key not in listed:
+                listed.append(key)
             install_path = entry.get("installPath")
             if not isinstance(install_path, str) or not install_path:
                 continue
@@ -205,7 +214,13 @@ def collect(root, problems):
             data = read_json(Path(install_path) / "hooks" / "hooks.json", problems)
             if isinstance(data, dict):
                 found.extend(handlers(data.get("hooks"), "plugin " + key))
-    return found, installs
+    return found, installs, listed
+
+
+def removed_warnings(listed):
+    """One line per enabled key of a removed plugin, its marketplace taken from the key."""
+    return ["%s%s is still enabled; disable it (claude plugin disable %s)" % (PREFIX, key.split("@")[0], key)
+            for key in listed if key.split("@")[0] in REMOVED_PLUGINS]
 
 
 def duplicate_warnings(found):
@@ -303,8 +318,8 @@ def overlap_warnings(root, installs):
 def build_output(environ):
     root = config_root(environ)
     problems = []
-    found, installs = collect(root, problems)
-    lines = problems + duplicate_warnings(found) + overlap_warnings(root, installs)
+    found, installs, listed = collect(root, problems)
+    lines = problems + removed_warnings(listed) + duplicate_warnings(found) + overlap_warnings(root, installs)
     return "".join(line + "\n" for line in lines)
 
 

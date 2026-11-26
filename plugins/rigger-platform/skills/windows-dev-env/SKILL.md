@@ -281,7 +281,7 @@ A move silently drops local-scope MCP servers and folder trust: before moving, r
 - Light agents (reviews, Python or pwsh unit tests, docs) have no count limit.
 - An agent that builds or tests starts only while (ceiling − committed) ≥ the minimum, min(30 GiB,
   25% of the ceiling), which mem-check prints. Before dispatching one, run
-  `pwsh -NoProfile -File "<the rigger-windows plugin folder>/tools/mem-check/mem-check.ps1"` and wait while it
+  `python "<the rigger-core plugin folder>/tools/mem-check/mem_check.py"` and wait while it
   exits 1 (re-check every 2 min); after 30 minutes report it as a blocker. Exit 2 = no reading,
   report it. The ceiling is the largest SystemCommitLimit among the Event 2004 entries, the current CommitLimit if there are
   none: the system-managed pagefile grows, so the current limit under-states it.

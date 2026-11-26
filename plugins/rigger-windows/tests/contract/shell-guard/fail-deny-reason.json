@@ -1,1 +1,0 @@
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "shell-guard: `git commit --no-verify` skips the repository's hooks. (False positive or intended? Add a trailing `# shell-guard: allow`.)"}}

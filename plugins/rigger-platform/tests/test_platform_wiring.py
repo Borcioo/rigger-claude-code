@@ -149,6 +149,19 @@ class SkillWordsTests(unittest.TestCase):
                 self.assertIn(named, flat(text))
                 self.assertTrue(path.is_file(), path)
 
+    def test_every_plugin_folder_path_in_the_skills_exists(self):
+        # `<the rigger-core plugin folder>/tools/...` in a skill names a file rigger-core ships (mem_check.py, D80);
+        # no other plugin folder is named.
+        found = []
+        for skill in SKILLS:
+            text = read_text(MODULE / "skills" / skill / "SKILL.md")
+            found += re.findall(r"<the (rigger-[a-z]+) plugin folder>/([^\s\"`]+)", text)
+        self.assertIn(("rigger-core", "tools/mem-check/mem_check.py"), found)
+        for plugin, path in found:
+            with self.subTest(plugin=plugin, path=path):
+                self.assertEqual(plugin, "rigger-core")
+                self.assertTrue((CORE / path).is_file(), path)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

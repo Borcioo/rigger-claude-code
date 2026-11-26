@@ -61,7 +61,7 @@ class RealTreeTests(unittest.TestCase):
         self.assertIn("tests/test_py_sh.py", selected)
 
     def test_every_other_copy_of_py_sh_runs_the_test_that_compares_them(self):
-        for plugin in ("core", "windows"):
+        for plugin in ("core", "shellwise"):
             with self.subTest(plugin):
                 selected, unmapped = self.picked(PY_SH % plugin)
                 self.assertEqual(unmapped, [])

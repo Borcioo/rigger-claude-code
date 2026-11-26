@@ -115,7 +115,6 @@ LOG_FOLDER = "harness-tests"
 SERIAL = (
     "plugins/rigger-core/tools/assemble/tests/test_stub_session.py",
     "plugins/rigger-rules/tests/test_reinject.py",
-    "plugins/rigger-windows/tools/mem-check/mem-check.tests.ps1",
     "tests/test_repo.py",
     "tests/test_sweep.py",
 )

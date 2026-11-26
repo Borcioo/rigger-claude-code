@@ -15,6 +15,7 @@ from doctor_sh_harness import (  # noqa: E402
     PY_SH,
     REQUIRED,
     SCRIPT,
+    WINDOWS_RECOMMENDED,
     entry,
 )
 
@@ -44,7 +45,7 @@ class DoctorShTests(DoctorShCase):
         self.assertEqual(
             result.order,
             ["os", "claude-version", "python", "marketplace"]
-            + ["plugin " + name for name in REQUIRED + ("rigger-windows",)]
+            + ["plugin " + name for name in REQUIRED + WINDOWS_RECOMMENDED]
             + ["superpowers", "autoCompactWindow", "powershell-tool", "worktree-root", "rules-assembly"],
         )
         self.assertEqual({row[0] for row in result.checks.values()}, {"OK"}, result.stdout)

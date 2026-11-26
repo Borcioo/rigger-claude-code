@@ -188,7 +188,7 @@ class HookRun(unittest.TestCase):
 class WiringTests(HookRun):
     def test_every_rules_file_of_a_module_is_in_its_manifest(self):
         dirs = module_dirs()
-        self.assertEqual(len(dirs), 11)
+        self.assertEqual(len(dirs), 10)
         files = 0
         for root in dirs:
             with self.subTest(module=root.name):
@@ -282,8 +282,7 @@ class SessionStartTests(HookRun):
                         # its rule requires os:windows: the root line comes with the rule, on Windows only
                         self.assertEqual(root_line(root) in joined, os.name == "nt")
                     # no rules, no root line
-                    elif root.name not in ("rigger-panel", "rigger-review", "rigger-shellwise", "rigger-testing",
-                                           "rigger-windows"):
+                    elif root.name not in ("rigger-panel", "rigger-review", "rigger-shellwise", "rigger-testing"):
                         self.assertIn(root_line(root), joined)
 
     def test_resume_prints_nothing(self):

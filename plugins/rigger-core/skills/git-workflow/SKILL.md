@@ -18,8 +18,8 @@ never force-push it.
   day or two. Lowercase with hyphens: `fix/empty-config-crash`. Agents use these prefixes too, not a
   tool default such as `claude/…`. A repo with its own convention keeps it.
 - A repo without `.gitattributes` (`* text=auto eol=lf`): propose it once, before its first commit
-  in the session (on Windows with rigger-windows installed, the template and renormalize step are in
-  `rigger-windows:windows-dev-env` "Line endings"); if the user declines, record that in the
+  in the session (on Windows with rigger-platform installed, the template and renormalize step are in
+  `rigger-platform:windows-dev-env` "Line endings"); if the user declines, record that in the
   project's CLAUDE.md and never propose it again.
 - Never commit environment-specific values (`.env`, local config with hosts or keys).
 - To bring new default-branch commits into a work branch: `git fetch && git merge origin/<default>`.
