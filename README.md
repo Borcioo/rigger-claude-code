@@ -21,7 +21,7 @@ and change it by forking.
 
 | Plugin | Install | Adds | Depends on |
 |---|---|---|---|
-| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps, testing), agents (mapper, implementer, worker, reviewer), context-guard and compact-guard hooks, token-audit, variant-run, drift-lint, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
+| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps), agents (mapper, implementer, worker), context-guard and compact-guard hooks, token-audit, variant-run, drift-lint, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
 | `rigger-rules` | default | the working rules, injected at session start and into subagents, plus every `*.md` file of your own `rules.d` folder | `rigger-core` |
 | `rigger-lessons` | default | lessons inbox count at session start, the capture rule, the `curate-lessons` skill, a lint for lessons, and opt-in background curation batches | `rigger-core` |
 | `rigger-talk` | opt-in | reply-format rules (language, length, report order) for the main session, configured through `userConfig` | `rigger-core` |
