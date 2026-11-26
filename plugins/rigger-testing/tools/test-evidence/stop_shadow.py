@@ -4,8 +4,10 @@ Runs as an async Stop hook, prints nothing, since output on Stop would continue 
 file is created with O_EXCL and holds one JSON line per gated repo. An empty one is a run cancelled or out of time:
 `claude -p` cancels async hooks at exit. The gate lab joins rows to closings by `sid8` and `key12`.
 """
+import importlib
 import json
 import os
+import pathlib
 import re
 import sys
 import threading
@@ -20,27 +22,118 @@ LEAD = 300
 LAST_PARAGRAPH = 400
 NEGATION_REACH = 24
 
-CLAIM_EN = (
-    r"done|completed?|finished|fixed|implemented|all (?:tests )?(?:pass(?:ed|ing)?|green)|tests? pass(?:ed|ing)?"
-    r"|works now|ready (?:to|for)|merged|shipped"
-)
-CLAIM = re.compile(r"\b(?:" + CLAIM_EN + r")\b", re.I)
-NEGATED = re.compile(r"\b(?:not|isn't|aren't|never|still not)\s+(?:\w+\s+)?$", re.I)
-DISCLOSED = re.compile(
-    r"\b(?:(?:not|never|didn't|did not|haven't|have not) (?:\w+ )?(?:run|tested|verified|checked)"
-    r"|untested|unverified|to be (?:checked|tested|verified))\b",
-    re.I,
-)
-STATUS = re.compile(
-    r"\b(?:still (?:running|working|pending|in progress)|in progress|in the background|waiting (?:for|on))(?!\w)",
-    re.I,
-)
+HERE = os.path.dirname(os.path.abspath(__file__))
+CATEGORIES = ("claim", "negation", "disclosure", "status")
 
 
-def claims_done(text):
+class PhrasesError(Exception):
+    """phrases.json is missing or is not a format 1 word list."""
+
+
+def _shipped_phrases():
+    """{category: [words]} of phrases.json."""
+    try:
+        with open(os.path.join(HERE, "phrases.json"), "rb") as fh:
+            data = json.loads(fh.read().decode("utf-8"))
+    except (OSError, ValueError):
+        raise PhrasesError("phrases.json unreadable")
+    if not (isinstance(data, dict) and type(data.get("format")) is int and data["format"] == 1
+            and all(isinstance(data.get(key), list) and all(isinstance(word, str) and word for word in data[key])
+                    for key in CATEGORIES)):
+        raise PhrasesError("phrases.json is not a format 1 word list")
+    return {key: list(data[key]) for key in CATEGORIES}
+
+
+def _core_assemble_dir(config_dir):
+    """rigger-core's tools/assemble folder from the first absolute installPath of the first `rigger-core@` key of
+    installed_plugins.json that holds config.py, else None. A plugin never reaches a sibling by relative path."""
+    try:
+        with open(os.path.join(config_dir, "plugins", "installed_plugins.json"), "rb") as fh:
+            plugins = json.loads(fh.read().decode("utf-8-sig")).get("plugins")
+        key = next(name for name in plugins if isinstance(name, str) and name.startswith("rigger-core@"))
+        for item in plugins[key]:
+            root = item.get("installPath")
+            if isinstance(root, str) and os.path.isabs(root) and (os.name != "nt" or os.path.splitdrive(root)[0]):
+                folder = os.path.join(root, "tools", "assemble")
+                if os.path.isfile(os.path.join(folder, "config.py")):
+                    return folder
+    except (OSError, ValueError, RecursionError, AttributeError, TypeError, StopIteration):
+        pass
+    return None
+
+
+def _config_words(config_dir, project_dir, environ):
+    """{category: [words]} that test_evidence.phrases adds in company modules (level 2) and the personal config
+    (level 3), as rigger-core's config module checks them; {} when rigger-core cannot be found or loaded, so the
+    shipped lists stand alone (this is a shadow: it must not fail)."""
+    folder = _core_assemble_dir(config_dir)
+    if folder is None:
+        return {}
+    names = ("config", "manifest", "discover")
+    saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+    sys.path.insert(0, folder)
+    wrote = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True   # a Stop writes nothing into rigger-core's folder
+    try:
+        config = importlib.import_module("config")
+        discover = importlib.import_module("discover")
+        core = os.path.dirname(os.path.dirname(folder))
+        found = discover.discover(pathlib.Path(config_dir), pathlib.Path(project_dir), environ, pathlib.Path(core))
+        personal, _ = config.load_level(pathlib.Path(config_dir, "rigger", "config.json"), 3)
+        blocks = [(2, module.config) for module in found.modules if module.layer == "company"
+                  and isinstance(module.config, dict)] + [(3, personal)]
+        words = {key: [] for key in CATEGORIES}
+        for level, data in blocks:
+            clean, _ = config.validate_level({"test_evidence": data.get("test_evidence")}, level, "")
+            phrases = (clean.get("test_evidence") or {}).get("phrases") or {}
+            for key in CATEGORIES:
+                words[key].extend(phrases.get(key) or [])
+        return words
+    except Exception:
+        return {}
+    finally:
+        sys.dont_write_bytecode = wrote
+        sys.path.remove(folder)
+        for name in names:
+            sys.modules.pop(name, None)
+        sys.modules.update(saved)
+
+
+def _alternatives(words, filler=False):
+    """A regex alternation of words, longest first. With filler a phrase may hold one more word before its last."""
+    unique = sorted({word.lower() for word in words}, key=lambda word: (-len(word), word))
+    if filler:
+        unique = [re.escape(head) + r"\ (?:\w+\ )?" + re.escape(last) if head else re.escape(last)
+                  for head, _, last in (word.rpartition(" ") for word in unique)]
+    else:
+        unique = [re.escape(word) for word in unique]
+    return "|".join(unique) or "(?!)"   # no word: nothing matches
+
+
+def load_phrases(event):
+    """The compiled word lists: phrases.json plus what config adds. Raises PhrasesError when phrases.json is bad."""
+    lists = _shipped_phrases()
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    cwd = event.get("cwd")
+    for key, words in _config_words(config_dir, cwd if isinstance(cwd, str) and os.path.isabs(cwd) else os.getcwd(),
+                                    os.environ).items():
+        lists[key] += words
+    return compile_phrases(lists)
+
+
+def compile_phrases(lists):
+    return {
+        "claim": re.compile(r"(?<!\w)(?:" + _alternatives(lists["claim"]) + r")(?!\w)", re.I),
+        "negated": re.compile(r"(?<!\w)(?:" + _alternatives(lists["negation"]) + r")\s+(?:\w+\s+)?$", re.I),
+        "disclosed": re.compile(r"(?<!\w)(?:" + _alternatives(lists["disclosure"], True) + r")(?!\w)", re.I),
+        "status": re.compile(r"(?<!\w)(?:" + _alternatives(lists["status"]) + r")(?!\w)", re.I),
+    }
+
+
+def claims_done(text, phrases):
     """The first claim word in text with no negation just before it, else None."""
-    for match in CLAIM.finditer(text):
-        if not NEGATED.search(text[max(0, match.start() - NEGATION_REACH) : match.start()]):
+    for match in phrases["claim"].finditer(text):
+        if not phrases["negated"].search(text[max(0, match.start() - NEGATION_REACH) : match.start()]):
             return match.group(0)
     return None
 
@@ -49,14 +142,14 @@ def last_paragraph(message):
     return re.split(r"\n\s*\n", message.strip())[-1][:LAST_PARAGRAPH]
 
 
-def closing_claim(message):
+def closing_claim(message, phrases):
     """The claim word of the closing's lead or last paragraph: a word elsewhere rarely speaks of this change."""
-    return claims_done(message.strip()[:LEAD]) or claims_done(last_paragraph(message))
+    return claims_done(message.strip()[:LEAD], phrases) or claims_done(last_paragraph(message), phrases)
 
 
-def disclosed(message):
+def disclosed(message, phrases):
     """True when the closing says the check is still open, or ends on what is still running."""
-    return bool(DISCLOSED.search(message) or STATUS.search(last_paragraph(message)))
+    return bool(phrases["disclosed"].search(message) or phrases["status"].search(last_paragraph(message)))
 
 
 def _repo_root(path, cache):
@@ -169,7 +262,7 @@ def _repo_line(row, repo, edits, streams, reader, deadline):
     return line
 
 
-def _turn_lines(row, event, message, reader, deadline):
+def _turn_lines(row, event, message, phrases, reader, deadline):
     """The row file's lines, None when no gated repo took part in the turn."""
     streams = reader.stream_paths(event.get("transcript_path"), event.get("agent_id"))
     if not streams:
@@ -180,7 +273,7 @@ def _turn_lines(row, event, message, reader, deadline):
         return None
     if event.get("background_tasks"):
         return [dict(row, verdict="deferred")]
-    if disclosed(message):
+    if disclosed(message, phrases):
         return [dict(row, verdict="disclosed")]
     row["msg_in_tail"] = _msg_in_tail(streams[0], message, reader)
     edits = reader.turn_edits(streams, start, deadline - time.monotonic() - ROW_SPARE)
@@ -211,10 +304,16 @@ def log_stop(event, deadline):
     if event.get("stop_hook_active"):
         return
     message = event.get("last_assistant_message")
-    claim = closing_claim(message)
     data = os.environ.get("CLAUDE_PLUGIN_DATA")
-    if claim is None or not data:
+    if not data:
         return
+    try:
+        phrases = load_phrases(event)
+        claim = closing_claim(message, phrases)
+        if claim is None:
+            return
+    except PhrasesError:   # no list to tell a claim by: the row says so, once per closing
+        phrases = claim = None
     started = time.monotonic()
     sys.pycache_prefix = os.path.join(data, "pycache")
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # the launcher's -I drops the script folder
@@ -231,7 +330,10 @@ def log_stop(event, deadline):
     row = dict.fromkeys(ROW_FIELDS)
     row.update(ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), sid8=session[:8], key12=key12, claim=claim)
     try:
-        lines = _turn_lines(row, event, message, reader, deadline)
+        if phrases is None:
+            lines = [dict(row, verdict="error", reason="phrases")]
+        else:
+            lines = _turn_lines(row, event, message, phrases, reader, deadline)
     except OSError:
         lines = [dict(row, verdict="unknown", reason="unreadable")]
     except Exception as exc:

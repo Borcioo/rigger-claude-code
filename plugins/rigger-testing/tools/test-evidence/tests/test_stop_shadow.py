@@ -2,6 +2,7 @@
 
 python -I -X utf8 test_stop_shadow.py
 """
+import ast
 import calendar
 import json
 import os
@@ -150,6 +151,8 @@ turn_evidence.turn_changes = broken
 class StopCase(unittest.TestCase):
     def setUp(self):
         self.base = tempfile.mkdtemp(prefix="stop-shadow-")
+        self.tool = TOOL_DIR
+        self.env_extra = {}
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
         self.data = os.path.join(self.base, "data")
         self.config = os.path.join(self.base, "config")
@@ -178,13 +181,14 @@ class StopCase(unittest.TestCase):
         The hook waits `wait` seconds: a test that is not about the budget gives it so many that a loaded machine
         cannot run it out, and one that is passes None for the real wait. `direct` starts the script as the launcher
         does, with the real wait."""
-        env = dict(os.environ)
-        env.pop("CLAUDE_PLUGIN_DATA", None)
+        env = {key: value for key, value in os.environ.items() if not key.upper().startswith(("CLAUDE_", "RIGGER_"))}
+        env["CLAUDE_CONFIG_DIR"] = self.config   # the hook reads its config from here, never the real one
+        env.update(self.env_extra)
         if data is not None:
             env["CLAUDE_PLUGIN_DATA"] = self.data if data == "default" else data
         report = os.path.join(self.base, "report.json")
         patch = "" if wait is None else "stop_shadow.STOP_WAIT = %r\n" % wait
-        tail = [SCRIPT] if direct else ["-c", DRIVER, TOOL_DIR, report, patch + stub]
+        tail = [os.path.join(self.tool, "stop_shadow.py")] if direct else ["-c", DRIVER, self.tool, report, patch + stub]
         try:
             proc = subprocess.run([sys.executable, "-I", "-X", "utf8", "-S"] + tail, env=env, cwd=self.base,
                                   input=json.dumps(event).encode("utf-8"), capture_output=True, timeout=KILL_AFTER)
@@ -518,7 +522,7 @@ class Verdicts(StopCase):
         self.session.edit("a.py")
         for closing in ("Fixed, but the tests were not run.", "Done. I haven't run it.", "Done, untested.",
                         "Done, but I did not run the tests.", "Fixed, to be checked in the browser.",
-                        "Done, I have not verified it."):
+                        "Done, I have not verified it.", "Fixed, but it was not yet run."):
             with self.subTest(closing):
                 self.assertEqual(self.verdict(closing), "disclosed")
 
@@ -607,7 +611,12 @@ class NoRead(StopCase):
     def test_no_claim_reads_no_file_and_writes_none(self):
         self.session.edit("a.py")
         report = self.close("Which of the two do you prefer?", "TRANSCRIPT = %r\n%s" % (self.session.main, SPY))
-        self.assertEqual(report, {"opened": [], "reader": False})
+        self.assertFalse(report["reader"])
+        # The word lists are read before any claim, from phrases.json; nothing else under the session's folders is.
+        self.assertEqual([path for path in report["opened"] if path.startswith(self.base)
+                          and not path.startswith(os.path.join(self.config, "plugins"))], [])
+        self.assertEqual([os.path.basename(path) for path in report["opened"] if path.endswith("phrases.json")],
+                         ["phrases.json"])
         self.assertFalse(os.path.exists(self.data))
 
     def test_the_spy_sees_a_claim_reading_the_transcript(self):
@@ -915,7 +924,8 @@ class Budget(StopCase):
         self.session.save()
         reader = Recording()
         row = dict.fromkeys(stop_shadow.ROW_FIELDS)
-        lines = stop_shadow._turn_lines(row, self.event(CLOSING), CLOSING, reader, self.NOW + 1.0)
+        phrases = stop_shadow.compile_phrases(stop_shadow._shipped_phrases())
+        lines = stop_shadow._turn_lines(row, self.event(CLOSING), CLOSING, phrases, reader, self.NOW + 1.0)
         self.assertEqual([(line["verdict"], line["reason"]) for line in lines], [("flag", "ok")])
         self.assertEqual(reader.budgets, dict.fromkeys(("turn_edits", "last_pass", "evidence_after"),
                                                        1.0 - stop_shadow.ROW_SPARE))
@@ -1002,6 +1012,139 @@ class LabCountsRows(StopCase):
         self.assertEqual(os.listdir(folder), [te.row_key(use_id) + ".json"])
         with open(os.path.join(folder, te.row_key(use_id) + ".json"), encoding="ascii") as handle:
             self.assertEqual(json.loads(handle.read())["op"], "commit")
+
+
+CORE_SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(TOOL_DIR))), "rigger-core")
+
+
+def write_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(json.dumps(data).encode("utf-8"))
+
+
+class PhraseLists(StopCase):
+    """D95: the word lists live in phrases.json; config key test_evidence.phrases (levels 2-3) adds to them."""
+
+    def setUp(self):
+        super().setUp()
+        self.runs = 0
+        self.session.edit("a.py")
+
+    def install_core(self, broken=False):
+        """A copy of rigger-core laid out like the plugin cache, listed in installed_plugins.json."""
+        root = os.path.join(self.config, "plugins", "cache", "rigger", "rigger-core", "0.0.0")
+        skip = shutil.ignore_patterns("tests", "__pycache__")
+        shutil.copytree(os.path.join(CORE_SOURCE, "tools", "assemble"), os.path.join(root, "tools", "assemble"),
+                        ignore=skip)
+        for name in ("rigger-module.json", "rigger-defaults.json"):
+            shutil.copy(os.path.join(CORE_SOURCE, name), os.path.join(root, name))
+        if broken:
+            with open(os.path.join(root, "tools", "assemble", "config.py"), "w", encoding="utf-8") as handle:
+                handle.write("raise RuntimeError('broken core')\n")
+        write_json(os.path.join(self.config, "plugins", "installed_plugins.json"),
+                   {"version": 2, "plugins": {"rigger-core@rigger": [{"installPath": os.path.abspath(root)}]}})
+
+    def personal(self, phrases):
+        write_json(os.path.join(self.config, "rigger", "config.json"),
+                   {"schema": 1, "test_evidence": {"phrases": phrases}})
+
+    def company(self, phrases):
+        root = os.path.join(self.base, "team-module")
+        write_json(os.path.join(root, ".claude-plugin", "plugin.json"), {"name": "team-rules"})
+        write_json(os.path.join(root, "rigger-module.json"), {
+            "schema": 1, "name": "team-rules", "layer": "company",
+            "config": {"test_evidence": {"phrases": phrases}}})
+        self.env_extra["RIGGER_MODULE_DIRS"] = os.path.abspath(root)
+
+    def stop(self, closing):
+        """One more Stop on closing: (its lines, its prompt id); the lines are None when it wrote no row."""
+        self.runs += 1
+        prompt = "prompt-%d" % self.runs
+        self.close(closing, prompt_id=prompt)   # close() asserts exit 0 and no output
+        return self.rows().get(te.row_key(self.session.sid, prompt, closing)), prompt
+
+    def outcome(self, closing):
+        """The verdict of one more Stop on closing, None when it wrote no row."""
+        lines, _ = self.stop(closing)
+        self.assertIn(lines and len(lines), (None, 1))
+        return lines[0]["verdict"] if lines else None
+
+    def shipped(self):
+        with open(os.path.join(TOOL_DIR, "phrases.json"), "rb") as handle:
+            return json.loads(handle.read().decode("utf-8"))
+
+    def test_config_phrases_extend_the_lists(self):
+        self.install_core()
+        self.assertIsNone(self.outcome("Zrobione."))   # control: a word of another language is no claim
+        self.personal({"claim": ["zrobione"]})
+        lines, _ = self.stop("Zrobione.")
+        self.assertEqual([(line["verdict"], line["claim"]) for line in lines or ()], [("flag", "Zrobione")])
+        self.assertEqual(self.outcome("All done."), "flag")   # the shipped English list is still there
+        for key, words, closing, expected in (
+                ("negation", ["nie"], "Nie zrobione.", None),
+                ("disclosure", ["nie uruchomiono"], "Zrobione, nie uruchomiono testow.", "disclosed"),
+                ("status", ["w toku"], "Zrobione.\n\nZadanie 2 w toku.", "disclosed")):
+            with self.subTest(key):
+                self.personal({"claim": ["zrobione"]})
+                self.assertEqual(self.outcome(closing), "flag")   # control: without this list the closing claims
+                self.personal({"claim": ["zrobione"], key: words})
+                self.assertEqual(self.outcome(closing), expected)
+        self.personal({})
+        self.company({"claim": ["zrobione"]})   # level 2: a company module's config
+        self.assertEqual(self.outcome("Zrobione."), "flag")
+        pyc = [path for path, folders, _ in os.walk(self.config) if "__pycache__" in folders and "rigger-core" in path]
+        self.assertEqual(pyc, [])   # a Stop writes no bytecode into the installed core
+
+    def test_a_config_that_cannot_be_read_leaves_the_shipped_lists(self):
+        for what in ("a personal file that is not JSON", "a list that is a string", "a core that does not load"):
+            with self.subTest(what):
+                shutil.rmtree(os.path.join(self.config, "plugins"), ignore_errors=True)
+                self.install_core(broken=what.startswith("a core"))
+                if what.startswith("a personal"):
+                    os.makedirs(os.path.join(self.config, "rigger"), exist_ok=True)
+                    with open(os.path.join(self.config, "rigger", "config.json"), "wb") as handle:
+                        handle.write(b"{not json")
+                else:
+                    self.personal({"claim": "zrobione"})
+                self.assertEqual(self.outcome("All done."), "flag")
+                self.assertIsNone(self.outcome("Zrobione."))
+
+    def test_missing_or_bad_phrase_file_writes_an_error_row(self):
+        bad = (("missing", None), ("not JSON", b"{nope"), ("empty", b""), ("a list", b"[]"),
+               ("format 2", json.dumps(dict(self.shipped(), format=2)).encode()),
+               ("a category missing", json.dumps({"format": 1, "claim": ["done"]}).encode()),
+               ("a category not a list", json.dumps(dict(self.shipped(), status="x")).encode()),
+               ("an empty entry", json.dumps(dict(self.shipped(), claim=[""])).encode()))
+        for what, content in bad:
+            with self.subTest(what):
+                self.tool = os.path.join(self.base, "tool-" + what.replace(" ", "-"))
+                os.makedirs(self.tool)
+                for name in ("stop_shadow.py", "turn_evidence.py"):
+                    shutil.copy(os.path.join(TOOL_DIR, name), os.path.join(self.tool, name))
+                if content is not None:
+                    with open(os.path.join(self.tool, "phrases.json"), "wb") as handle:
+                        handle.write(content)
+                lines, _ = self.stop("All done.")
+                self.assertEqual([(line["verdict"], line["reason"], line["claim"]) for line in lines or ()],
+                                 [("error", "phrases", None)])
+
+    def test_the_script_holds_no_word_list(self):
+        with open(os.path.join(TOOL_DIR, "stop_shadow.py"), "rb") as handle:
+            tree = ast.parse(handle.read())
+        words = {word.lower() for key in ("claim", "negation", "disclosure", "status") for word in self.shipped()[key]}
+        self.assertGreater(len(words), 10)
+        lists = [ast.literal_eval(node) for node in ast.walk(tree)
+                 if isinstance(node, (ast.List, ast.Tuple, ast.Set))
+                 and sum(isinstance(item, ast.Constant) and str(item.value).lower() in words for item in node.elts) >= 2]
+        self.assertEqual(lists, [])   # no literal list holding two of the shipped words
+        bodies = [node.body for node in ast.walk(tree) if isinstance(node, (ast.Module, ast.FunctionDef))]
+        docs = {id(body[0].value) for body in bodies if body and isinstance(body[0], ast.Expr)}
+        texts = [node.value.lower() for node in ast.walk(tree)
+                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs]
+        words = {word.lower() for key in ("claim", "disclosure", "status") for word in self.shipped()[key]}
+        self.assertEqual(sorted(word for word in words for text in texts
+                                if re.search(r"(?<!\w)" + re.escape(word) + r"(?!\w)", text)), [])
 
 
 if __name__ == "__main__":

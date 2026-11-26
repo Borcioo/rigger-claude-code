@@ -526,6 +526,63 @@ class TurnGuardTests(unittest.TestCase):
         self.assertEqual((clean, len(notices)), ({}, 1))
 
 
+class TestEvidencePhrasesTests(unittest.TestCase):
+    """D95: test_evidence.phrases (levels 2-3) lists words per category for the Stop shadow; a bad one is dropped."""
+
+    BLOCK = {"claim": ["zrobione"], "negation": ["nie"], "disclosure": ["nie uruchomiono"], "status": ["w toku"]}
+
+    def test_phrases_apply_at_levels_two_and_three(self):
+        got = resolve(l3={"schema": 1, "test_evidence": {"phrases": self.BLOCK}})
+        self.assertEqual((got.effective.get("test_evidence"), got.notices), ({"phrases": self.BLOCK}, []))
+        self.assertEqual(got.sources[("test_evidence", "phrases", "claim")], "L3:" + PATHS[3])
+        got = resolve(l2=[("acme", {"test_evidence": {"phrases": {"claim": ["zrobione"]}}})])
+        self.assertEqual((got.effective.get("test_evidence"), got.notices, got.inactive),
+                         ({"phrases": {"claim": ["zrobione"]}}, [], {}))
+
+    def test_other_levels_drop_it_with_a_notice(self):
+        block = {"test_evidence": {"phrases": {"claim": ["zrobione"]}}}
+        for level in (1, 4):
+            with self.subTest(level=level):
+                clean, notices = config.validate_level(dict(block, schema=1), level, "w")
+                self.assertEqual(clean, {"schema": 1})
+                self.assertEqual(notices, ["rigger: config w key test_evidence not allowed at level %d; ignored"
+                                           % level])
+        got = resolve(l4=dict(block, schema=1))
+        self.assertNotIn("test_evidence", got.effective)
+
+    def test_bad_shapes_are_dropped_with_a_notice(self):
+        where = PATHS[3]
+        rows = (
+            ("phrases not an object", {"phrases": ["a"]},
+             ["rigger: config %s test_evidence.phrases must be an object; ignored" % where]),
+            ("unknown key", {"words": {}}, ["rigger: config %s test_evidence key words unknown; ignored" % where]),
+            ("unknown category", {"phrases": {"tone": ["a"], "claim": ["ok"]}},
+             ["rigger: config %s test_evidence.phrases category tone unknown; ignored" % where]),
+            ("a category not a list", {"phrases": {"claim": "zrobione"}},
+             ["rigger: config %s test_evidence.phrases.claim must be a list of words; ignored" % where]),
+            ("a bad entry", {"phrases": {"claim": [7, "", "a\nb", "x" * 61, "ok"]}},
+             ["rigger: config %s test_evidence.phrases.claim entry %s ignored: %s" % (where, shown, why)
+              for shown, why in (("7", "must be a non-empty string"), ("''", "must be a non-empty string"),
+                                 ("'a\\nb'", "holds a line break or control character"),
+                                 (repr("x" * 61), "over 60 characters"))]),
+            ("too many entries", {"phrases": {"claim": ["w%d" % n for n in range(101)]}},
+             ["rigger: config %s holds 101 test_evidence.phrases.claim entries; the last 1 ignored (at most 100 per "
+              "file)" % where]),
+        )
+        for what, block, expected in rows:
+            with self.subTest(what):
+                got = resolve(l3={"schema": 1, "test_evidence": block})
+                self.assertEqual(got.notices, expected)
+        got = resolve(l3={"schema": 1, "test_evidence": rows[3][1]})
+        self.assertEqual(got.effective.get("test_evidence"), {"phrases": {}})
+        got = resolve(l3={"schema": 1, "test_evidence": rows[4][1]})
+        self.assertEqual(got.effective["test_evidence"], {"phrases": {"claim": ["ok"]}})
+        got = resolve(l3={"schema": 1, "test_evidence": rows[5][1]})
+        self.assertEqual(got.effective["test_evidence"]["phrases"]["claim"], ["w%d" % n for n in range(100)])
+        clean, notices = config.validate_level({"test_evidence": "x"}, 3, "w")
+        self.assertEqual((clean, len(notices)), ({}, 1))
+
+
 class ShellGuardTests(unittest.TestCase):
     """D76: shell_guard.shellwise_path takes effect at level 3 only; every other level drops it with a notice."""
 

@@ -1,0 +1,24 @@
+{
+  "format": 1,
+  "claim": [
+    "done", "complete", "completed", "finished", "fixed", "implemented", "merged", "shipped", "works now",
+    "ready to", "ready for",
+    "all pass", "all passed", "all passing", "all green",
+    "all tests pass", "all tests passed", "all tests passing", "all tests green",
+    "test pass", "test passed", "test passing", "tests pass", "tests passed", "tests passing"
+  ],
+  "negation": ["not", "isn't", "aren't", "never", "still not"],
+  "disclosure": [
+    "not run", "not tested", "not verified", "not checked",
+    "never run", "never tested", "never verified", "never checked",
+    "didn't run", "didn't tested", "didn't verified", "didn't checked",
+    "did not run", "did not tested", "did not verified", "did not checked",
+    "haven't run", "haven't tested", "haven't verified", "haven't checked",
+    "have not run", "have not tested", "have not verified", "have not checked",
+    "untested", "unverified", "to be checked", "to be tested", "to be verified"
+  ],
+  "status": [
+    "still running", "still working", "still pending", "still in progress", "in progress", "in the background",
+    "waiting for", "waiting on"
+  ]
+}
