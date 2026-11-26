@@ -100,9 +100,12 @@ NEVER_READS = (
 
 
 def gate_git(repo, *args, stdin=None, check=True):
+    """git in a fixture repository: no inherited GIT_* variable, so a caller's GIT_DIR cannot aim it elsewhere."""
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
     proc = subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com",
                            "-c", "core.autocrlf=false", "-c", "advice.detachedHead=false"] + list(args),
-                          input=stdin, stdin=None if stdin else subprocess.DEVNULL, capture_output=True, timeout=60)
+                          input=stdin, stdin=None if stdin else subprocess.DEVNULL, capture_output=True, timeout=60,
+                          env=env)
     if check and proc.returncode:
         raise RuntimeError("git %r: %r" % (args, proc.stderr[:300]))
     return proc.stdout

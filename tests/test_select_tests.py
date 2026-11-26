@@ -10,15 +10,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import run_tests  # noqa: E402
 import select_tests  # noqa: E402
+from test_repo import git_env  # noqa: E402
 
 PY_SH = "plugins/rigger-%s/bin/py.sh"
 
 
 def git(root, *args):
-    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(root), *args], env=git_env(Path(root)), check=True, capture_output=True)
 
 
 def write(root, rel, text=""):
