@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from decimal import ROUND_HALF_UP, Decimal
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -218,7 +219,11 @@ class Windows(Case):
         self.assertEqual(code, 0, text)
         self.assertIn("committed 90.0 GiB, limit 95.0 GiB, ceiling 127.00 GiB (max of 2 Event 2004 entries), "
                       "headroom 37.00 GiB", text)
-        self.assertEqual(run.call_args[0][0][:3], ["wevtutil", "qe", "System"])
+        # The detector's own Id 2004 only: Microsoft-Windows-Setup logs an Id 2004 too, with no commit limit.
+        self.assertEqual(run.call_args[0][0], [
+            "wevtutil", "qe", "System",
+            "/q:*[System[Provider[@Name='Microsoft-Windows-Resource-Exhaustion-Detector'] and (EventID=2004)]]",
+            "/f:xml"])
         failed = mock.Mock(return_value=subprocess.CompletedProcess([], 5, b"", b"denied"))
         with mock.patch.object(mem_check, "performance_info", return_value=info):
             code, text = self.run_main(run=failed)
@@ -429,11 +434,37 @@ class Live(unittest.TestCase):
         self.assertEqual(proc.returncode, 1 if float(headroom) < float(minimum) else 0, text)
         self.assertEqual(state, "BUSY" if proc.returncode else "OK")
         if system == "windows" and shutil.which("pwsh"):
-            cim = subprocess.run(["pwsh", "-NoProfile", "-Command",
-                                  "(Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory).CommittedBytes"],
-                                 stdout=subprocess.PIPE, timeout=60)
-            committed = float(re.search(r"committed ([\d.]+) GiB", text).group(1))
-            self.assertLess(abs(committed - int(cim.stdout) / GIB), 1.0, "committed within 1 GiB of the CIM read")
+            self.compare_with_an_independent_windows_read(text)
+
+    def compare_with_an_independent_windows_read(self, text):
+        """The ceiling and its source against Get-WinEvent (not wevtutil), the rest against CIM."""
+        script = ("$d = 'Microsoft-Windows-Resource-Exhaustion-Detector'; "
+                  "$l = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 2004; ProviderName = $d } "
+                  "-ErrorAction SilentlyContinue | ForEach-Object { "
+                  "[long](([xml]$_.ToXml()).GetElementsByTagName('SystemCommitLimit')[0].InnerText) }); "
+                  "$c = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory; "
+                  "@{ limits = $l; commit_limit = $c.CommitLimit; committed = $c.CommittedBytes; "
+                  "available = $c.AvailableBytes } | ConvertTo-Json -Compress")
+        env = dict(os.environ, POWERSHELL_TELEMETRY_OPTOUT="1")
+        read = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        self.assertEqual(read.returncode, 0, read.stderr)
+        known = json.loads(read.stdout)
+        limits = known["limits"]
+        found = re.search(r"committed ([\d.]+) GiB, limit ([\d.]+) GiB, ceiling ([\d.]+) GiB \(([^)]+)\), "
+                          r"headroom (-?[\d.]+) GiB \(min ([\d.]+) GiB\), available RAM ([\d.]+) GiB", text)
+        self.assertTrue(found, text)
+        committed, limit, ceiling, source, headroom, minimum, available = found.groups()
+        ceiling_bytes = max(limits) if limits else known["commit_limit"]
+        self.assertEqual(ceiling, str((Decimal(ceiling_bytes) / GIB).quantize(Decimal("0.01"), ROUND_HALF_UP)),
+                         "ceiling")
+        self.assertEqual(source, "max of %d Event 2004 entries" % len(limits) if limits
+                         else "current CommitLimit, fallback", "ceiling source")
+        self.assertLess(abs(float(limit) - known["commit_limit"] / GIB), 0.1, "limit")
+        self.assertLess(abs(float(committed) - known["committed"] / GIB), 1.0, "committed within 1 GiB of CIM")
+        self.assertLess(abs(float(available) - known["available"] / GIB), 1.0, "available within 1 GiB of CIM")
+        self.assertLess(abs(float(minimum) - min(30.0, 0.25 * ceiling_bytes / GIB)), 0.01, "minimum")
+        self.assertLess(abs(float(headroom) - (float(ceiling) - float(committed))), 0.1, "headroom")
 
 
 if __name__ == "__main__":
