@@ -269,6 +269,19 @@ class ShapeTests(unittest.TestCase):
             ("shell-guard", json.dumps({"hookSpecificOutput": {"permissionDecision": "deny",
                                                                "permissionDecisionReason": "g [a.b_c-9]: x"}}),
              True, ""),
+        ] + [
+            ("shell-guard", json.dumps({"hookSpecificOutput": {"permissionDecision": "deny",
+                                                               "permissionDecisionReason": reason}}), ok, rule)
+            for reason, ok, rule in (
+                ("shellwise: break bash-cd-slash-d: `cd /d` is cmd.exe syntax\nFix: cd x", True, ""),
+                ("shellwise: danger git-checkout-discard9: discards\nFix: x", True, ""),
+                ("shellwise: break : no id\nFix: x", False, "deny-reason"),
+                ("shellwise: break bash-cd-slash-d no colon", False, "deny-reason"),
+                ("shellwise: warn bash-cd-slash-d: a warn never denies", False, "deny-reason"),
+                ("shell-guard: break bash-cd-slash-d: another prefix", False, "deny-reason"),
+                ("note: shellwise: break bash-cd-slash-d: not at the start", False, "deny-reason"),
+            )
+        ] + [
             ("lessons", "Lessons inbox: /x/lessons-inbox.md: 0 entries\n", True, ""),
             ("lessons", "Lessons inbox: /x: count unknown (OSError: x)\r\nmore\n", True, ""),
             ("lessons", "Lessons inbox: /x: 2 entries.\n", False, "inbox-line"),
@@ -373,6 +386,11 @@ class ShapeTests(unittest.TestCase):
         start = time.monotonic()
         verdict = self.shape("shell-guard", json.dumps({"hookSpecificOutput": {
             "permissionDecision": "deny", "permissionDecisionReason": "[" + "a-" * 40 + " \t" * 40}}))
+        self.assertLess(time.monotonic() - start, 0.5)
+        self.assertEqual(verdict.rule, "deny-reason")
+        start = time.monotonic()
+        verdict = self.shape("shell-guard", json.dumps({"hookSpecificOutput": {
+            "permissionDecision": "deny", "permissionDecisionReason": "shellwise: break " + "a-" * 40 + "a" * 40}}))
         self.assertLess(time.monotonic() - start, 0.5)
         self.assertEqual(verdict.rule, "deny-reason")
         start = time.monotonic()

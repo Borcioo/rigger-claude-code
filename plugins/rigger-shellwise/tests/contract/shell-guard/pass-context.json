@@ -1,1 +1,1 @@
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "shellwise: warn [ps-parse]: check the quoting"}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"shellwise: warn bash-versioned-php: `php83` is a Windows launcher script (.bat), which Git Bash runs by that name only when a shell profile defines it\nFix: call the php.exe of that version by its full path"}}
