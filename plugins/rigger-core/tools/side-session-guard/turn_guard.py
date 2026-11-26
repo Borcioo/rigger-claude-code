@@ -215,5 +215,5 @@ def check(event, state, coordinator, environ, config_dir, clock=time.monotonic, 
                 return None, ("%s background run %s (\"%s\") still runs, but its block count cannot be written "
                               "(%s); the turn ends without holding again."
                               % (PREFIX, task_id, one_line(description), count_path))
-            return block_reason(task_id, description, count), None
+            return block_reason(task_id, description, count), note   # a capped run's note is shown only once
     return None, note

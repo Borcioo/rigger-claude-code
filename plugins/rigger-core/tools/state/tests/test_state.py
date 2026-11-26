@@ -341,6 +341,22 @@ class Clean(Case):
                                                              NO_TRANSCRIPT + ".md", EDGE_OUT + ".md",
                                                              OTHER + ".log.md"]))
 
+    def test_clean_moves_and_deletes_only_files_named_by_a_session_uuid(self):
+        """README.md or notes.md in the state folder is the user's: a name that is not a UUID is never a session."""
+        foreign = ("README.md", "notes.md", "my-plan.log.md", DEAD[:-1] + ".md", DEAD + "0.md",
+                   "0" + DEAD + ".md", DEAD.replace("-", "_", 1) + ".md")
+        for name in foreign:
+            self.put(name, "x", 20)
+        self.put("README.md", "moved by 0.8.0", 70, folder=self.archive)
+        self.dead_session()
+        code, text = self.run_main("clean", "--now", NOW)
+        self.report_clean(text)
+        self.assertEqual((code, text), (0, "state: ok clean moved 3 deleted 0 rotated 0\n"))
+        self.assertEqual(self.listing(self.state), sorted(foreign))
+        self.assertEqual(st.session_of("AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE.md"), "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")
+        self.assertEqual(self.listing(self.archive), sorted(["README.md"] + [DEAD + suffix for suffix in
+                                                                            (".md", ".log.md", ".parts.json")]))
+
     def test_archive_resets_the_clock(self):
         self.dead_session()
         self.assertEqual(self.run_main("clean", "--now", NOW)[0], 0)

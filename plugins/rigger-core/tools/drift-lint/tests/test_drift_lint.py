@@ -192,7 +192,7 @@ def without_machine_commands(code, lines, environ):
 
 
 def ci_filter_checks():
-    summary = "# drift-lint: 9 files, %d findings, 0 baselined, 0 in upstream copies, 2 rules files"
+    summary = "# drift-lint: 9 files, %d findings, 0 baselined, 0 in upstream copies, 2 rules files, 0 trigger manifests"
     command, path = "plugins\\p\\skills\\s\\SKILL.md:4  command  tsc", "plugins\\p\\rules\\r.md:7  repo-path  tools/x.py"
     mixed = [command, path, summary % 2]
     on = {"GITHUB_ACTIONS": "true"}
@@ -226,13 +226,13 @@ def real_tree_gate(folder):
         return without_machine_commands(proc.returncode, proc.stdout.decode("utf-8").splitlines(), os.environ)
 
     code, lines = run(root)
-    m = re.fullmatch(r"# drift-lint: (\d+) files, 0 findings, (\d+) baselined, 0 in upstream copies, (\d+) rules files",
-                     lines[-1] if lines else "")
-    files, baselined, rules = (int(g) for g in m.groups()) if m else (0, 0, 0)
+    m = re.fullmatch(r"# drift-lint: (\d+) files, 0 findings, (\d+) baselined, 0 in upstream copies, (\d+) rules files, "
+                     r"(\d+) trigger manifests", lines[-1] if lines else "")
+    files, baselined, rules, manifests = (int(g) for g in m.groups()) if m else (0, 0, 0, 0)
     check("real tree: exit 0, only the summary line, 0 findings, 0 upstream copies from the empty home",
           (code, len(lines), bool(m)), (0, 1, True))
-    check("real tree: files and rules files were read, every baseline entry matched at least one finding",
-          (files > 0, rules > 0, baselined >= len(load_entries(base))), (True, True, True))
+    check("real tree: files, rules files and trigger manifests were read, every baseline entry matched a finding",
+          (files > 0, rules > 0, manifests > 0, baselined >= len(load_entries(base))), (True, True, True, True))
     copy = os.path.join(folder, "real-copy")
     shutil.copytree(os.path.join(root, "plugins"), os.path.join(copy, "plugins"),
                     ignore=shutil.ignore_patterns("__pycache__"))
@@ -444,7 +444,7 @@ def main():
               (code, lines[0], lines[1].endswith("  command  frobnicate-up")), (0, "## upstream copies", True))
         check("cli: a linked skill folder is not scanned", "frobnicate-linked" in out, False)
         check("cli: summary line", out.splitlines()[-1:],
-              ["# drift-lint: 6 files, 0 findings, 0 baselined, 1 in upstream copies, 1 rules files"])
+              ["# drift-lint: 6 files, 0 findings, 0 baselined, 1 in upstream copies, 1 rules files, 0 trigger manifests"])
 
         # inputs fail closed: a missing or unreadable input, or 0 files, is a finding and exits 1
         gone_md, gone_root = os.path.join(folder, "gone", "CLAUDE.md"), os.path.join(folder, "gone-skills")
@@ -510,7 +510,7 @@ def main():
         code, out = fx.run(f"Read `{miss}`.\n", "--baseline", base)
         check("baseline: a listed finding is suppressed and counted",
               (code, [ln for ln in out.splitlines() if ln.startswith(fx.claude)], out.splitlines()[-1:]),
-              (0, [], ["# drift-lint: 6 files, 0 findings, 1 baselined, 1 in upstream copies, 1 rules files"]))
+              (0, [], ["# drift-lint: 6 files, 0 findings, 1 baselined, 1 in upstream copies, 1 rules files, 0 trigger manifests"]))
         code, out = fx.run(f"Read `{miss}` and `{gone2}`.\n", "--baseline", base)
         check("baseline: a finding not listed still exits 1",
               (code, [ln for ln in out.splitlines() if ln.startswith(fx.claude)]),
@@ -538,7 +538,7 @@ def main():
                                  "--agents-dir", fx.agents], script=os.path.join(tool, "drift_lint.py"))
         check("baseline: a baseline.txt beside the script is not read without --baseline",
               (code, out.splitlines()[-1:]),
-              (1, ["# drift-lint: 6 files, 1 findings, 0 baselined, 1 in upstream copies, 1 rules files"]))
+              (1, ["# drift-lint: 6 files, 1 findings, 0 baselined, 1 in upstream copies, 1 rules files, 0 trigger manifests"]))
 
         # the skill repos have no built-in default: --repo, else HARNESS_DRIFT_REPOS, else exit 2
         tool_ref = "Follow `tools/real-tool/run.py` and `tools/no-such-tool/x.py`.\n"
@@ -557,7 +557,7 @@ def main():
         code, out, err = fx.run_no_repo("Nothing to see.\n", folder)
         check("repos: the skills roots default to <repo>/skills of HARNESS_DRIFT_REPOS",
               (code, out.splitlines()[-1:]),
-              (0, ["# drift-lint: 6 files, 0 findings, 0 baselined, 1 in upstream copies, 1 rules files"]))
+              (0, ["# drift-lint: 6 files, 0 findings, 0 baselined, 1 in upstream copies, 1 rules files, 0 trigger manifests"]))
         code, out, err = fx.run_no_repo(tool_ref, fx.empty, *skills, "--repo", fx.repo)
         check("repos: --repo wins over HARNESS_DRIFT_REPOS",
               (code, [ln for ln in out.splitlines() if ln.startswith(fx.claude)]), (1, want))
@@ -573,7 +573,7 @@ def main():
         code, out = fx.run_market(good, "Follow `templates/x.md`.\n\nAgent type: `rigger-core:worker`.\n")
         check("plugin: existing namespaced names and plugin-root paths are not reported, every file is scanned",
               (code, out.splitlines()),
-              (0, ["# drift-lint: 6 files, 0 findings, 0 baselined, 0 in upstream copies, 2 rules files"]))
+              (0, ["# drift-lint: 6 files, 0 findings, 0 baselined, 0 in upstream copies, 2 rules files, 0 trigger manifests"]))
         for label, text, want in (
                 ("a missing namespaced agent", "Agent type: `rigger-core:nope`.\n", ("agent", "rigger-core:nope")),
                 ("a missing namespaced agent after subagent_type", 'subagent_type: "rigger-core:nope"\n',
@@ -623,7 +623,7 @@ def main():
         code, out = fx.run_market("Nothing here.\n", broken_rule, "--baseline", base)
         check("baseline: a rules file's key is <plugin>/rules/<file>",
               (code, out.splitlines()),
-              (0, ["# drift-lint: 6 files, 0 findings, 1 baselined, 0 in upstream copies, 2 rules files"]))
+              (0, ["# drift-lint: 6 files, 0 findings, 1 baselined, 0 in upstream copies, 2 rules files, 0 trigger manifests"]))
         both = os.path.join(folder, "both")
         write(os.path.join(both, "plugins", "p", "skills", "a", "SKILL.md"), "Follow `tools/gone-a.py`.\n")
         write(os.path.join(both, "skills", "b", "SKILL.md"), "Follow `tools/gone-b.py`.\n")
@@ -690,7 +690,7 @@ def main():
             check(f"rules: an installed plugin's rules/*.md is scanned ({kind} layout), resolved in its own plugin",
                   (code, [ln for ln in out.splitlines() if ln.startswith(rule)], out.splitlines()[-1:]),
                   (1, [f"{rule}:1  repo-path  templates/gone.md"],
-                   ["# drift-lint: 4 files, 1 findings, 0 baselined, 0 in upstream copies, 1 rules files"]))
+                   ["# drift-lint: 4 files, 1 findings, 0 baselined, 0 in upstream copies, 1 rules files, 0 trigger manifests"]))
         empty_plugins = os.path.join(folder, "no-rules-plugins")
         write(os.path.join(empty_plugins, "installed_plugins.json"), json.dumps(
             {"version": 2, "plugins": {"p2@m": [{"installPath": os.path.dirname(os.path.dirname(
@@ -699,14 +699,14 @@ def main():
         check("rules: --plugins-dir given and 0 rules files read exits 1",
               (code, f"{empty_plugins}:0  read  0 rules files read" in out), (1, True))
         code, out = fx.run_market("Nothing here.\n", "Follow `templates/x.md`.\n", "--plugins-dir", fx.empty)
-        check("rules: --plugins-dir at an empty folder exits 1 although --repo has rules files",
+        check("rules: --plugins-dir at an empty folder exits 1 although --repo has rules files, 0 trigger manifests",
               (code, f"{fx.empty}:0  read  0 rules files read" in out, out.splitlines()[-1:]),
-              (1, True, ["# drift-lint: 5 files, 1 findings, 0 baselined, 0 in upstream copies, 1 rules files"]))
+              (1, True, ["# drift-lint: 5 files, 1 findings, 0 baselined, 0 in upstream copies, 1 rules files, 0 trigger manifests"]))
         code, out = fx.run_market("Nothing here.\n", broken_rule, "--plugins-dir", os.path.join(fx.market, "plugins"))
         check("rules: a file reached through --repo and through --plugins-dir is scanned and counted once",
               (code, [ln for ln in out.splitlines() if ln.startswith(fx.market_rules)], out.splitlines()[-1:]),
               (1, [f"{fx.market_rules}:1  repo-path  templates/gone.md"],
-               ["# drift-lint: 5 files, 1 findings, 0 baselined, 0 in upstream copies, 1 rules files"]))
+               ["# drift-lint: 5 files, 1 findings, 0 baselined, 0 in upstream copies, 1 rules files, 0 trigger manifests"]))
         home2 = os.path.join(folder, "home2")
         os.makedirs(os.path.join(home2, ".claude", "plugins"))
         write(fx.claude, "Nothing to see.\n")

@@ -282,6 +282,19 @@ class CapTests(Base):
         self.assertEqual(self.check([task()], stop_hook_active=True), (None, None))
         self.assertHeld(self.check([task(), task("bq2")], stop_hook_active=True), "bq2")
 
+    def test_a_capped_run_keeps_its_note_when_another_run_blocks(self):
+        """Run A reaches its cap in the same Stop where run B holds: A's one note comes with B's block."""
+        self.output()
+        self.output("bq2")
+        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 3}}))
+        reason, note = self.check([task(), task("bq2")], stop_hook_active=True)
+        self.assertHeld((reason, note), "bq2")
+        self.assertIsNotNone(note, "expected run A's note with the block")
+        self.assertTrue(note.startswith(turn_guard.PREFIX + " ") and "b58ki4brf" in note, note)
+        self.assertIn("still runs after 3 holds", note)
+        with open(self.counts, "rb") as fh:
+            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 4, "bq2": 1})
+
     def test_a_config_without_a_state_folder_holds_and_counts(self):
         self.output()
         shutil.rmtree(self.state_dir)
@@ -421,6 +434,16 @@ class WiringTests(Base):
         self.assertEqual(sorted(data), ["systemMessage"])
         self.assertTrue(data["systemMessage"].startswith(turn_guard.PREFIX + " ") and "b58ki4brf" in data["systemMessage"])
         self.assertEqual(self.run_hook(self.event([task()], stop_hook_active=True)), {})
+
+    def test_the_hook_prints_a_capped_runs_note_with_another_runs_block(self):
+        self.output()
+        self.output("bq2")
+        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 3}}))
+        data = self.run_hook(self.event([task(), task("bq2")], stop_hook_active=True))
+        self.assertEqual(sorted(data), ["decision", "reason", "systemMessage"])
+        self.assertEqual(data["decision"], "block")
+        self.assertIn("bq2", data["reason"])
+        self.assertTrue(data["systemMessage"].startswith(turn_guard.PREFIX + " ") and "b58ki4brf" in data["systemMessage"])
 
     def test_the_stop_hook_holds_in_a_config_without_a_state_folder(self):
         self.output()

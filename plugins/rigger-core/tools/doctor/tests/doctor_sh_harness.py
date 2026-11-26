@@ -27,7 +27,8 @@ PY_SH = PLUGIN / "bin" / "py.sh"
 STATUSES = ("OK", "MISSING", "WARN", "INFO")
 POSIX_TOOLS = ("awk", "tr", "uname")
 REQUIRED = ("rigger-core", "rigger-rules", "rigger-lessons")
-# Recommended on Windows (D84): the Windows rule and skills, and the shell-guard filler.
+# Recommended (D84, prC1 M-1): the shell-guard filler on every system, and on Windows the Windows rule and skills.
+RECOMMENDED = ("rigger-shellwise",)
 WINDOWS_RECOMMENDED = ("rigger-platform", "rigger-shellwise")
 VERSION = "1a2b3c4d5e6f"
 STAMP = "2026-01-01T00:00:00.000Z"
@@ -268,7 +269,7 @@ class DoctorShCase(unittest.TestCase):
         self.write_file(self.fs / "etc" / "os-release", text)
 
     def good_settings(self, windows=False):
-        names = REQUIRED + (WINDOWS_RECOMMENDED if windows else ())
+        names = REQUIRED + (WINDOWS_RECOMMENDED if windows else RECOMMENDED)
         enabled = {"%s@rigger" % name: True for name in names}
         enabled["superpowers@superpowers-marketplace"] = True
         enabled["other@elsewhere"] = False
@@ -280,7 +281,7 @@ class DoctorShCase(unittest.TestCase):
         }
 
     def good_installed(self, windows=False):
-        names = REQUIRED + (WINDOWS_RECOMMENDED if windows else ())
+        names = REQUIRED + (WINDOWS_RECOMMENDED if windows else RECOMMENDED)
         plugins = {"other@elsewhere": [entry("1.0.0")]}
         for name in names:
             plugins["%s@rigger" % name] = [entry(VERSION)]

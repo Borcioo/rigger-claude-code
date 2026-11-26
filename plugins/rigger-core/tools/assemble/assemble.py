@@ -965,6 +965,12 @@ def _shellwise_state(config_dir: Path) -> Tuple[str, str]:
     row = row if isinstance(row, dict) else {}
     state, version, reason = row.get("state"), _shown(row.get("version")), _shown(row.get("reason"), 300)
     if state in ("ready", "override"):
+        try:  # `current` (one line, the binary's path) is what the launcher runs
+            binary = (Path(hits[0]).parent / "current").read_bytes().decode("utf-8", "replace").strip()
+        except OSError:
+            binary = ""
+        if not binary or not os.path.isfile(binary):
+            return "WARN", "state %s, v%s: binary missing%s" % (state, version, UNGUARDED)
         return "OK", "state %s, v%s" % (state, version)
     if state == "downloading":
         return "INFO", "state downloading, v%s%s" % (version, UNGUARDED)
@@ -1074,10 +1080,13 @@ def _dependency_rows(inputs: Inputs) -> List[_Row]:
     known = _json_or_none(inputs.config_dir / KNOWN)
     known = known if isinstance(known, dict) else {}
 
-    def present(key: str) -> bool:
+    def installed(key: str) -> bool:
         entries = plugins.get(key)
-        return flags.get(key) is True and isinstance(entries, list) and any(
+        return isinstance(entries, list) and any(
             isinstance(e, dict) and isinstance(e.get("installPath"), str) and e["installPath"] for e in entries)
+
+    def present(key: str) -> bool:
+        return flags.get(key) is True and installed(key)
 
     def allows(market: str, other: str) -> bool:
         entry = known.get(market)
@@ -1090,7 +1099,8 @@ def _dependency_rows(inputs: Inputs) -> List[_Row]:
     rows = []  # type: List[_Row]
     for key in sorted(k for k in plugins if present(k)):
         market = key.rpartition("@")[2]
-        entry = next(e for e in plugins[key] if isinstance(e, dict) and isinstance(e.get("installPath"), str))
+        entry = next(e for e in plugins[key]
+                     if isinstance(e, dict) and isinstance(e.get("installPath"), str) and e["installPath"])
         manifest = _json_or_none(Path(entry["installPath"]) / ".claude-plugin" / "plugin.json")
         deps = manifest.get("dependencies") if isinstance(manifest, dict) else None
         for dep in deps if isinstance(deps, list) else ():
@@ -1101,12 +1111,17 @@ def _dependency_rows(inputs: Inputs) -> List[_Row]:
             if present(target):
                 rows.append((name, "OK", "needs %s: installed and enabled" % _shown(target), None))
                 continue
-            detail = "needs %s: not installed or not enabled, so %s does not load" % (_shown(target), _shown(key))
-            other = target.rpartition("@")[2]
-            if other != market and not allows(market, other):
-                detail += ("; install skips it until %s's marketplace.json lists \"%s\" in "
-                           "allowCrossMarketplaceDependenciesOn" % (_shown(market), _shown(other)))
-            fix = "claude plugin install " + target if _FIX_TARGET.fullmatch(target) else None
+            if installed(target):  # installed but disabled: enabling it is the fix, not a second install
+                detail = "needs %s: installed but not enabled, so %s does not load" % (_shown(target), _shown(key))
+                command = "claude plugin enable "
+            else:
+                detail = "needs %s: not installed or not enabled, so %s does not load" % (_shown(target), _shown(key))
+                command = "claude plugin install "
+                other = target.rpartition("@")[2]
+                if other != market and not allows(market, other):
+                    detail += ("; install skips it until %s's marketplace.json lists \"%s\" in "
+                               "allowCrossMarketplaceDependenciesOn" % (_shown(market), _shown(other)))
+            fix = command + target if _FIX_TARGET.fullmatch(target) else None
             rows.append((name, "MISSING", detail, fix))
     return rows
 
@@ -1139,6 +1154,8 @@ def _rules_d_rows(inputs: Inputs, found: Assembly, modules: List[Module]) -> Lis
             same_load = by_load.get(tuple(load), [])
             fallback = same_load[0] if len(same_load) == 1 else "personal.%s-%d" % (stem, number)
             row_id = shipped.get(before, fallback)
+            if row_id in triggers:  # two rows with the same single load: the second keeps a personal id
+                row_id = "personal.%s-%d" % (stem, number)
             triggers[row_id] = {"before": before, "load": load}
         text = json.dumps({"triggers": triggers}, ensure_ascii=False)
         text = _shown(text, len(text) + 1)  # one line: _shown writes a control character as a JSON \u escape
