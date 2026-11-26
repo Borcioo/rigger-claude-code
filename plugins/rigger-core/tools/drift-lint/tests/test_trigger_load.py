@@ -128,6 +128,26 @@ def main():
               loads(lines), [(["alpha", "rigger-module.json"], 15, "alpha.broken loads beta:ghost"),
                              (["beta", "rigger-module.json"], 8, "beta.wrong-plugin loads beta:present")])
 
+        bare = os.path.join(folder, "bare")
+        plant(bare, alpha=ALPHA.replace('["alpha:present", "beta:other"]', '["present", "beta:other"]'))
+        code, lines = run(bare)
+        check("a bare name that is a repo plugin's skill does not satisfy a load: only plugin:skill counts",
+              loads(lines), [(["alpha", "rigger-module.json"], 8, "alpha.fine loads present"),
+                             (["alpha", "rigger-module.json"], 15, "alpha.broken loads beta:ghost")])
+
+        # plugin "gamma" is installed only (installed_plugins.json of the config), with the skill "kept"
+        installed = os.path.join(folder, "installed")
+        gamma = os.path.join(installed, "gamma-install")
+        write(os.path.join(gamma, "skills", "kept", "SKILL.md"), "---\nname: kept\n---\nNothing here.\n")
+        write(os.path.join(installed, "config", "plugins", "installed_plugins.json"),
+              json.dumps({"version": 2, "plugins": {"gamma@market": [{"installPath": gamma}]}}))
+        repo = os.path.join(installed, "repo")
+        plant(repo, alpha=ALPHA.replace('["alpha:present", "beta:other"]', '["gamma:kept", "kept"]')
+              .replace('"beta:ghost"', '"beta:other"'))
+        code, lines = run(repo, folder=installed)
+        check("an installed plugin's skill satisfies a load as plugin:skill, never by its bare name",
+              loads(lines), [(["alpha", "rigger-module.json"], 8, "alpha.fine loads kept")])
+
         for label, alpha in (("not JSON", "{ not json"), ("triggers is an object", '{"triggers": {}}'),
                              ("a load is a string", '{"triggers": [{"id": "a.b", "load": "alpha:present"}]}'),
                              ("a row is a list", '{"triggers": [["alpha:present"]]}')):
