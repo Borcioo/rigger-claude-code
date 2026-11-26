@@ -49,6 +49,8 @@ SEP = " %s " % DOT
 STATUSES = ("open", "doing", "blocked", "done")
 ITEM_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+# Claude Code's session ids are UUIDs; clean moves and deletes only files named by one, never README.md.
+SESSION_FILE_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 BRANCH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./+-]{0,199}")
 PR = re.compile(r"[1-9][0-9]{0,6}")
@@ -576,7 +578,7 @@ def session_of(name):
     if name in SHARED or name.startswith("."):
         return None
     ident, dot, rest = name.partition(".")
-    if not dot or not rest or not SESSION_ID.fullmatch(ident):
+    if not dot or not rest or not SESSION_FILE_ID.fullmatch(ident):
         return None
     return ident
 
@@ -704,6 +706,8 @@ def delete_old(ctx, archive):
     """(files deleted, stopped by the budget)."""
     deleted = 0
     for entry in regular_files(archive):
+        if session_of(entry.name) is None:   # a foreign file an older version moved here stays
+            continue
         try:
             if ctx.now - entry.stat(follow_symlinks=False).st_mtime <= ARCHIVE_DAYS * DAY:
                 continue
