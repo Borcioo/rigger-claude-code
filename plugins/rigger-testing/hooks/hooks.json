@@ -12,13 +12,22 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "if": "Bash(*commit*)", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/weak-test-guard/weak_test_guard.py\" || true", "timeout": 20 }
+          { "type": "command", "if": "Bash(*commit*)", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/weak-test-guard/weak_test_guard.py\" || true", "timeout": 20 },
+          { "type": "command", "if": "Bash(*commit*)", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/test-evidence/commit_shadow.py\" || true", "timeout": 20 }
         ]
       },
       {
         "matcher": "PowerShell",
         "hooks": [
-          { "type": "command", "if": "PowerShell(*commit*)", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/weak-test-guard/weak_test_guard.py\" || true", "timeout": 20 }
+          { "type": "command", "if": "PowerShell(*commit*)", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/weak-test-guard/weak_test_guard.py\" || true", "timeout": 20 },
+          { "type": "command", "if": "PowerShell(*commit*)", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/test-evidence/commit_shadow.py\" || true", "timeout": 20 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/py.sh\" -S \"${CLAUDE_PLUGIN_ROOT}/tools/test-evidence/stop_shadow.py\" || true", "timeout": 10, "async": true }
         ]
       }
     ]

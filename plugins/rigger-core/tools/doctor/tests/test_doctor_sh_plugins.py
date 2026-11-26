@@ -416,8 +416,7 @@ class DoctorShTests(DoctorShCase):
 
     def test_clean_layout_gives_one_slot_row_per_slot_and_no_warning(self):
         result = self.run_assembly()
-        expected = set(self.SLOTS) if os.name == "nt" else set(self.SLOTS) - {"shell-guard"}  # requires os:windows
-        self.assertEqual(set(self.rows(result, "slot ")), {"slot " + path for path in expected})
+        self.assertEqual(set(self.rows(result, "slot ")), {"slot " + path for path in self.SLOTS})
         how = "assemble.py --doctor"
         self.assertEqual(result.checks["slot reviewer"], ("OK", "rigger-review:reviewer (default)", how))
         self.assertEqual(result.checks["slot testing"], ("OK", "rigger-testing:testing (default)", how))
@@ -439,16 +438,16 @@ class DoctorShTests(DoctorShCase):
         self.assertRow(result, "rules-assembly", "OK")  # the install lines have rows of their own
 
     def test_hook_slot_rows_name_the_filler_and_its_failure_mode(self):
-        # `requires: []` keeps the shell-guard row on every system; it sets neither kind nor target.
         # An expected filler set above level 1 that is enabled gives OK, not MISSING.
-        self.personal_config({"slots": {"shell-guard": {"requires": []},
-                                        "lessons": {"kind": "hook", "target": "rigger-lessons"}}})
-        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", REPO_PLUGINS / "rigger-windows")
+        self.personal_config({"slots": {"lessons": {"kind": "hook", "target": "rigger-lessons"}}})
+        self.write_file(self.config / "plugins" / "data" / "rigger-shellwise-rigger" / "shellwise" / "status.json",
+                        json.dumps({"state": "ready", "version": "0.1.1"}))
+        result = self.run_assembly(REPO_PLUGINS / "rigger-lessons", REPO_PLUGINS / "rigger-shellwise")
         self.assertRow(result, "slot lessons", "OK", "rigger-lessons (failure mode: undeclared)")
-        self.assertRow(result, "slot shell-guard", "OK", "rigger-windows (fails open)")
+        self.assertRow(result, "slot shell-guard", "OK", "rigger-shellwise (fails closed); state ready, v0.1.1")
         checker = result.checks["slot-checker shell-guard"]
         self.assertEqual(checker[0], "OK", checker)
-        self.assertTrue(checker[1].endswith("rigger-windows/tools/shell-guard/lessons_guard.py"), checker)
+        self.assertTrue(checker[1].endswith("rigger-shellwise/tools/rule-checker/rule_checker.py"), checker)
         self.assertTrue(Path(checker[1]).is_file(), checker)
         self.assertRow(result, "rules-assembly", "OK")
 

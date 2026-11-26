@@ -6,7 +6,7 @@
     "implementer": { "kind": "agent", "target": "rigger-core:implementer", "model": "pinned" },
     "mapper": { "kind": "agent", "target": "rigger-core:mapper", "model": "pinned" },
     "testing": { "kind": "skill", "target": "rigger-testing:testing" },
-    "shell-guard": { "kind": "hook", "target": "rigger-windows", "requires": ["os:windows"] },
+    "shell-guard": { "kind": "hook", "target": "rigger-shellwise" },
     "lessons": { "kind": "hook", "target": "rigger-lessons" },
     "process": {
       "brainstorm": { "kind": "skill", "target": "superpowers:brainstorming" },

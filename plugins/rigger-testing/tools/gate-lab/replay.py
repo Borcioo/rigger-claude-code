@@ -1,8 +1,10 @@
 """Gate lab replay: what the commit and Stop gates did, or would have done, read offline from transcripts.
 
 Run it from the installed plugin. In `${CLAUDE_CONFIG_DIR:-~/.claude}/plugins/installed_plugins.json`, under the key
-that starts with `rigger-windows@`, take the first `installPath` that holds `tools/gate-lab/replay.py`. `--data` is the
-plugin's data folder, `~/.claude/plugins/data/rigger-windows-<marketplace>`: only hooks get it as CLAUDE_PLUGIN_DATA.
+that starts with `rigger-testing@`, take the first `installPath` that holds `tools/gate-lab/replay.py`. `--data` is the
+plugin's data folder, `~/.claude/plugins/data/rigger-testing-<marketplace>`: only hooks get it as CLAUDE_PLUGIN_DATA.
+Rows written before rigger-testing took the gates over stay in `rigger-windows-<marketplace>`: give that folder as
+`--data`, or its rows folder as `--from-shadow`, to read them.
 
   replay.py --data <dir> --gate <commit|stop> [--days 30] [--show <id>]
       The prototype rules over sessions touched in that window: fires per day, sample ids. An upper bound for commit.
@@ -28,7 +30,7 @@ import sys
 # The installed plugin folder stays as shipped.
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "shell-guard")]
+sys.path[:0] = [HERE, os.path.join(os.path.dirname(HERE), "test-evidence")]
 import report  # noqa: E402
 import turn_evidence as te  # noqa: E402
 

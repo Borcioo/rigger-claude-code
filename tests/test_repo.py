@@ -121,7 +121,6 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(module.layer, "general")
 
     def test_slot_fields_of_each_manifest(self):
-        guard = {"kind": "hook", "target": "rigger-windows", "rule_checker": "tools/shell-guard/lessons_guard.py"}
         reviewer = {"kind": "agent", "target": "rigger-review:reviewer", "model": "by-rule"}
         testing = {"kind": "skill", "target": "rigger-testing:testing"}
         expected = {
@@ -129,7 +128,7 @@ class ManifestTests(unittest.TestCase):
             "rigger-review": ("reviewer", None, {"reviewer": reviewer}, ["reviewer"]),
             "rigger-testing": ("testing", None, {"testing": testing}, []),
             "rigger-lessons": ("lessons", None, {}, ["lessons"]),
-            "rigger-windows": ("shell-guard", "open", {"shell-guard": guard}, ["shell-guard"]),
+            "rigger-windows": (None, None, {}, []),
             "rigger-shellwise": ("shell-guard", "closed", {"shell-guard": {
                 "kind": "hook", "target": "rigger-shellwise",
                 "rule_checker": "tools/rule-checker/rule_checker.py"}}, ["shell-guard"]),
@@ -146,6 +145,31 @@ class ManifestTests(unittest.TestCase):
                 got = (module.fills, module.failure_mode, module.provides, module.tests.get("contract"))
                 self.assertEqual(got, expected[root.name])
                 self.assertIn("fills", load_json(root / "rigger-module.json"))
+
+    def test_rigger_windows_manifest_names_only_its_files(self):
+        # Each task of PR C moves files out of rigger-windows: whatever its manifest, hooks.json commands and README
+        # still name must be in the plugin.
+        plugin = ROOT / "plugins" / "rigger-windows"
+        data = load_json(plugin / "rigger-module.json")
+        named = [("rules", item["file"]) for item in data["rules"]]
+        named += [("rule_checker", entry["rule_checker"]) for entry in data.get("provides", {}).values()
+                  if "rule_checker" in entry]
+        named += [("trigger", "skills/%s/SKILL.md" % skill.split(":", 1)[1])
+                  for trigger in data["triggers"] for skill in trigger["load"]]
+        named += [("hooks.json", target) for _, _, handler in hook_handlers(plugin / "hooks" / "hooks.json")
+                  for target in ROOT_PATH_RE.findall(handler["command"])]
+        readme = (plugin / "README.md").read_bytes().decode("utf-8")
+        named += [("README", path) for path in re.findall(r"`([\w.-]+(?:/[\w.*-]+)+/?)`", readme)]
+        self.assertGreaterEqual(len(named), 6, named)
+        for source, path in named:
+            with self.subTest(source=source, path=path):
+                self.assertTrue((plugin / path).exists(), path)
+        for pattern in data["tests"]["paths"]:
+            with self.subTest(source="tests.paths", path=pattern):
+                self.assertTrue(list(plugin.glob(pattern.rstrip("/"))), pattern)
+        for slot in data["tests"].get("contract", []):
+            with self.subTest(source="tests.contract", path=slot):
+                self.assertTrue((plugin / "tests" / "contract" / slot).is_dir(), slot)
 
     def test_rules_lists_every_rules_file_once(self):
         checked = 0
@@ -223,7 +247,7 @@ HOOK_EVENTS = frozenset(
 )
 # Exit 2 from a command hook stops the tool call, the prompt or the compaction.
 EXIT_2_BLOCKS = ("PreToolUse", "UserPromptSubmit", "PreCompact")
-FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-windows")
+FAIL_OPEN_PLUGINS = ("rigger-core", "rigger-testing")
 ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"
@@ -288,8 +312,8 @@ CONTEXT = "context-guard"
 # A hand-made settings.json that copied these hooks before installing the plugins ("Migrating a
 # hand-made setup" in README.md): (row, event, matcher, handler, fate once the plugins are
 # installed). A fate names the plugin that now ships the handler; "stays" is the user's own and stays
-# in settings.json; "replaced" goes, with a plugin script of another name doing the work, or rows
-# 9-12, 14 and 15 with row 19's `*git*` handler, which starts the git rule on every git call.
+# in settings.json; "replaced" goes, with a plugin script of another name doing the work: rows 8-21
+# by rigger-shellwise's guard and rigger-testing's commit_shadow.py (D79).
 HAND_MADE_HOOKS = (
     (1, "SessionStart", None, {"type": "command", "command": USER_COMMAND}, "stays"),
     (2, "SessionStart", None, {"type": "command", "command": INBOX_COMMAND}, "replaced"),
@@ -300,21 +324,21 @@ HAND_MADE_HOOKS = (
     (5, "PostCompact", None, guard_handler(CONTEXT, "compact_guard.py", "post"), "rigger-core"),
     (6, "UserPromptSubmit", None, {"type": "command", "command": TASK_LIST_COMMAND}, "stays"),
     (7, "UserPromptSubmit", None, guard_handler(CONTEXT, "context_guard.py"), "rigger-core"),
-    (8, "PreToolUse", "PowerShell", shell_guard("--pwsh-all", None, 10), "rigger-windows"),
+    (8, "PreToolUse", "PowerShell", shell_guard("--pwsh-all", None, 10), "replaced"),
     (9, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(git checkout *)", 10), "replaced"),
     (10, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git* checkout *)", 10), "replaced"),
     (11, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(git restore *)", 10), "replaced"),
     (12, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git* restore *)", 10), "replaced"),
-    (13, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*worktree remove *)", 10), "rigger-windows"),
+    (13, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*worktree remove *)", 10), "replaced"),
     (14, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git commit *)", 10), "replaced"),
     (15, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git* commit *)", 10), "replaced"),
-    (16, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*push *--no-veri*)", 10), "rigger-windows"),
-    (17, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*tee *)", 5), "rigger-windows"),
-    (18, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*safe-edit*)", 5), "rigger-windows"),
-    (19, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git*)", 10), "rigger-windows"),
-    (20, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*<<*)", 5), "rigger-windows"),
+    (16, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*push *--no-veri*)", 10), "replaced"),
+    (17, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*tee *)", 5), "replaced"),
+    (18, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*safe-edit*)", 5), "replaced"),
+    (19, "PreToolUse", "Bash", shell_guard("--only-git", "Bash(*git*)", 10), "replaced"),
+    (20, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*<<*)", 5), "replaced"),
     # The `if` is unescaped twice: eight backslashes match a literal `\\`.
-    (21, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*" + "\\" * 8 + "*)", 5), "rigger-windows"),
+    (21, "PreToolUse", "Bash", shell_guard("--only-narrow", "Bash(*" + "\\" * 8 + "*)", 5), "replaced"),
 )
 
 
@@ -413,7 +437,7 @@ class HookFileTests(unittest.TestCase):
         found = [handler for plugin in ("rigger-core", "rigger-testing")
                  for event, _group, handler in hook_handlers(ROOT / "plugins" / plugin / "hooks" / "hooks.json")
                  if event == "PreToolUse"]
-        self.assertEqual(len(found), 4)
+        self.assertEqual(len(found), 6)
         for handler in found:
             self.assertEqual(handler["timeout"], 20)
 
@@ -473,25 +497,6 @@ class HookFileTests(unittest.TestCase):
                     checked.append(plugin.name)
         self.assertEqual(sorted(checked), sorted(PLUGINS_WITH_CORE_CHECK))
 
-    def test_pretooluse_commands_still_deny_with_their_exit_zero(self):
-        event = json.dumps(
-            {"tool_name": "Bash", "tool_input": {"command": "git commit --no-verify -m x"}, "cwd": str(ROOT)}
-        ).encode("utf-8")
-        plugin = ROOT / "plugins" / "rigger-windows"
-        handlers = [
-            handler
-            for _, _, handler in hook_handlers(plugin / "hooks" / "hooks.json")
-            if "--only-git" in handler["command"] or "--pwsh-all" in handler["command"]
-        ]
-        self.assertEqual(len(handlers), 4)
-        data = tempfile.mkdtemp(prefix="hook-data-")
-        self.addCleanup(shutil.rmtree, data, True)
-        for handler in handlers:
-            with self.subTest(command=handler["command"]):
-                proc = self.run_hook(handler["command"], plugin, Path(data), event)
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertIn(b'"permissionDecision": "deny"', proc.stdout)
-
     def bare_plugin(self, plugin):
         """A copy of the plugin with its launcher and manifest but no scripts, under a path with a space."""
         base = Path(tempfile.mkdtemp(prefix="hook root "))
@@ -549,7 +554,7 @@ class DuplicateHookTests(unittest.TestCase):
         self.assertEqual(harness_start.describe(handler), "UserPromptSubmit, context_guard.py")
 
     def test_every_moved_row_is_a_plugin_handler_with_its_timeout(self):
-        for number, event, matcher, handler, fate in self.rows("rigger-core", "rigger-windows"):
+        for number, event, matcher, handler, fate in self.rows("rigger-core"):
             with self.subTest(row=number):
                 wanted = harness_start.handlers(settings_hooks([(number, event, matcher, handler, fate)]), "x")[0][1:]
                 path = ROOT / "plugins" / fate / "hooks" / "hooks.json"
@@ -562,19 +567,20 @@ class DuplicateHookTests(unittest.TestCase):
                 self.assertEqual(matches[0]["timeout"], handler["timeout"])
 
     def test_plugins_hold_no_handler_besides_the_table_and_the_known_ones(self):
-        moved = len(self.rows("rigger-core", "rigger-windows"))
+        moved = len(self.rows("rigger-core"))
         names = sorted(
             item.identity[1]
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 20)
+        self.assertEqual(len(names), moved + 22)
         self.assertEqual(names.count("state.py"), 1)
         self.assertEqual(names.count("core_check.sh"), 6)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
         self.assertEqual(names.count("harness_start.py"), 1)
         self.assertEqual(names.count("worktree_root.sh"), 1)
         self.assertEqual(names.count("stop_shadow.py"), 1)
+        self.assertEqual(names.count("commit_shadow.py"), 2)
         self.assertEqual(names.count("report_shadow.py"), 1)
         self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
@@ -600,7 +606,7 @@ class DuplicateHookTests(unittest.TestCase):
                 self.assertEqual([item.source for item in found if item.identity[1] == name], [])
 
     def test_all_moved_rows_are_named_on_a_hand_made_config(self):
-        self.assertEqual(len(self.check(HAND_MADE_HOOKS)), len(self.rows("rigger-core", "rigger-windows")))
+        self.assertEqual(len(self.check(HAND_MADE_HOOKS)), len(self.rows("rigger-core")))
 
 
 BOM_BYTES = chr(0xFEFF).encode("utf-8")

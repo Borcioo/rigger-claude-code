@@ -19,7 +19,7 @@ DEFAULT_SLOTS = json.loads((CORE_ROOT / "rigger-defaults.json").read_bytes().dec
 L1 = "L1:rigger-defaults.json"
 L3_FILE = "cfg/rigger/config.json"
 L4_FILE = "repo/.claude/rigger.json"
-ENABLED = frozenset(("rigger-core", "rigger-review", "rigger-testing", "rigger-windows", "rigger-lessons",
+ENABLED = frozenset(("rigger-core", "rigger-review", "rigger-testing", "rigger-shellwise", "rigger-lessons",
                      "superpowers"))
 COMMAND = ["reviewer-cli", "--out", "{out}"]
 EMPTY_SLOT = "the slot is empty"
@@ -38,11 +38,11 @@ class SlotsTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.core = self.module("rigger-core", agents=("reviewer", "worker", "implementer", "mapper"),
                                 skills=("testing",))
-        self.windows = self.module("rigger-windows", fills="shell-guard", failure_mode="open")
+        self.shellwise = self.module("rigger-shellwise", fills="shell-guard", failure_mode="closed")
         self.lessons = self.module("rigger-lessons", fills="lessons")
         self.review = self.module("rigger-review", agents=("reviewer",), fills="reviewer")
         self.testing = self.module("rigger-testing", skills=("testing",), fills="testing")
-        self.modules = [self.core, self.review, self.testing, self.windows, self.lessons]
+        self.modules = [self.core, self.review, self.testing, self.shellwise, self.lessons]
 
     def module(self, name, agents=(), skills=(), fills=None, failure_mode=None):
         root = self.tmp / name
@@ -78,32 +78,30 @@ def level(slot_values, **other):
 
 
 class ResolutionTests(SlotsTestCase):
-    def test_defaults_give_eleven_rows_on_windows_and_ten_elsewhere(self):
+    def test_defaults_give_eleven_rows_on_every_system(self):
         expected = [
             ("reviewer", "agent", "rigger-review:reviewer", "by-rule", (), None),
             ("worker", "agent", "rigger-core:worker", "by-rule", (), None),
             ("implementer", "agent", "rigger-core:implementer", "pinned", (), None),
             ("mapper", "agent", "rigger-core:mapper", "pinned", (), None),
             ("testing", "skill", "rigger-testing:testing", None, (), None),
-            ("shell-guard", "hook", "rigger-windows", None, ("rigger-windows",), "open"),
+            ("shell-guard", "hook", "rigger-shellwise", None, ("rigger-shellwise",), "closed"),
             ("lessons", "hook", "rigger-lessons", None, ("rigger-lessons",), None),
             ("process.brainstorm", "skill", "superpowers:brainstorming", None, (), None),
             ("process.plans", "skill", "superpowers:writing-plans", None, (), None),
             ("process.tdd", "skill", "superpowers:test-driven-development", None, (), None),
             ("process.debug", "skill", "superpowers:systematic-debugging", None, (), None),
         ]
-        rows, order, trusted, notices = self.resolve()
-        self.assertEqual(order, [item[0] for item in expected])
-        self.assertEqual(len(order), 11)
-        for path, kind, target, model, fillers, mode in expected:
-            row = rows[path]
-            self.assertEqual((row.kind, row.target, row.model, row.source, row.fillers, row.failure_mode, row.filled),
-                             (kind, target, model, "default", fillers, mode, True), path)
-        self.assertEqual((trusted, notices), (frozenset(), []))
-        for os_name in ("linux", "macos"):
-            _, order, _, notices = self.resolve(os_name=os_name)
-            self.assertEqual(order, [item[0] for item in expected if item[0] != "shell-guard"], os_name)
-            self.assertEqual(notices, [])
+        for os_name in ("windows", "linux", "macos"):
+            with self.subTest(os=os_name):
+                rows, order, trusted, notices = self.resolve(os_name=os_name)
+                self.assertEqual(order, [item[0] for item in expected])
+                self.assertEqual(len(order), 11)
+                for path, kind, target, model, fillers, mode in expected:
+                    row = rows[path]
+                    self.assertEqual((row.kind, row.target, row.model, row.source, row.fillers, row.failure_mode,
+                                      row.filled), (kind, target, model, "default", fillers, mode, True), path)
+                self.assertEqual((trusted, notices), (frozenset(), []))
 
     def test_fallback_walks_down_with_one_notice(self):
         rows, _, _, notices = self.resolve(l3=level({"worker": {"target": "rigger-core:mapper"}}),
@@ -153,7 +151,7 @@ class ResolutionTests(SlotsTestCase):
         core.name = "rigger-core"
         testing = self.module("testing-copy")
         testing.name = "rigger-testing"
-        rows, _, _, notices = self.resolve(modules=[core, testing, self.windows, self.lessons])
+        rows, _, _, notices = self.resolve(modules=[core, testing, self.shellwise, self.lessons])
         self.assertFalse(rows["testing"].filled)
         self.assertIn("rigger: slot testing from rigger-defaults.json ignored: rigger-testing has no skill testing; "
                       + EMPTY_SLOT, notices)
@@ -241,9 +239,10 @@ class ResolutionTests(SlotsTestCase):
                 self.assertEqual(notices, [])
 
     def test_a_slot_dropped_by_its_own_requires_fills_no_other_slot(self):
-        # The default shell-guard row requires os:windows: elsewhere it is left out, so a slot that requires it is
-        # left out too, and so is one that requires that slot in turn.
-        l3 = level({"mapper": {"requires": ["slot:shell-guard"]}, "worker": {"requires": ["slot:mapper"]}})
+        # A shell-guard row that requires os:windows is left out elsewhere, so a slot that requires it is left out
+        # too, and so is one that requires that slot in turn.
+        l3 = level({"shell-guard": {"requires": ["os:windows"]}, "mapper": {"requires": ["slot:shell-guard"]},
+                    "worker": {"requires": ["slot:mapper"]}})
         for os_name, kept in (("windows", True), ("linux", False), ("macos", False)):
             with self.subTest(os=os_name):
                 _, order, _, notices = self.resolve(l3=l3, os_name=os_name)
@@ -266,7 +265,7 @@ class InstallHintTests(SlotsTestCase):
         return core
 
     def test_level_one_defaults_give_one_install_line_each(self):
-        rows, _, _, notices = self.resolve(enabled=WITHOUT_MODULES, modules=[self.plain_core(), self.windows,
+        rows, _, _, notices = self.resolve(enabled=WITHOUT_MODULES, modules=[self.plain_core(), self.shellwise,
                                                                              self.lessons])
         self.assertEqual(notices, ["rigger: slot reviewer is empty: " + REVIEW_HINT,
                                    "rigger: slot testing is empty: " + TESTING_HINT])
@@ -302,7 +301,7 @@ class InstallHintTests(SlotsTestCase):
         # A personal file from before the move still names rigger-core's reviewer, which rigger-core no longer has.
         _, _, _, notices = self.resolve(l3=level({"reviewer": {"target": "rigger-core:reviewer"}}),
                                         enabled=ENABLED - {"rigger-review"},
-                                        modules=[self.plain_core(), self.testing, self.windows, self.lessons])
+                                        modules=[self.plain_core(), self.testing, self.shellwise, self.lessons])
         self.assertEqual(notices, ["rigger: slot reviewer from %s ignored: rigger-core has no agent reviewer; "
                                    "the slot is empty; %s" % (L3_FILE, REVIEW_HINT)])
 
@@ -320,7 +319,7 @@ class InstallHintTests(SlotsTestCase):
             with self.subTest(market=market):
                 core.marketplace = market
                 _, _, _, notices = self.resolve(enabled=ENABLED - {"rigger-review"},
-                                                modules=[core, self.testing, self.windows, self.lessons])
+                                                modules=[core, self.testing, self.shellwise, self.lessons])
                 self.assertEqual(notices, ["rigger: slot reviewer is empty: install rigger-review (claude plugin "
                                            "install rigger-review@%s)" % expected])
 
@@ -477,7 +476,7 @@ class FillerTests(SlotsTestCase):
         rows, _, _, notices = self.resolve()
         self.assertEqual((rows["lessons"].fillers, rows["lessons"].filled, rows["lessons"].failure_mode),
                          (("rigger-lessons",), True, None))
-        rows, _, _, notices = self.resolve(modules=[self.core, self.windows], enabled=ENABLED - {"rigger-lessons"})
+        rows, _, _, notices = self.resolve(modules=[self.core, self.shellwise], enabled=ENABLED - {"rigger-lessons"})
         self.assertEqual((rows["lessons"].fillers, rows["lessons"].filled, rows["lessons"].kind),
                          ((), False, "hook"))
         self.assertEqual(notices, [])
@@ -488,17 +487,17 @@ class FillerTests(SlotsTestCase):
         self.assertEqual(notices, [])
 
     def test_two_fillers_give_one_line_naming_both(self):
-        other = self.module("other-guard", fills="shell-guard", failure_mode="open")
+        other = self.module("other-guard", fills="shell-guard", failure_mode="closed")
         rows, _, _, notices = self.resolve(modules=self.modules + [other], enabled=ENABLED | {"other-guard"})
         row = rows["shell-guard"]
         self.assertEqual((row.fillers, row.failure_mode, row.modes_differ),
-                         (("rigger-windows", "other-guard"), "open", False))
-        self.assertEqual(notices, ["rigger: slot shell-guard is filled by rigger-windows and other-guard; "
+                         (("rigger-shellwise", "other-guard"), "closed", False))
+        self.assertEqual(notices, ["rigger: slot shell-guard is filled by rigger-shellwise and other-guard; "
                                    "disable one with claude plugin disable <name>"])
 
     def test_fillers_that_disagree_fail_closed(self):
         cases = [
-            # (failure modes of rigger-windows and the extra fillers, expected mode, modes differ)
+            # (failure modes of rigger-shellwise and the extra fillers, expected mode, modes differ)
             (("open", "closed"), "closed", True),
             (("closed", "open"), "closed", True),
             (("open", "closed", None), "closed", True),
@@ -507,7 +506,7 @@ class FillerTests(SlotsTestCase):
         ]
         for number, (modes, mode, differ) in enumerate(cases):
             with self.subTest(modes=modes):
-                self.windows.failure_mode = modes[0]
+                self.shellwise.failure_mode = modes[0]
                 extra = [self.module("guard-%d-%d" % (number, index), fills="shell-guard", failure_mode=value)
                          for index, value in enumerate(modes[1:])]
                 enabled = ENABLED | {item.name for item in extra}
@@ -522,7 +521,9 @@ class FillerTests(SlotsTestCase):
         self.assertEqual(notices, [])
         _, _, _, notices = self.resolve(l3=level({"lessons": {"target": "rigger-lessons"}}))
         self.assertEqual(notices, [])
-        _, order, _, notices = self.resolve(l3=level({"shell-guard": {"target": "my-guard"}}), os_name="linux")
+        # A slot its own requires leaves out names no missing filler.
+        _, order, _, notices = self.resolve(l3=level({"shell-guard": {"target": "my-guard", "requires": ["os:windows"]}}),
+                                            os_name="linux")
         self.assertNotIn("shell-guard", order)
         self.assertEqual(notices, [])
 

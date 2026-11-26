@@ -1,4 +1,4 @@
-"""The commit rule (shadow) on real repositories, and the hook-skipping rows through the real shell and real git.
+"""The commit rule (shadow) on real repositories.
 
 python -I -X utf8 test_commit_gate.py
 Ends with `# commit-gate: <n> passed, <m> failed`.
@@ -14,11 +14,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 if os.name != "nt":
-    print("# commit-gate: skipped on %s: Windows-only (the hook guards native Windows shells; the rows run "
-          "Git Bash and pwsh)" % sys.platform)
+    print("# commit-gate: skipped on %s: Windows-only (the cases run Git Bash and pwsh)" % sys.platform)
     sys.exit(0)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,7 +29,7 @@ HOME_ENV = ("USERPROFILE", "HOME", "APPDATA")
 SAVED_ENV = {name: os.environ.get(name) for name in HOME_ENV}
 FAKE_HOME = tempfile.mkdtemp(prefix="sg-gate-home-")
 os.environ.update(USERPROFILE=FAKE_HOME, HOME=FAKE_HOME, APPDATA=os.path.join(FAKE_HOME, "AppData", "Roaming"))
-import shell_guard  # noqa: E402
+import commit_shadow as shell_guard  # noqa: E402
 from rules_common import GUARD, _bounded  # noqa: E402
 
 # The commit rule. Most cases call commit_row on real repositories, since a hook process per case would add up; what
@@ -46,11 +44,11 @@ GATE_FILES = ("src/a.py", "src/b.py", "src/c.py", "docs/n.md")
 gate_templates = {}   # gates as JSON -> a finished repo: git init, add and commit are three spawns each
 GATE_ROW_FIELDS = {"ts", "sid8", "use12", "repo8", "op", "verdict", "reason", "staged", "deleted", "chained",
                    "newest_age_s", "check_age_s", "reflog_age_s", "git_op", "ms"}
-# The hook through its real entry point after argv[3], Python that replaces what the case needs.
+# The hook through its real entry point after argv[2], Python that replaces what the case needs.
 HOOK_DRIVER = (
     "import runpy, sys\n"
-    "guard, flag, prelude = sys.argv[1:4]\n"
-    "sys.argv = [guard, flag]\n"
+    "guard, prelude = sys.argv[1:3]\n"
+    "sys.argv = [guard]\n"
     "exec(prelude)\n"
     "runpy.run_path(guard, run_name='__main__')\n")
 REPORT_MODULES = "import atexit\natexit.register(lambda: open(%r, 'w').write('\\n'.join(sys.modules)))\n"
@@ -172,13 +170,12 @@ def gate_event(tool, cmd, cwd, use_id, transcript, **extra):
     return event
 
 
-def gate_hook(event, data, flag=None, prelude=None, drop=(), extra=None, guard=GUARD, cwd=None, timeout=30):
+def gate_hook(event, data, prelude=None, drop=(), extra=None, guard=GUARD, cwd=None, timeout=30):
     """One hook process; `data` is CLAUDE_PLUGIN_DATA, None for unset. Returns the finished process."""
-    flag = flag or ("--pwsh-all" if event["tool_name"] == "PowerShell" else "--only-git")
-    env = {k: v for k, v in os.environ.items() if k not in ("SHELL_GUARD", "CLAUDE_PLUGIN_DATA") + tuple(drop)}
+    env = {k: v for k, v in os.environ.items() if k not in ("TEST_EVIDENCE", "CLAUDE_PLUGIN_DATA") + tuple(drop)}
     env.update({} if data is None else {"CLAUDE_PLUGIN_DATA": data})
     env.update(extra or {})
-    args = [guard, flag] if prelude is None else ["-c", HOOK_DRIVER, guard, flag, prelude]
+    args = [guard] if prelude is None else ["-c", HOOK_DRIVER, guard, prelude]
     return subprocess.run([sys.executable, "-I", "-S"] + args, input=json.dumps(event).encode("utf-8"),
                           capture_output=True, timeout=timeout, env=env, cwd=cwd)
 
@@ -209,9 +206,9 @@ def gate_modules(path):
         return set(fh.read().split("\n"))
 
 
-def commit_gate_checks(root, settle):
+def commit_gate_checks(root):
     """The commit rule end to end on real repositories. CLAUDE_PLUGIN_DATA, sys.path, sys.pycache_prefix and ROW_CAP
-    are restored in finally. settle() returns when nothing else runs; the checks with a time window call it first."""
+    are restored in finally."""
     lab = os.path.join(root, "commit-gate")
     results = []   # (label, got, want)
     uses = itertools.count(1)
@@ -503,8 +500,8 @@ def commit_gate_checks(root, settle):
             want("dry run: " + flag, run(data, tool, "git commit %s -m m" % flag, repo, before), verdict="dry-run", staged=1)
         want("a word in the message is no dry run", run(data, "Bash", "git commit -m --dry-run", repo, before),
              verdict="stale")
-        want("marker", run(data, "Bash", "git commit -m m # shell-guard: allow", repo, before), verdict="marker", staged=1)
-        want("marker, PowerShell", run(data, "PowerShell", "git commit -m m # shell-guard: allow", repo, before),
+        want("marker", run(data, "Bash", "git commit -m m # shellwise: allow", repo, before), verdict="marker", staged=1)
+        want("marker, PowerShell", run(data, "PowerShell", "git commit -m m # shellwise: allow", repo, before),
              verdict="marker", staged=1)
         gate_git(repo, "reset", "-q", "--hard")
         blob = gate_git(repo, "hash-object", "-w", "src/a.py").decode("ascii").strip()
@@ -744,14 +741,12 @@ def commit_gate_checks(root, settle):
         gate_git(repo, "add", "src/a.py")
         gate_git(bare, "add", "src/a.py")
         before = gate_transcript(os.path.join(parent, "t.jsonl"), repo, PASS_BEFORE)
-        for tool, flag in (("Bash", "--only-git"), ("PowerShell", "--pwsh-all"), ("Bash", None), ("PowerShell", None)):
-            proc, use_id = hook(tool, "git commit -m m", repo, before, data, flag=flag or "--default")
-            want("main writes the row: %s %s" % (tool, flag), gate_row(data, use_id), verdict="stale")
-            results.append(("stdout stays empty: %s %s" % (tool, flag), (proc.stdout, proc.stderr, proc.returncode), (b"", b"", 0)))
-        proc, use_id = hook("Bash", "git commit -m m", repo, before, data, flag="--only-narrow")
-        none("the narrow handler writes none", gate_row(data, use_id))
-        proc, use_id = hook("Bash", "git commit -m m", repo, before, data, extra={"SHELL_GUARD": "off"})
-        none("SHELL_GUARD=off writes none", gate_row(data, use_id))
+        for tool in ("Bash", "PowerShell"):
+            proc, use_id = hook(tool, "git commit -m m", repo, before, data)
+            want("main writes the row: %s" % tool, gate_row(data, use_id), verdict="stale")
+            results.append(("stdout stays empty: %s" % tool, (proc.stdout, proc.stderr, proc.returncode), (b"", b"", 0)))
+        proc, use_id = hook("Bash", "git commit -m m", repo, before, data, extra={"TEST_EVIDENCE": "off"})
+        none("TEST_EVIDENCE=off writes none", gate_row(data, use_id))
         utc = os.path.join(parent, "utc")
         proc, use_id = hook("Bash", "git commit -m m", repo, before, utc, extra={"TZ": "EST5"})
         stamp = (gate_row(utc, use_id) or {}).get("ts", "1970-01-01T00:00:00Z")
@@ -780,10 +775,10 @@ def commit_gate_checks(root, settle):
         # Bytecode lands in the data folder, not beside the scripts or in the cwd.
         copied = os.path.join(parent, "copy")
         os.makedirs(copied)
-        for name in ("shell_guard.py", "turn_evidence.py"):
+        for name in ("commit_shadow.py", "turn_evidence.py"):
             shutil.copy(os.path.join(os.path.dirname(GUARD), name), copied)
         out = os.path.join(parent, "bytecode")
-        proc, use_id = hook("Bash", "git commit -m m", repo, before, out, guard=os.path.join(copied, "shell_guard.py"), cwd=repo)
+        proc, use_id = hook("Bash", "git commit -m m", repo, before, out, guard=os.path.join(copied, "commit_shadow.py"), cwd=repo)
         want("through a copy of the scripts", gate_row(out, use_id), verdict="stale")
         results.append(("no __pycache__ beside the scripts", os.path.exists(os.path.join(copied, "__pycache__")), False))
         results.append(("no __pycache__ in the cwd", os.path.exists(os.path.join(repo, "__pycache__")), False))
@@ -844,7 +839,7 @@ def commit_gate_checks(root, settle):
             env = dict(os.environ, CLAUDE_PLUGIN_DATA=folder)
             held = []
             for _ in range(2):
-                held.append(subprocess.Popen([sys.executable, "-I", "-S", GUARD, "--only-git"], stdin=subprocess.PIPE,
+                held.append(subprocess.Popen([sys.executable, "-I", "-S", GUARD], stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env))
                 held[-1].communicate(json.dumps(event).encode("utf-8"), timeout=30)
             names = gate_rows(folder)
@@ -852,20 +847,16 @@ def commit_gate_checks(root, settle):
             want("tool_use_id %s" % label, gate_row_file(folder, "".join(names[:1]) or "no-row"), verdict="error",
                  reason="use_id", use12=None)
 
-        # A deny stays first, and quick. No row, since the call never runs.
-        settle()
-        parent, data = scene("deny")
+        # A command the shell guard denies still gets its row: the guard runs in its own handler (D79).
+        parent, data = scene("denied")
         repo = gate_repo(parent)
         gate_write(repo, "src/a.py")
         gate_git(repo, "add", "src/a.py")
+        before = gate_transcript(os.path.join(parent, "t.jsonl"), repo, PASS_BEFORE)
         for tool in ("Bash", "PowerShell"):
-            began = time.monotonic()
-            proc, use_id = hook(tool, "git commit --no-verify -m m", repo, None, data, prelude=SLEEPING_GIT)
-            took = time.monotonic() - began
-            results.append(("%s deny skips the wait (%.2f)" % (tool, took), took < 2, True))
-            results.append(("%s deny arrives" % tool, b"permissionDecision" in proc.stdout, True))
-            none("%s deny claims no row" % tool, gate_row(data, use_id))
-        results.append(("deny leaves the rows folder empty", gate_rows(data), []))
+            proc, use_id = hook(tool, "git commit --no-verify -m m", repo, before, data)
+            want("%s --no-verify commit gets its row" % tool, gate_row(data, use_id), verdict="stale")
+            results.append(("%s --no-verify commit prints nothing" % tool, (proc.stdout, proc.returncode), (b"", 0)))
 
         # A hung git or a hung read: the hook's stdout reaches EOF inside the wait; captured pipes prove no child holds it.
         def hung(transcript, prelude):
@@ -938,10 +929,10 @@ def commit_gate_checks(root, settle):
         os.makedirs(arrived)
         os.makedirs(markers)
         prelude = COUNT_GIT % markers + CLAIM_BARRIER % (2, arrived)
-        env = {k: v for k, v in os.environ.items() if k != "SHELL_GUARD"}
+        env = {k: v for k, v in os.environ.items() if k != "TEST_EVIDENCE"}
         env["CLAUDE_PLUGIN_DATA"] = data
         event = json.dumps(gate_event("Bash", "git commit -m m", repo, "toolu_race", before)).encode("utf-8")
-        racers = [subprocess.Popen([sys.executable, "-I", "-S", "-c", HOOK_DRIVER, GUARD, "--only-git", prelude],
+        racers = [subprocess.Popen([sys.executable, "-I", "-S", "-c", HOOK_DRIVER, GUARD, prelude],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
                   for _ in range(2)]
         for racer in racers:
@@ -985,329 +976,14 @@ def commit_gate_checks(root, settle):
     return failed, len(results)
 
 
-# Each spelling through the real shell and real git; the hook log says what git did with it. (tool, command kind,
-# command, effect): "skips" the hook stayed silent on a command git ran, "runs" the hook logged, "refused" git
-# exited non-zero and the hook stayed silent, "no-commit" exit 0, HEAD did not move, the hook stayed silent;
-# "ignored" the hook logged, though the rule refuses the class. The guard must deny "skips" and "ignored" only.
-BYPASS_WORKERS = 6
-BYPASS_COMMIT = "git commit --allow-empty -q -m x"
-BYPASS_NV = "git commit --no-verify --allow-empty -q -m x"
-BYPASS_HOOK = {"commit": "pre-commit", "merge": "pre-merge-commit", "rebase": "pre-rebase",
-               "cherry-pick": "prepare-commit-msg", "am": "pre-applypatch", "push": "pre-push"}
-BYPASS_COUNT = "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0={nh} "
-BYPASS_PARAMS = "GIT_CONFIG_PARAMETERS=\"'core.hooksPath={nh}'\" "
-BYPASS_ROWS = [
-    ("Bash", "commit", BYPASS_COMMIT, "runs"),
-    ("PowerShell", "commit", BYPASS_COMMIT, "runs"),
-    ("Bash", "merge", "git merge --no-edit side", "runs"),
-    ("Bash", "rebase", "git rebase main", "runs"),
-    ("Bash", "cherry-pick", "git cherry-pick side", "runs"),
-    ("Bash", "am", "git am {patch}", "runs"),
-    ("Bash", "push", "git push origin main", "runs"),
-    # --no-verify per command
-    ("Bash", "commit", "git commit --no-verify --allow-empty -q -m x", "skips"),
-    ("Bash", "commit", "git commit --no-veri --allow-empty -q -m x", "skips"),
-    ("Bash", "commit", "git commit --no-ver --allow-empty -q -m x", "refused"),
-    ("Bash", "merge", "git merge --no-verify --no-edit side", "skips"),
-    ("Bash", "merge", "git merge --verify --no-verify --no-edit side", "skips"),
-    ("Bash", "merge", "git merge --no-veri --no-edit side", "refused"),
-    ("Bash", "merge", "git merge --no-verif --no-edit side", "refused"),
-    ("Bash", "merge", "git merge -n --no-edit side", "runs"),
-    ("Bash", "merge", "git merge --no-verify --verify --no-edit side", "runs"),
-    ("Bash", "merge", "git merge --no-verify-signatures --no-edit side", "runs"),
-    ("Bash", "merge", "git merge -m --no-verify side", "runs"),
-    ("Bash", "rebase", "git rebase --no-verify main", "skips"),
-    ("Bash", "rebase", "git rebase --no-veri main", "skips"),
-    ("Bash", "rebase", "git rebase --no-ver main", "refused"),
-    ("Bash", "rebase", "git rebase -n main", "runs"),
-    ("Bash", "rebase", "git rebase --no-verify --veri main", "runs"),
-    ("Bash", "rebase", "git rebase -X --no-verify main", "runs"),
-    ("Bash", "cherry-pick", "git cherry-pick --no-verify side", "refused"),
-    ("Bash", "cherry-pick", "git cherry-pick -n side", "no-commit"),
-    ("Bash", "am", "git am --no-verify {patch}", "skips"),
-    ("Bash", "am", "git am --no-v {patch}", "skips"),
-    ("Bash", "am", "git am -n {patch}", "skips"),
-    ("Bash", "am", "git am -3n {patch}", "skips"),
-    ("Bash", "am", "git am -p1 -n {patch}", "skips"),
-    # `-n` is -p's value, never --no-verify: git before 2.56 runs the hook, 2.56 refuses a non-number
-    ("Bash", "am", "git am -p -n {patch}", "never-skips"),
-    ("Bash", "am", "git am --no-verify --v {patch}", "runs"),
-    ("Bash", "am", "git am --directory --no-verify {patch}", "runs"),
-    ("Bash", "push", "git push --no-verify origin main", "skips"),
-    ("Bash", "push", "git push -n origin main", "runs"),
-    # the override on each protected command
-    ("Bash", "commit", "git -c core.hooksPath={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "merge", "git -c core.hooksPath={nh} merge --no-edit side", "skips"),
-    ("Bash", "rebase", "git -c core.hooksPath={nh} rebase main", "skips"),
-    ("Bash", "cherry-pick", "git -c core.hooksPath={nh} cherry-pick side", "skips"),
-    ("Bash", "am", "git -c core.hooksPath={nh} am {patch}", "skips"),
-    ("Bash", "push", "git -c core.hooksPath={nh} push origin main", "skips"),
-    # spellings git still accepts
-    ("Bash", "commit", "git -c Core.HooksPath={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c core.HOOKSPATH={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c core.hooksPath= " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c 'core.hooksPath={nh}' " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git \"-c\" core.hooksPath={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c core.hook\"sPath\"={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c core.hook\\sPath={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c $'core.hooks\\x50ath={nh}' " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "k=core.hooksPath; git -c $k={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git --attr-source HEAD -c core.hooksPath={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "V={nh} git --config-env=core.hooksPath=V " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "V={nh} git --config-env core.hooksPath=V " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "V={nh} git --config-env=CORE.hookspath=V " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c include.path={inc} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c INCLUDE.PATH={inc} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c includeIf.onbranch:main.path={inc} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -c INCLUDEIF.onbranch:main.PATH={inc} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "V={inc} git --config-env=include.path=V " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "V={inc} git --config-env=includeIf.onbranch:main.path=V " + BYPASS_COMMIT[4:], "skips"),
-    ("PowerShell", "commit", "git -c \"core.hooksPath={nh}\" " + BYPASS_COMMIT[4:], "skips"),
-    ("PowerShell", "commit", "git -c core.hook`sPath={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("PowerShell", "commit", "$k='core.hooksPath'; git -c \"$k={nh}\" " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "git -ccore.hooksPath={nh} " + BYPASS_COMMIT[4:], "refused"),   # one word: unknown option
-    ("Bash", "commit", "V={nh} git --config-en=core.hooksPath=V " + BYPASS_COMMIT[4:], "refused"),
-    ("Bash", "commit", "git -c includeIf.GITDIR:{repo}/.path={inc} " + BYPASS_COMMIT[4:], "ignored"),
-    # twins: another key, or one with a subsection where git takes none
-    ("Bash", "commit", "git -c user.name=x " + BYPASS_COMMIT[4:], "runs"),
-    ("Bash", "commit", "git -c core.x.hooksPath={nh} " + BYPASS_COMMIT[4:], "runs"),
-    ("Bash", "commit", "git -c include.x.path={inc} " + BYPASS_COMMIT[4:], "runs"),
-    ("Bash", "commit", "git -c includeIf.path={inc} " + BYPASS_COMMIT[4:], "runs"),
-    # the environment
-    ("Bash", "commit", BYPASS_COUNT + BYPASS_COMMIT, "skips"),
-    ("Bash", "push", BYPASS_COUNT + "git push origin main", "skips"),
-    ("Bash", "commit", BYPASS_COUNT.replace("GIT_CONFIG", "git_config") + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_COUNT.replace("=core.hooksPath", "=Core.HOOKSPATH") + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_COUNT.replace("=core.hooksPath", "=include.path").replace("{nh}", "{inc}")
-     + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_COUNT.replace("COUNT=1", "COUNT=01") + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "GIT_CONFIG_COUNT=+1 " + BYPASS_COUNT.split(" ", 1)[1] + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x GIT_CONFIG_KEY_1=core.hooksPath "
-     "GIT_CONFIG_VALUE_1={nh} " + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_PARAMS.replace("GIT_CONFIG_PARAMETERS", "git_config_parameters") + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "export " + BYPASS_PARAMS.strip() + "; " + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "export " + BYPASS_COUNT.strip() + "; " + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "declare -x " + BYPASS_PARAMS.strip() + "; " + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_PARAMS.strip() + "; export GIT_CONFIG_PARAMETERS; " + BYPASS_COMMIT, "skips"),
-    # the flag held in a variable
-    ("Bash", "commit", "NV=--no-verify; git commit $NV --allow-empty -q -m x", "skips"),
-    ("Bash", "commit", "OPTS=\"--no-verify -q\"; git commit $OPTS --allow-empty -m x", "skips"),
-    ("Bash", "commit", "C=commit; git $C --no-verify --allow-empty -q -m x", "skips"),
-    ("PowerShell", "commit", "$f='--no-verify'; git commit $f --allow-empty -q -m x", "skips"),
-    ("Bash", "commit", "m='a --no-verify b'; git commit --allow-empty -q -m \"$m\"", "runs"),
-    ("Bash", "commit", "E=; git commit --allow-empty -q -m $E --no-verify", "runs"),
-    ("Bash", "commit", "OPTS=\"--no-verify -q\"; git commit \"$OPTS\" --allow-empty -m x", "refused"),
-    ("PowerShell", "commit", "$o='--no-verify -q'; git commit $o --allow-empty -m x", "refused"),
-    # a value only the shell knows
-    ("Bash", "commit", "k=$(echo core.hooksPath); git -c \"$k={nh}\" " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "k=`echo core.hooksPath`; git -c $k={nh} " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "b=.hooksPath; k=\"core$b\"; git -c \"$k={nh}\" " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "k=(core.hooksPath); git -c \"$k={nh}\" " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "k=user.name; k=$(echo core.hooksPath); git -c \"$k={nh}\" " + BYPASS_COMMIT[4:], "skips"),
-    ("Bash", "commit", "v=\"$(echo \"'core.hooksPath={nh}'\")\"; GIT_CONFIG_PARAMETERS=$v " + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "n=$(echo 1); GIT_CONFIG_COUNT=$n GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0={nh} "
-     + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "x=$(echo y); git -c \"user.name=$x\" " + BYPASS_COMMIT[4:], "runs"),
-    ("Bash", "commit", "env " + BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "/usr/bin/env " + BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "env.exe " + BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "env -u X " + BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "env -C . " + BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", "env --unset=X " + BYPASS_PARAMS + BYPASS_COMMIT, "skips"),
-    ("PowerShell", "commit", "$env:GIT_CONFIG_COUNT='1'; $env:GIT_CONFIG_KEY_0='core.hooksPath'; "
-     "$env:GIT_CONFIG_VALUE_0='{nh}'; " + BYPASS_COMMIT, "skips"),
-    ("PowerShell", "commit", "$env:GIT_CONFIG_COUNT = 1; $env:GIT_CONFIG_KEY_0 = 'core.hooksPath'; "
-     "$env:GIT_CONFIG_VALUE_0 = '{nh}'; " + BYPASS_COMMIT, "skips"),
-    ("PowerShell", "commit", "$ENV:git_config_parameters=\"'core.hooksPath={nh}'\"; " + BYPASS_COMMIT, "skips"),
-    ("PowerShell", "commit", "${env:GIT_CONFIG_PARAMETERS}=\"'core.hooksPath={nh}'\"; " + BYPASS_COMMIT, "skips"),
-    ("PowerShell", "commit", "$v=\"'core.hooksPath={nh}'\"; $env:GIT_CONFIG_PARAMETERS=$v; " + BYPASS_COMMIT, "skips"),
-    # twins of the environment
-    ("Bash", "commit", BYPASS_COUNT.replace("=core.hooksPath", "=user.name") + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x GIT_CONFIG_KEY_1=core.hooksPath "
-     "GIT_CONFIG_VALUE_1={nh} " + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", BYPASS_COUNT.replace("COUNT=1", "COUNT=0") + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", BYPASS_COUNT.replace("GIT_CONFIG_COUNT=1 ", "") + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", BYPASS_COUNT.replace("COUNT=1", "COUNT=") + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", "GIT_CONFIG_PARAMETERS= " + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", BYPASS_PARAMS.strip() + "; " + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", "declare " + BYPASS_PARAMS.strip() + "; " + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", "export GIT_CONFIG_PARAMETERS; " + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", "export GIT_CONFIG_PARAMETERS; " + BYPASS_PARAMS.strip() + "; " + BYPASS_COMMIT, "skips"),
-    ("Bash", "commit", BYPASS_PARAMS.replace("GIT_CONFIG_PARAMETERS", "git_config_parameters").strip()
-     + "; export git_config_parameters; " + BYPASS_COMMIT, "skips"),
-    ("PowerShell", "commit", "$env:GIT_CONFIG_PARAMETERS=\"'core.hooksPath={nh}'\"; "
-     "$env:GIT_CONFIG_PARAMETERS=$null; " + BYPASS_COMMIT, "runs"),
-    ("PowerShell", "commit", "$env:GIT_CONFIG_PARAMETERS=\"'core.hooksPath={nh}'\"; "
-     "$env:GIT_CONFIG_PARAMETERS=$NULL; " + BYPASS_COMMIT, "runs"),
-    ("PowerShell", "commit", BYPASS_COMMIT + "; $env:GIT_CONFIG_PARAMETERS=\"'core.hooksPath={nh}'\"", "runs"),
-    # a backtick body runs, in and out of double quotes, and bash drops the backslash of \` \$ \\ (and \" in quotes)
-    ("Bash", "commit", "echo `" + BYPASS_NV + "`", "skips"),
-    ("Bash", "commit", "echo \"`" + BYPASS_NV + "`\"", "skips"),
-    ("Bash", "commit", "echo `echo \\`" + BYPASS_NV + "\\``", "skips"),
-    ("Bash", "commit", "echo \"`echo \\`" + BYPASS_NV + "\\``\"", "skips"),
-    ("Bash", "commit", "echo `\\\n#x\n" + BYPASS_NV + "`", "skips"),
-    ("Bash", "commit", "echo `git commit --allow-empty -q -m \\\"a --no-verify -m b\\\"`", "skips"),
-    ("Bash", "commit", "echo \"`git commit --allow-empty -q -m \\\"a --no-verify b\\\"`\"", "runs"),
-    ("Bash", "commit", "echo `echo \\`echo \\\\\\`" + BYPASS_NV + "\\\\\\`\\``", "skips"),
-    # a double-quoted message runs its ticks: the first row's body is the bypass, the others leave the hook on
-    ("Bash", "commit", "git commit --allow-empty -q -m \"a `" + BYPASS_NV + "`\"", "ignored"),
-    ("Bash", "commit", "git commit --allow-empty -q -m \"see `printf x`\"", "runs"),
-    ("Bash", "commit", "git commit --allow-empty -q -m \"add `--no-verify` docs\"", "runs"),
-    ("Bash", "commit", "git commit --allow-empty -q -m 'add `--no-verify` docs'", "runs"),
-    ("Bash", "commit", "echo `echo \"\\$(" + BYPASS_NV + ")\"`", "skips"),
-    # twins: no body runs, or the body lists no such command
-    ("Bash", "commit", "echo `git log`", "no-commit"),
-    ("Bash", "commit", "echo '`" + BYPASS_NV + "`'", "no-commit"),
-    ("Bash", "commit", "cat <<'EOF'\n`" + BYPASS_NV + "`\nEOF", "no-commit"),
-    ("Bash", "commit", "echo \\`" + BYPASS_NV.replace(" -q", "") + "\\`", "no-commit"),
-    ("Bash", "commit", "echo \"\\`" + BYPASS_NV + "\\`\"", "no-commit"),
-    ("Bash", "commit", "echo `" + BYPASS_COMMIT + "`", "runs"),
-    ("Bash", "commit", "echo `it's`; " + BYPASS_COMMIT, "runs"),
-    ("Bash", "commit", "echo `" + BYPASS_NV + "; echo 'x`", "no-commit"),
-    # a heredoc delimiter in pieces: the command after it runs, and a line equal to one piece ends nothing
-    ("Bash", "commit", "cat <<'E'OF\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<\"E\"OF\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<E'OF'\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<E\"O\"F\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<E\\\nOF\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<\\\n  EOF\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<\"E\\\nOF\"\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<\\" + "EOF\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<E\\OF\nbody\nEOF\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<'E F'\nbody\nE F\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<\"E\\\"F\"\nbody\nE\"F\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<'E\\F'\nbody\nE\\F\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<''\nbody\n\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<E`x y`\nbody\nE`x y`\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<$x\nbody\n$x\n" + BYPASS_NV, "skips"),
-    ("Bash", "commit", "cat <<'E'OF; " + BYPASS_NV + "\nbody\nEOF", "skips"),
-    ("Bash", "commit", "cat <<'E'OF\nE\n" + BYPASS_NV + "\nEOF", "no-commit"),
-    ("Bash", "commit", "cat <<E\\\nOF\nE\n" + BYPASS_NV + "\nEOF", "no-commit"),
-    ("Bash", "commit", "cat <<\"E\"OF\nOF\n" + BYPASS_NV + "\nEOF", "no-commit"),
-    ("Bash", "commit", "cat <<'E\\F'\nEF\n" + BYPASS_NV + "\nE\\F", "no-commit"),
-    ("Bash", "commit", "cat <<\"$x\"\n" + BYPASS_NV + "\n$x", "no-commit"),
-]
-
-
-def bypass_template(parent):
-    """A repo with every hook logging, a branch per scenario, a bare remote, a patch, and what an override points at."""
-    tree = os.path.join(parent, "bypass")
-    repo = os.path.join(tree, "r")
-    os.makedirs(os.path.join(tree, "nohooks"))
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", os.path.join(tree, "remote.git")], check=True, timeout=60)
-    os.makedirs(repo)
-    gate_git(repo, "init", "-q", "-b", "main")
-    gate_git(repo, "remote", "add", "origin", "../remote.git")
-    gate_write(repo, "a.txt", text="base")
-    gate_git(repo, "add", "-A")
-    gate_git(repo, "commit", "-q", "-m", "base")
-    gate_git(repo, "branch", "side")
-    gate_git(repo, "branch", "topic")
-    for branch in ("side", "topic", "main"):
-        gate_git(repo, "switch", "-q", branch)
-        gate_write(repo, branch + ".txt", text=branch)
-        gate_git(repo, "add", "-A")
-        gate_git(repo, "commit", "-q", "-m", branch)
-    with open(os.path.join(tree, "side.patch"), "wb") as fh:
-        fh.write(gate_git(repo, "format-patch", "-1", "--stdout", "side"))
-    with open(os.path.join(tree, "inc.cfg"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("[core]\n\thooksPath = %s\n" % os.path.join(tree, "nohooks").replace("\\", "/"))
-    with open(os.path.join(tree, "global.cfg"), "w", encoding="utf-8") as fh:
-        fh.write("[user]\n\tname = t\n\temail = t@example.com\n[core]\n\tautocrlf = false\n")
-    for hook_name in set(BYPASS_HOOK.values()):
-        with open(os.path.join(repo, ".git", "hooks", hook_name), "w", encoding="utf-8", newline="\n") as fh:
-            fh.write('#!/bin/sh\necho %s >> "$BYPASS_LOG"\n' % hook_name)
-    return tree
-
-
-def bypass_run(tree, parent, base_env, index, tool, kind, command):
-    """Runs command in a fresh copy of tree; (the command as run, its folder, exit code, HEAD moved, hook logged)."""
-    copy = shutil.copytree(tree, os.path.join(parent, "b%03d" % index))
-    repo = os.path.join(copy, "r")
-    slashed = copy.replace("\\", "/")
-    text = command
-    for slot, path in (("{nh}", "/nohooks"), ("{inc}", "/inc.cfg"), ("{repo}", "/r"), ("{patch}", "/side.patch")):
-        text = text.replace(slot, slashed + path)
-    log = os.path.join(copy, "hook.log")
-    env = dict(base_env)
-    home = os.path.join(copy, "home")   # rows run side by side: no profile, temp or config path is shared
-    os.makedirs(home)
-    # pwsh first runs at once in fresh profile folders hung for a minute or more in a probe; the opt-out ended it.
-    env.update(BYPASS_LOG=log.replace("\\", "/"), GIT_CONFIG_NOSYSTEM="1", GIT_EDITOR="true", POWERSHELL_TELEMETRY_OPTOUT="1",
-               GIT_CONFIG_GLOBAL=os.path.join(copy, "global.cfg"),
-               USERPROFILE=home, HOME=home, APPDATA=home, TEMP=home, TMP=home)
-    if kind == "rebase":
-        gate_git(repo, "switch", "-q", "topic")
-    tip = "refs/remotes/origin/main" if kind == "push" else "HEAD"
-    before = gate_git(repo, "rev-parse", "-q", "--verify", tip, check=False)
-    script = os.path.join(copy, "row.sh")   # a file: bash.exe collapses `\\` in its command line
-    with open(script, "w", encoding="utf-8", newline="") as fh:
-        fh.write(text)
-    shell = ([os.path.join(os.environ["ProgramFiles"], "Git", "bin", "bash.exe"), script.replace("\\", "/")] if tool == "Bash"
-             else ["pwsh", "-NoProfile", "-NonInteractive", "-Command", text])
-    proc = subprocess.run(shell, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
-    logged = os.path.exists(log) and BYPASS_HOOK[kind] in open(log, encoding="utf-8").read()
-    return (text, repo, proc.returncode, gate_git(repo, "rev-parse", "-q", "--verify", tip, check=False) != before, logged,
-            proc.stderr.decode("utf-8", "replace").strip()[:300])
-
-
-def bypass_runs(root):
-    """Every row through the real shell and git, BYPASS_WORKERS at once; the runs in row order. The environment is read
-    here once: the commit rule changes CLAUDE_PLUGIN_DATA in this process meanwhile, and no row may see it."""
-    parent = os.path.join(root, "bypass-runs")
-    os.makedirs(parent)
-    base_env = {k: v for k, v in os.environ.items()
-                if not k.upper().startswith("GIT_") and k != "CLAUDE_PLUGIN_DATA"}
-    tree = bypass_template(parent)
-    with ThreadPoolExecutor(max_workers=BYPASS_WORKERS) as pool:
-        return list(pool.map(lambda numbered: bypass_run(tree, parent, base_env, numbered[0], *numbered[1][:3]),
-                             enumerate(BYPASS_ROWS)))
-
-
-def hook_bypass_checks(runs):
-    """deny == the hook really stayed silent on a command git ran, row by row; nothing here is a canonical spelling alone.
-    The judgement stays on this thread, in row order."""
-    failed = ran = 0
-    for (tool, kind, command, effect), (text, repo, code, moved, logged, stderr) in zip(BYPASS_ROWS, runs):
-        ran += 1
-        seen = {"skips": code == 0 and moved and not logged, "runs": code == 0 and logged,
-                "ignored": code == 0 and logged, "refused": code != 0 and not logged,
-                "no-commit": code == 0 and not moved and not logged,
-                "never-skips": (code == 0 and logged) or (code != 0 and not moved and not logged)}[effect]
-        got = next((f.rule for f in shell_guard.check_git(tool, text, repo) if f.deny), None)
-        want = "git-no-verify" if effect in ("skips", "ignored") else None
-        if not seen or got != want:
-            failed += 1
-            print("BYPASS FAIL  want=%s %s got=%s real=%s code=%s moved=%s logged=%s  %s: %r  stderr: %r"
-                  % (effect, want, got, seen, code, moved, logged, tool, command[:100], stderr))
-    # a run that executed no row, or lost its controls, proves nothing
-    if ran != len(BYPASS_ROWS) or sum(1 for r in BYPASS_ROWS if r[3] == "skips") < 50:
-        failed += 1
-        print("BYPASS FAIL  rows run: %d of %d" % (ran, len(BYPASS_ROWS)))
-    print("hook bypass rows: %d/%d pass" % (ran - failed, ran))
-    return failed, ran
-
-
 def main():
     import stat
     root = tempfile.mkdtemp(prefix="sg-")
-    # The shell and git runs of the bypass rows wait on process creation, so they run beside the commit rule's checks;
-    # those stop at the first check that reads the clock (settle) until every row has ended.
-    background = ThreadPoolExecutor(max_workers=1)
-    rows = background.submit(bypass_runs, root)
     try:
-        failed = total = 0
-        section_failed, section_total = commit_gate_checks(root, rows.result)
-        failed += section_failed
-        total += section_total
-        section_failed, section_total = hook_bypass_checks(rows.result())
-        failed += section_failed
-        total += section_total
+        failed, total = commit_gate_checks(root)
         print("# commit-gate: %d passed, %d failed" % (total - failed, failed))
         return 1 if failed else 0
     finally:
-        background.shutdown(wait=True)
         def writable(func, path, _exc):
             os.chmod(path, stat.S_IWRITE)   # git's object files are read-only
             func(path)

@@ -13,34 +13,6 @@ plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_after_letter
 plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_after_digit": ("see ab9C:\\temp\\x now", "see ab<n>C:\\temp\\x now"),
 plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_double_slash": ("open C://host/share now", "open C://host/share now"),
 plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_double_backslash": ("open C:\\\\share\\x now", "open C:\\\\share\\x now"),
-# shell-guard rule fixtures: fake Windows paths (drive, UNC, Git Bash forms) the rules under test must see
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\timer
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x\\tests\\
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:/x
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	D:/x
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:/tools/php.exe
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:/src/x
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\\\src\\\\x\\\\tool.exe
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	D:\\x
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x;
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\msg.txt
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\body.txt
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	D:\\tools\\safe-edit\\safe-edit.ps1
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\scan.ps1
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\a.txt
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\Windows\System32\bash.exe
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	F:\\x;
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\\Program
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\\Windows\\System32\\bash.exe
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\other.ps1
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\tmp\g1g5
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\tmp\\a
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:\\src\\x\\a.php
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	X:/tmp/a.txt
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\\\server\\share\\a.txt
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	C:\\Windows\\System32\\drivers\\etc
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\srv\share\x
 # drift-lint fixtures: fake drive and backslash paths the path check under test must find or skip
 plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*\\skills\\
 plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\<domain
@@ -52,11 +24,6 @@ plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\pre-<
 plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he*.md
 plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\name...
 plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\caf\xff.md
-# shell-guard fixtures: profile-derived Herd and Composer paths that the unset-env and derived-path checks compare
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\.config\\herd\\bin\\php84\\php.exe\
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\.config\\herd\\bin\\
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\.config\\herd\\bin
-plugins/rigger-windows/tools/shell-guard/tests/test_rules.py	\\Composer\\vendor\\bin
 # token-audit fixtures: Windows paths and two example hosts that the error-line normaliser and the lessons lint must rewrite or tell apart
 plugins/rigger-core/tools/token-audit/tests/test_archive.py	C:\\Users\\someone\\.claude\\plugins\\cache\\superpowers-marketplace\\episodic-memory\\1.6.0\\
 plugins/rigger-core/tools/token-audit/tests/test_archive.py	C:\Users\someone\.claude\skills\x\SKILL.md#A
@@ -68,16 +35,16 @@ plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	X:\\\\Temp\\\\x\
 plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	\\sites\\a.txt
 plugins/rigger-core/tools/token-audit/tests/test_token_audit.py	X:\\sites\\b.txt
 # Transcript reader: its timestamp regex and the check commands its tests read.
-plugins/rigger-windows/tools/shell-guard/turn_evidence.py	d:\d\d:\d\d(?:\.\d+
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:/Program
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:/py/python.exe
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:/py/python.exe\
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	C:\\py\\python.exe
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	X:/w/app
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	\\\r\n
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	\\other\\tests
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	x:/w/app
-plugins/rigger-windows/tools/shell-guard/tests/test_turn_evidence.py	x:/w/other/tests
+plugins/rigger-testing/tools/test-evidence/turn_evidence.py	d:\d\d:\d\d(?:\.\d+
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	C:/Program
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	C:/py/python.exe
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	C:/py/python.exe\
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	C:\\py\\python.exe
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	X:/w/app
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	\\\r\n
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	\\other\\tests
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	x:/w/app
+plugins/rigger-testing/tools/test-evidence/tests/test_turn_evidence.py	x:/w/other/tests
 # rigger-panel fixtures: fake config dirs in Windows and POSIX form the resolver must handle
 plugins/rigger-panel/hooks/register.test.tsx	const CONFIG = '/Users/boss/.claude'
 plugins/rigger-panel/hooks/register.test.tsx	['Windows variable, backslashes', { CLAUDE_CONFIG_DIR: 'C:\\Users\\boss\\.claude' }, '/Users/boss/.claude'],

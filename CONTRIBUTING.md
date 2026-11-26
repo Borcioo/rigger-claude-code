@@ -111,11 +111,11 @@ gets an exact entry in `ALLOWED_DOMAINS`; an accepted exception is an exact `pat
   traces show a plugin that failed to load.
 - `scripts/mutate_parse.py` is a library for mutation scripts: it reads a test run and says whether a
   mutant's run is red, green or invalid.
-- `.claude/gates.json` opts this repo in to the shadow checks of `rigger-windows`' shell guard: with
+- `.claude/gates.json` opts this repo in to the shadow checks of `rigger-testing`: with
   `"commit": "shadow"` each `git commit` logs whether a passing check (the `checks` patterns) ran
   after the newest file it commits, and at Stop whether a closing claim rests on a check after the
   last edit; neither ever blocks. `scope_commit` and `scope_stop` name the files that count. See
-  "Shadow gates" in `plugins/rigger-windows/tools/shell-guard/INSTALL.md`.
+  "Shadow gates" in `plugins/rigger-testing/tools/test-evidence/README.md`.
 
 ## Pull requests
 
