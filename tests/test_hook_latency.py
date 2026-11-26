@@ -212,7 +212,8 @@ class RealTreeTests(unittest.TestCase):
         rows = sorted((m.group(2), m.group(3), m.group(4)) for m in (LINE.fullmatch(line) for line in lines) if m)
         self.assertEqual(rows, [("PreToolUse:Bash|PowerShell", "shellwise.sh", "match"),
                                 ("PreToolUse:Bash|PowerShell", "shellwise.sh", "non-match"),
-                                ("SessionStart:startup|clear|compact", "shellwise_install.py:--session-start", "match")],
+                                ("SessionStart:startup|clear|compact|resume", "shellwise_install.py:--session-start",
+                                 "match")],
                          out)
         self.assertIn("# hooks measured 2 of 2", lines, out)
 

@@ -9,8 +9,9 @@ Layout under the plugin data folder (`CLAUDE_PLUGIN_DATA`, or `--data`):
 ready line printed, so it is printed once).
 
 Override: `shell_guard.shellwise_path` (personal config, level 3), read through rigger-core's config module
-found by its installPath. An accepted override is what `current` names (status `override`); a refused one
-leaves `current` absent, so the launcher runs nothing, never the downloaded binary.
+found by its installPath; a config or core that cannot be read changes nothing while an override is on record,
+and leaves the pin in use otherwise. An accepted override is what `current` names (status `override`); a refused
+one leaves `current` absent, so the launcher runs nothing, never the downloaded binary.
 
 Trust: only the SHA-256 committed in pin.json is compared, never a hash fetched with the archive;
 only the one expected member is streamed out; the binary runs (`--version`) only after the hash
@@ -52,12 +53,18 @@ TARGETS = {
 BINARY_NAMES = ("shellwise", "shellwise.exe")
 VERSION_LINE = re.compile(r"shellwise (\d+\.\d+\.\d+)")
 NO_BINARY = "shellwise: no binary (%s); commands run unguarded"
+UNREADABLE = "shellwise: override not read (%s); nothing changed"
+UNREAD_PIN = "shellwise: override not read (%s); %s"
 
 Status = collections.namedtuple("Status", "state version target path reason")
 
 
 class Refused(Exception):
     """A check refused the download or the binary; the message is the reason."""
+
+
+class Unreadable(Exception):
+    """The override cannot be known (a broken personal config or rigger-core); the message is the reason."""
 
 
 def host_target(plat=None, machine=None):
@@ -430,7 +437,8 @@ def _core_assemble_dir(config_dir):
 
 def read_override(environ=None):
     """shell_guard.shellwise_path as rigger-core's config module resolves the personal config (the one level
-    that may set it); None when unset or when rigger-core cannot be found or loaded."""
+    that may set it); None when unset or when no rigger-core is installed. Raises Unreadable when the override
+    cannot be known: the personal config is refused by load_level, or the listed rigger-core does not load."""
     environ = os.environ if environ is None else environ
     config_dir = environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     folder = _core_assemble_dir(config_dir)
@@ -442,16 +450,19 @@ def read_override(environ=None):
     try:
         config = importlib.import_module("config")
         path = os.path.join(config_dir, "rigger", "config.json")
-        data, _ = config.load_level(pathlib.Path(path), 3)
+        data, notices = config.load_level(pathlib.Path(path), 3)
         block = {"shell_guard": data["shell_guard"]} if "shell_guard" in data else {}
         guard = config.resolve({}, [], block, {}, {3: path}).effective.get("shell_guard")
-    except Exception:   # a core that does not load reads no config
-        return None
+    except Exception as exc:
+        raise Unreadable("rigger-core config module did not load: %s: %s" % (type(exc).__name__, _one_line(exc)))
     finally:
         sys.path.remove(folder)
         for name in names:
             sys.modules.pop(name, None)
         sys.modules.update(saved)
+    if notices:   # load_level refused a personal config that exists: its override is unknown, not unset
+        notice = _one_line(notices[0])
+        raise Unreadable(notice[len("rigger: "):] if notice.startswith("rigger: ") else notice)
     return guard.get("shellwise_path") if isinstance(guard, dict) else None   # config.py checks the shape
 
 
@@ -494,7 +505,13 @@ def _session_start(args, spawn, launch=None):
     child = [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--child", "--data", data,
              "--pin", pin_path, "--base-url", base] + (["--target", args.target] if args.target else [])
     root = _root(data)
-    override = read_override()
+    unread = None
+    try:
+        override = read_override()
+    except Unreadable as exc:
+        if _override_left(root):   # unknown is not unset: an override on record keeps `current` and the status
+            return UNREADABLE % exc
+        override, unread = None, str(exc)   # none on record: the hash-verified pin beats an unguarded slot
     if not override and _override_left(root):   # the override is gone: back to the download
         _remove(os.path.join(root, "current"))
         _remove(os.path.join(root, "status.json"))
@@ -508,12 +525,17 @@ def _session_start(args, spawn, launch=None):
     elif status.state == "no-asset" or status.reason.startswith("download could not start"):
         _write_status(root, status.version, status.target, status.state, status.reason)
     if status.state not in ("ready", "override"):
-        return NO_BINARY % status.reason
-    key = "%s %s %s" % (status.state, status.version, status.path)
-    if _read_text(os.path.join(root, "announced")) == key:
-        return ""
-    _write_atomic(os.path.join(root, "announced"), key.encode("utf-8"))
-    return "shellwise: v%s ready" % status.version
+        line = NO_BINARY % status.reason
+    else:
+        key = "%s %s %s" % (status.state, status.version, status.path)
+        line = ""
+        if _read_text(os.path.join(root, "announced")) != key:
+            _write_atomic(os.path.join(root, "announced"), key.encode("utf-8"))
+            line = "shellwise: v%s ready" % status.version
+    if unread is None:
+        return line
+    # One line tells both: the override was not read, and the slot's own line (or "ready" once announced).
+    return UNREAD_PIN % (unread, line[len("shellwise: "):] if line else "v%s ready" % status.version)
 
 
 def _child(args):
