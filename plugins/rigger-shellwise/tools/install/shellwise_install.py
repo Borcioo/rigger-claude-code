@@ -212,10 +212,10 @@ def _lock_held(root, clock):
         start = float(json.loads(raw.decode("utf-8"))["start"])
     except (ValueError, KeyError, TypeError, UnicodeDecodeError):
         try:
-            start = os.stat(path).st_mtime
+            start = min(os.stat(path).st_mtime, clock())   # an mtime may lead the clock by a tick
         except OSError:
             return False
-    return clock() - start <= LOCK_STALE
+    return 0 <= clock() - start <= LOCK_STALE   # a start in the future is a broken clock, not a holder
 
 
 def _acquire(root, clock):
@@ -323,9 +323,11 @@ def _install(root, work, pin, asset, target, base_url, launch):
 
 
 def _prune(root, version):
-    """Removes the cached binaries of other versions (a pin change); a busy one stays until next time."""
+    """Removes the cached binaries of other versions (a pin change) and the work folders of killed downloads;
+    a busy one stays until next time. The caller holds the lock."""
     for name in os.listdir(root):
-        if name.startswith("v") and name != "v" + version and os.path.isdir(os.path.join(root, name)):
+        old = name.startswith("v") and name != "v" + version
+        if (old or name.startswith(".work-")) and os.path.isdir(os.path.join(root, name)):
             shutil.rmtree(os.path.join(root, name), ignore_errors=True)
 
 
@@ -338,12 +340,13 @@ def download(data_dir, pin, target, base_url, *, launch=None, clock=time.time):
     mine = _acquire(root, clock)
     if mine is None:
         return Status("downloading", version, target, "", "another session is downloading")
-    work = tempfile.mkdtemp(prefix=".work-", dir=root)
+    work = None
     try:
         # A session start after the one that spawned this child may have set an override: its result stands.
         if _override_left(root):
             return Status("override-kept", version, target, "", "an override is on record")
         _write_status(root, version, target, "downloading")
+        work = tempfile.mkdtemp(prefix=".work-", dir=root)
         path = _install(root, work, pin, asset, target, base_url, launch)
         if _override_left(root):
             return Status("override-kept", version, target, "", "an override is on record")
@@ -361,7 +364,8 @@ def download(data_dir, pin, target, base_url, *, launch=None, clock=time.time):
             pass
         return Status("failed", version, target, "", reason)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        if work:
+            shutil.rmtree(work, ignore_errors=True)
         _release(root, mine)
 
 
@@ -516,12 +520,13 @@ def _session_start(args, spawn, launch=None):
         _remove(os.path.join(root, "current"))
         _remove(os.path.join(root, "status.json"))
     status = ensure(data, pin, override, spawn=lambda: spawn(child), target=args.target, launch=launch)
+    # The status goes first: a download child that reads it before touching `current` sees the override.
     if override and status.state == "override":
-        _write_atomic(os.path.join(root, "current"), (status.path + "\n").encode("utf-8"))
         _write_status(root, status.version, status.target, "override")
+        _write_atomic(os.path.join(root, "current"), (status.path + "\n").encode("utf-8"))
     elif override:   # refused: the slot stays unfilled, never filled by the downloaded binary
-        _remove(os.path.join(root, "current"))
         _write_status(root, status.version, status.target, "failed", status.reason)
+        _remove(os.path.join(root, "current"))
     elif status.state == "no-asset" or status.reason.startswith("download could not start"):
         _write_status(root, status.version, status.target, status.state, status.reason)
     if status.state not in ("ready", "override"):
