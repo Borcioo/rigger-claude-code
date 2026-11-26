@@ -370,10 +370,11 @@ class CrossPluginWordingTests(unittest.TestCase):
 
     def test_safe_edit_is_conditional_and_the_worktree_route_is_not(self):
         self.assertIn(
-            "Red runs: in a worktree, or in place only through `safe-edit.ps1 -Run` (needs rigger-windows).",
+            "Red runs: in a worktree, or in place only through `python \"<rigger-testing plugin folder>/tools/"
+            "safe-edit/safe_edit.py\"` with `--run` (needs rigger-testing).",
             self.text("tests.md"))
         self.assertIn(
-            "go through the Edit tool or `safe-edit.ps1 -Find -Replace -Count` (literal, counted; needs rigger-windows)",
+            "go through the Edit tool or `safe_edit.py --find TEXT --replace TEXT --count N` (literal, counted; needs rigger-testing)",
             self.text("defects.md"))
 
     def test_only_a_main_session_loads_the_git_skill(self):
