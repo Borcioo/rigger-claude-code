@@ -9,13 +9,15 @@ format. Releases are tagged `v<version>`.
 
 - Doctor warns once when shellwise's own plugin (`shellwise@shellwise`) is enabled next to rigger-shellwise, so
   two shellwise hooks check every command; its fix disables `shellwise@shellwise`.
-- rigger-shellwise on Linux arm64: the static `aarch64-unknown-linux-musl` build, so the guard runs there too.
+- rigger-shellwise on Linux arm64: the installer pins the static `aarch64-unknown-linux-musl` build (not yet
+  run on arm64 hardware; a build that fails its `--version` check leaves the guard failed closed).
 
 ### Changed
 
 - rigger-shellwise pins shellwise v0.2.0. The guard now blocks a wait loop that polls a count in `(( ))`, `let`
   or an arithmetic `[[ ]]` and that nothing bounds (the job throttle `while (( $(jobs -rp | wc -l) >= 4 ))` among
-  them: throttle with `wait -n`), and a wait loop or follow under `timeout 0` or `timeout inf`; a command that
+  them: throttle with `wait -n`), and a wait loop under `timeout 0` or `timeout inf` (a follow such as
+  `timeout 0 tail -f` only warns); `sudo timeout 60` around a loop now counts as bounded; a command that
   does not parse and pipes delete text into a shell behind a wrapper (`sudo`, `timeout`) is a danger instead of
   a warn. Linux takes the static `x86_64-unknown-linux-musl` build, which runs on any glibc. A
   `shell_guard.shellwise_path` override below 0.2.0 is now refused.
