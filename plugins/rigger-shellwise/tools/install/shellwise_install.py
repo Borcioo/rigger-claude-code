@@ -9,9 +9,9 @@ Layout under the plugin data folder (`CLAUDE_PLUGIN_DATA`, or `--data`):
 ready line printed, so it is printed once).
 
 Override: `shell_guard.shellwise_path` (personal config, level 3), read through rigger-core's config module
-found by its installPath; a config or core that cannot be read changes nothing. An accepted override is what
-`current` names (status `override`); a refused one leaves `current` absent, so the launcher runs nothing, never the
-downloaded binary.
+found by its installPath; a config or core that cannot be read changes nothing while an override is on record,
+and leaves the pin in use otherwise. An accepted override is what `current` names (status `override`); a refused
+one leaves `current` absent, so the launcher runs nothing, never the downloaded binary.
 
 Trust: only the SHA-256 committed in pin.json is compared, never a hash fetched with the archive;
 only the one expected member is streamed out; the binary runs (`--version`) only after the hash
@@ -54,6 +54,7 @@ BINARY_NAMES = ("shellwise", "shellwise.exe")
 VERSION_LINE = re.compile(r"shellwise (\d+\.\d+\.\d+)")
 NO_BINARY = "shellwise: no binary (%s); commands run unguarded"
 UNREADABLE = "shellwise: override not read (%s); nothing changed"
+UNREAD_PIN = "shellwise: override not read (%s); %s"
 
 Status = collections.namedtuple("Status", "state version target path reason")
 
@@ -504,10 +505,13 @@ def _session_start(args, spawn, launch=None):
     child = [sys.executable, "-I", "-X", "utf8", os.path.abspath(__file__), "--child", "--data", data,
              "--pin", pin_path, "--base-url", base] + (["--target", args.target] if args.target else [])
     root = _root(data)
+    unread = None
     try:
         override = read_override()
-    except Unreadable as exc:   # unknown is not unset: keep `current` and the status, start nothing
-        return UNREADABLE % exc
+    except Unreadable as exc:
+        if _override_left(root):   # unknown is not unset: an override on record keeps `current` and the status
+            return UNREADABLE % exc
+        override, unread = None, str(exc)   # none on record: the hash-verified pin beats an unguarded slot
     if not override and _override_left(root):   # the override is gone: back to the download
         _remove(os.path.join(root, "current"))
         _remove(os.path.join(root, "status.json"))
@@ -521,12 +525,17 @@ def _session_start(args, spawn, launch=None):
     elif status.state == "no-asset" or status.reason.startswith("download could not start"):
         _write_status(root, status.version, status.target, status.state, status.reason)
     if status.state not in ("ready", "override"):
-        return NO_BINARY % status.reason
-    key = "%s %s %s" % (status.state, status.version, status.path)
-    if _read_text(os.path.join(root, "announced")) == key:
-        return ""
-    _write_atomic(os.path.join(root, "announced"), key.encode("utf-8"))
-    return "shellwise: v%s ready" % status.version
+        line = NO_BINARY % status.reason
+    else:
+        key = "%s %s %s" % (status.state, status.version, status.path)
+        line = ""
+        if _read_text(os.path.join(root, "announced")) != key:
+            _write_atomic(os.path.join(root, "announced"), key.encode("utf-8"))
+            line = "shellwise: v%s ready" % status.version
+    if unread is None:
+        return line
+    # One line tells both: the override was not read, and the slot's own line (or "ready" once announced).
+    return UNREAD_PIN % (unread, line[len("shellwise: "):] if line else "v%s ready" % status.version)
 
 
 def _child(args):

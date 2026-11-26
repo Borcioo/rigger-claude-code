@@ -616,8 +616,10 @@ class ConfigOverrideTests(Base):
 
     def test_unreadable_config_changes_nothing(self):
         """A personal config that is not valid JSON, or a rigger-core whose config module does not load, leaves an
-        override unknown: `current` and the status stay as they are, no download starts, and one line says why. A
-        refused override on record therefore never turns into the downloaded binary."""
+        override unknown. With an override on record (accepted or refused) `current` and the status stay as they
+        are and no download starts, so a refused override never turns into the downloaded binary. With none on
+        record the pin is used as usual (ready stays ready, a fresh slot starts its download). Either way the one
+        line printed says the override was not read."""
         personal = os.path.join(self.config, "rigger", "config.json")
         listing = os.path.join(self.config, "plugins", "installed_plugins.json")
         with open(listing, "rb") as fh:
@@ -629,31 +631,40 @@ class ConfigOverrideTests(Base):
 
         causes = (("not valid JSON", bad_json, "not valid JSON"),
                   ("import fails", self.break_core, "RuntimeError: broken"))
+        # record: (spawns expected, the line's tail after "override not read (<reason>)", files that may change)
+        records = {"refused": (0, "nothing changed", ()), "accepted": (0, "nothing changed", ()),
+                   "ready, none on record": (0, "v0.1.1 ready", ("announced",)),
+                   "ready and announced, none on record": (0, "v0.1.1 ready", ()),
+                   "fresh": (1, "no binary (downloading); commands run unguarded", ())}
         for cause, breaks, word in causes:
-            for record in ("refused", "accepted", "none"):
+            for record, (spawned, tail, changing) in records.items():
                 with self.subTest(cause=cause, record=record):
                     shutil.rmtree(self.root, ignore_errors=True)
                     with open(listing, "wb") as fh:
                         fh.write(good_listing)
                     pin = self.serve()
-                    self.assertEqual(self.download(pin).state, "ready")   # a downloaded binary to fall back to
-                    if record == "none":
-                        self.write_json(personal, {"schema": 1})
-                    else:
+                    self.write_json(personal, {"schema": 1})
+                    if record != "fresh":
+                        self.assertEqual(self.download(pin).state, "ready")   # a downloaded binary to fall back to
+                    if record in ("refused", "accepted"):
                         self.set_override(self.override("shellwise 0.2.0" if record == "accepted"
                                                         else "shellwise 0.1.0"))
                         self.start(pin, Spawns())
                         self.assertEqual(self.status_file()["state"],
                                          "override" if record == "accepted" else "failed")
+                    if record.startswith("ready and announced"):
+                        self.assertEqual(self.start(pin, Spawns()), "shellwise: v0.1.1 ready\n")
                     before = self.snapshot()
-                    self.assertIn("status.json", before)
+                    self.assertEqual("status.json" in before, record != "fresh")
                     breaks()
                     spawns = Spawns()
                     out = self.start(pin, spawns)
-                    self.assertEqual(self.snapshot(), before, out)
-                    self.assertEqual(spawns.calls, [], out)
+                    after = self.snapshot()
+                    self.assertEqual({k: v for k, v in after.items() if k not in changing},
+                                     {k: v for k, v in before.items() if k not in changing}, out)
+                    self.assertEqual(len(spawns.calls), spawned, out)
                     self.assertTrue(out.startswith("shellwise: override not read (") and out.endswith(
-                        "); nothing changed\n") and out.count("\n") == 1, out)
+                        "); %s\n" % tail) and out.count("\n") == 1, out)
                     self.assertIn(word, out)
 
     def test_override_is_not_read_without_rigger_core(self):
