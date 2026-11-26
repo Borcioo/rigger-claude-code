@@ -308,11 +308,14 @@ class SafeEditTests(unittest.TestCase):
                 self.assertFalse(os.path.exists(marker), "the command ran")
 
     def assert_link_refused(self, path, other):
-        code, lines = self.safe_edit("--path", path, "--find", "on", "--replace", "off")
-        self.assertEqual(code, 2, lines)
-        self.assertEqual(lines, ["safe-edit: REFUSED — %s is a symlink or has other hard links; replacing it would "
-                                 "cut the link. Edit it with the Edit tool, or name the real file." % path])
-        self.assertEqual((self.text(path), self.text(other)), ("guard = on\n", "guard = on\n"))
+        for what, argv in (("edit", ["--find", "on", "--replace", "off"]), ("restore", ["--restore"])):
+            with self.subTest(what):
+                code, lines = self.safe_edit("--path", path, *argv)
+                self.assertEqual(code, 2, lines)
+                self.assertEqual(lines, ["safe-edit: REFUSED — %s is a symlink or has other hard links; replacing "
+                                         "it would cut the link. Edit it with the Edit tool, or name the real "
+                                         "file." % path])
+                self.assertEqual((self.text(path), self.text(other)), ("guard = on\n", "guard = on\n"))
 
     def test_a_hard_linked_file_is_refused_and_stays_linked(self):
         other = self.fixture("real.txt", "guard = on\n")

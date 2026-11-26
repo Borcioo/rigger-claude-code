@@ -33,8 +33,9 @@ a `Test-change: <reason>` line.
 folder, in a repo that opts in with `.claude/gates.json`; they print nothing and never block. `TEST_EVIDENCE=off`
 turns the commit handlers off. Read `tools/test-evidence/README.md`; `tools/gate-lab/` replays and scores the rows offline.
 The Stop shadow's claim, negation, disclosure and status word lists are data in
-`tools/test-evidence/phrases.json`; config key `test_evidence.phrases` (levels 2 and 3) adds
-lists, so no language is fixed in code.
+`tools/test-evidence/phrases.json`; config key `test_evidence.phrases` (levels 2 and 3) adds words to them,
+so no language is fixed in code. Between those levels a list replaces the lower level's list of the same
+category and `null` removes it.
 
 ## Red run in place
 

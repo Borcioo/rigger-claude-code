@@ -439,15 +439,55 @@ class LockTests(Base):
         with open(os.path.join(self.root, "lock"), "rb") as fh:
             self.assertEqual(fh.read(), theirs)
 
-    def test_the_work_folder_of_a_killed_download_is_removed(self):
-        pin = self.serve()
-        left = os.path.join(self.root, ".work-killed")
-        os.makedirs(left)
-        with open(os.path.join(left, "archive"), "wb") as fh:
+    def work_folder(self, name, folder_age, archive_age):
+        """A download's work folder whose own mtime and archive mtime are that many seconds old."""
+        folder = os.path.join(self.root, name)
+        os.makedirs(folder)
+        archive = os.path.join(folder, "archive")
+        with open(archive, "wb") as fh:
             fh.write(b"half")
+        now = time.time()
+        os.utime(archive, (now - archive_age, now - archive_age))
+        os.utime(folder, (now - folder_age, now - folder_age))
+        return folder
+
+    def test_only_work_folders_nothing_wrote_to_for_the_stale_time_are_removed(self):
+        """A takeover: the holder before may still be downloading. Its folder is old, its archive is not."""
+        pin = self.serve()
+        stale = si.LOCK_STALE + 60
+        self.write_lock(start=time.time() - stale, pid=1)
+        self.work_folder(".work-killed", stale, stale)
+        self.work_folder(".work-slow-holder", stale, 5)
+        self.work_folder(".work-just-made", 5, stale)
         status = self.download(pin)
         self.assertEqual(status.state, "ready", status.reason)
-        self.assertEqual(sorted(n for n in os.listdir(self.root) if n.startswith(".work-")), [])
+        self.assertEqual(sorted(n for n in os.listdir(self.root) if n.startswith(".work-")),
+                         [".work-just-made", ".work-slow-holder"])
+
+    def test_a_work_folder_that_cannot_be_read_is_kept(self):
+        folder = self.work_folder(".work-busy", si.LOCK_STALE + 60, si.LOCK_STALE + 60)
+        real = os.listdir
+
+        def busy(path):
+            if os.path.basename(path) == ".work-busy":
+                raise PermissionError(13, "held", path)
+            return real(path)
+
+        with mock.patch.object(si.os, "listdir", busy):
+            si._prune(self.root, "0.1.1", time.time())
+        self.assertTrue(os.path.isdir(folder), "an unreadable folder was removed")
+
+    def test_an_empty_lock_older_than_the_stale_time_is_taken_over(self):
+        """A kill between creating the lock and writing it leaves it empty: only its mtime dates it."""
+        pin = self.serve()
+        os.makedirs(self.root)
+        path = os.path.join(self.root, "lock")
+        open(path, "wb").close()
+        past = time.time() - si.LOCK_STALE - 60
+        os.utime(path, (past, past))
+        status = self.download(pin)
+        self.assertEqual(status.state, "ready", status.reason)
+        self.assertFalse(os.path.exists(path))
 
     def test_a_work_folder_that_cannot_be_made_frees_the_lock_and_says_why(self):
         pin = self.serve()
@@ -458,11 +498,11 @@ class LockTests(Base):
         with mock.patch.object(si.tempfile, "mkdtemp", full):
             try:
                 status = self.download(pin)
-            except OSError as exc:
+            except Exception as exc:   # whatever escapes, the lock must be free
                 status = exc
+        self.assertFalse(os.path.exists(os.path.join(self.root, "lock")), "the lock stayed: %r" % (status,))
         self.assertEqual(getattr(status, "state", status), "failed")
         self.assertIn("no space left", status.reason)
-        self.assertFalse(os.path.exists(os.path.join(self.root, "lock")))
         self.assertEqual(self.status_file()["state"], "failed")
 
 
