@@ -5,6 +5,8 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-26
+
 ### Added
 
 - Doctor warns once when shellwise's own plugin (`shellwise@shellwise`) is enabled next to rigger-shellwise, so
