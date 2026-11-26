@@ -14,16 +14,16 @@ plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_after_digit"
 plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_double_slash": ("open C://host/share now", "open C://host/share now"),
 plugins/rigger-lessons/tests/test_lessons_lint.py	"windows_path_not_double_backslash": ("open C:\\\\share\\x now", "open C:\\\\share\\x now"),
 # drift-lint fixtures: fake drive and backslash paths the path check under test must find or skip
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*\\skills\\
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\<domain
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\no-such\\he?e.md
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he?e.md
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\pre-<task
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he*.md
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\exists\\name...
-plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py	\\caf\xff.md
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*\\skills\\
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\<domain
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	X:\\src\\old-skills*
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	X:\\audits-old\\
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	\\no-such\\he?e.md
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he?e.md
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	\\exists\\pre-<task
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	\\exists\\he*.md
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	\\exists\\name...
+plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py	\\caf\xff.md
 # token-audit fixtures: Windows paths and two example hosts that the error-line normaliser and the lessons lint must rewrite or tell apart
 plugins/rigger-core/tools/token-audit/tests/test_archive.py	C:\\Users\\someone\\.claude\\plugins\\cache\\superpowers-marketplace\\episodic-memory\\1.6.0\\
 plugins/rigger-core/tools/token-audit/tests/test_archive.py	C:\Users\someone\.claude\skills\x\SKILL.md#A

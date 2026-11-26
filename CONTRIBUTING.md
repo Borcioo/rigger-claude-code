@@ -39,7 +39,7 @@ wsl -d <distro> --cd <clone path as seen from WSL> -e python3 -I scripts/run_tes
 `--fix-round` runs only the files your change can affect (against the merge base with `main`), the
 ones that failed first, and stops at the first failure; it never replaces the full suite. A change
 to a rules file or a skill also runs `plugins/rigger-rules/tests/test_plugin_rules.py` and
-`plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py`.
+`plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py`.
 
 `python -I scripts/run_tests.py --changed-modules [--base REV]` is a fast local pre-check for a
 change inside one module's folder: it runs that module's tests, its dependents', the tests that

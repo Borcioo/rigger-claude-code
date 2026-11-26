@@ -10,6 +10,7 @@
     "plugins/rigger-core/tools/assemble/tests/test_slots.py": ["rigger-lessons", "rigger-review", "rigger-shellwise", "rigger-testing", "rigger-windows", "rigger-wp"],
     "plugins/rigger-core/tools/assemble/tests/test_stub_session.py": ["*"],
     "plugins/rigger-core/tools/coord-state/tests/test_coordinate_host_stub.py": ["rigger-rules"],
+    "plugins/rigger-core/tools/drift-lint/tests/test_drift_lint.py": ["*"],
     "plugins/rigger-core/tools/doctor/tests/": ["rigger-lessons", "rigger-review", "rigger-rules", "rigger-shellwise", "rigger-testing", "rigger-windows"],
     "plugins/rigger-core/tools/env-check/tests/test_env_check.py": ["rigger-panel"],
     "plugins/rigger-core/tools/harness_start/tests/test_harness_start.py": ["rigger-rules"],
@@ -28,7 +29,6 @@
     "plugins/rigger-shellwise/tools/install/tests/test_shellwise_install.py": ["rigger-core"],
     "plugins/rigger-talk/tests/test_talk.py": ["rigger-core"],
     "plugins/rigger-testing/tests/test_testing_wiring.py": ["rigger-core", "rigger-rules"],
-    "plugins/rigger-testing/tools/test-evidence/tests/test_stop_shadow.py": ["rigger-core"],
-    "plugins/rigger-windows/tools/drift-lint/tests/test_drift_lint.py": ["*"]
+    "plugins/rigger-testing/tools/test-evidence/tests/test_stop_shadow.py": ["rigger-core"]
   }
 }
