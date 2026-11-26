@@ -133,12 +133,16 @@ def make_probe(probe, work):
     """The probe repository and the work tree GIT_WORK_TREE names, a folder of its own, so a leaked `git init`
     records it as core.worktree. The work tree changes a tracked file the fixtures also add and holds an untracked
     one, so a leaked `git add` of either kind writes into the probe; the probe's own editor does nothing, so a
-    leaked `git add -e` opens none."""
+    leaked `git add -e` opens none. Auto maintenance is off, so no background git writes into the probe."""
     for folder in (probe, work):
         (folder / "tests").mkdir(parents=True)
         (folder / "tests" / "test_parser.py").write_bytes(b"old\n")
     control_git(probe, "init", "-q")
     control_git(probe, "config", "core.editor", "true")
+    # The seed commit would start a detached `git maintenance run --auto`, whose objects/maintenance.lock races
+    # the snapshot below (git 2.56 on macOS).
+    control_git(probe, "config", "maintenance.auto", "false")
+    control_git(probe, "config", "gc.auto", "0")
     control_git(probe, "add", "-A")
     control_git(probe, "commit", "-q", "-m", "seed")
     (work / "tests" / "test_parser.py").write_bytes(b"changed\n")
