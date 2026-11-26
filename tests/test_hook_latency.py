@@ -196,10 +196,25 @@ class RealTreeTests(unittest.TestCase):
                    for groups in json.loads(path.read_bytes().decode("utf-8")).get("hooks", {}).values()
                    for group in groups)
         self.assertEqual(len(handlers), want)
-        self.assertEqual(want, 45)
+        self.assertEqual(want, 47)
         keys = {(h.plugin, h.script) for h in handlers}
         self.assertEqual(sorted(keys - set(hl.CASES)), [], "handlers without a case")
         self.assertEqual(sorted(set(hl.CASES) - keys), [], "cases without a handler")
+
+    def test_shellwise_cases_take_their_paths(self):
+        base = Path(tempfile.mkdtemp(prefix="hook-latency-test-"))
+        self.addCleanup(shutil.rmtree, str(base), True)
+        shutil.copytree(str(ROOT / "plugins" / "rigger-shellwise"), str(base / "plugins" / "rigger-shellwise"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        code, lines = run(base / "plugins", hl.CASES, runs=1)
+        out = "\n".join(lines)
+        self.assertEqual(code, 0, out)
+        rows = sorted((m.group(2), m.group(3), m.group(4)) for m in (LINE.fullmatch(line) for line in lines) if m)
+        self.assertEqual(rows, [("PreToolUse:Bash|PowerShell", "shellwise.sh", "match"),
+                                ("PreToolUse:Bash|PowerShell", "shellwise.sh", "non-match"),
+                                ("SessionStart:startup|clear|compact", "shellwise_install.py:--session-start", "match")],
+                         out)
+        self.assertIn("# hooks measured 2 of 2", lines, out)
 
 
 if __name__ == "__main__":

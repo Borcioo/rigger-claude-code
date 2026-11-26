@@ -27,9 +27,7 @@ import test_py_sh  # noqa: E402
 
 MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGINS_WITH_PY_SH = ("rigger-lessons", "rigger-core", "rigger-testing", "rigger-windows", "rigger-shellwise")
-# rigger-shellwise has no hooks.json until its launcher and hooks arrive.
-PLUGINS_WITH_HOOKS = tuple(name for name in PLUGINS_WITH_PY_SH if name != "rigger-shellwise") + (
-    "rigger-rules", "rigger-talk", "rigger-wp")
+PLUGINS_WITH_HOOKS = PLUGINS_WITH_PY_SH + ("rigger-rules", "rigger-talk", "rigger-wp")
 # Plugins whose rules rigger-core prints: each ships hooks/core_check.sh and runs it with its own name.
 PLUGINS_WITH_CORE_CHECK = ("rigger-rules", "rigger-windows", "rigger-wp", "rigger-lessons", "rigger-talk",
                            "rigger-review", "rigger-testing")
@@ -229,6 +227,8 @@ ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH_RE = re.compile(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"')
 LAUNCHER = "bin/py.sh"
 RULES_SCRIPTS = ("rules_start.sh", "rules_extra.sh", "talk_start.sh", "part.sh")
+# A PreToolUse script run only when present: `sh "<missing file>"` exits 2 under dash, which denies the call.
+GUARDED_PREFIX = """sh -c '[ -f "$0" ] || exit 0; exec sh "$0"' "%s/""" % ROOT_VAR
 SESSION_PARTS = 6
 SUBAGENT_PARTS = 4
 
@@ -369,7 +369,7 @@ class HookFileTests(unittest.TestCase):
                     self.assertIn(ROOT_VAR, command)
                     targets = ROOT_PATH_RE.findall(command)
                     self.assertEqual(command.count(ROOT_VAR), len(targets), "an unquoted plugin path")
-                    self.assertTrue(command.startswith(f'sh "{ROOT_VAR}/'), "a hook starts through sh")
+                    self.assertTrue(command.startswith((f'sh "{ROOT_VAR}/', GUARDED_PREFIX)), "a hook starts through sh")
                     runs_python = any(target.endswith(".py") for target in targets)
                     self.assertEqual(LAUNCHER in targets, runs_python, "the launcher is for Python only")
                     scripts = [target for target in targets if target != LAUNCHER]
@@ -431,7 +431,7 @@ class HookFileTests(unittest.TestCase):
         self.assertEqual([(row["verdict"], row["status"], row["source"]) for row in rows], [("ok", "DONE", "event")])
 
     def test_commands_with_a_missing_script_exit_zero(self):
-        checked = 0
+        checked = guarded = 0
         for path in hook_files():
             plugin = path.parent.parent
             for event, _, handler in hook_handlers(path):
@@ -441,10 +441,15 @@ class HookFileTests(unittest.TestCase):
                 with self.subTest(hooks=path.relative_to(ROOT).as_posix(), event=event, command=handler["command"]):
                     root, data = self.bare_plugin(plugin)
                     proc = self.run_hook(handler["command"], root, data, b"{}")
-                    self.assertEqual(proc.returncode, 0, proc.stderr)
-                    self.assertIn(b"can't open file", proc.stderr, "the command never reached Python")
+                    if handler["command"].startswith(GUARDED_PREFIX):   # the guard: a silent allow
+                        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"", b""))
+                        guarded += 1
+                    else:
+                        self.assertEqual(proc.returncode, 0, proc.stderr)
+                        self.assertIn(b"can't open file", proc.stderr, "the command never reached Python")
                     checked += 1
         self.assertGreaterEqual(checked, 11)
+        self.assertEqual(guarded, 1)
 
     def test_a_missing_core_check_neither_blocks_nor_prints(self):
         # RV5 M1: a half-written cache without hooks/core_check.sh. sh then exits 127 (Git Bash) or 2 (dash), so
@@ -562,7 +567,7 @@ class DuplicateHookTests(unittest.TestCase):
             for item in self.plugin_handlers()
             if item.source != "plugin rigger-lessons" and item.identity[1] not in RULES_SCRIPTS
         )
-        self.assertEqual(len(names), moved + 18)
+        self.assertEqual(len(names), moved + 20)
         self.assertEqual(names.count("state.py"), 1)
         self.assertEqual(names.count("core_check.sh"), 6)
         self.assertEqual(names.count("weak_test_guard.py"), 2)
@@ -572,6 +577,8 @@ class DuplicateHookTests(unittest.TestCase):
         self.assertEqual(names.count("report_shadow.py"), 1)
         self.assertEqual(names.count("side_session_guard.py"), 3)
         self.assertEqual(names.count("env_check.py"), 2)
+        self.assertEqual(names.count("shellwise.sh"), 1)
+        self.assertEqual(names.count("shellwise_install.py"), 1)
 
     def test_the_core_checks_raise_no_duplicate_warning(self):
         # One script in five plugins: rigger-core's startup check would tell the user to disable plugins.

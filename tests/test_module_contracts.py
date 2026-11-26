@@ -300,8 +300,38 @@ class ContractTests(unittest.TestCase):
         verdict = slot_check.check("lessons", text)
         self.assertEqual((verdict.ok, verdict.rule), (True, ""), verdict)
 
+    def test_shellwise_filler_meets_its_contract(self):
+        # D85: each contract fixture, printed by a stub binary, reaches the caller of the PreToolUse command unchanged
+        slot_check = import_from(SLOT_CHECK_DIR, "slot_check")
+        hooks_path = SHELLWISE / "hooks" / "hooks.json"
+        self.assertTrue(hooks_path.is_file(), "no shellwise hooks.json")
+        hooks = json.loads(hooks_path.read_bytes().decode("utf-8"))["hooks"]
+        commands = [hook["command"] for group in hooks["PreToolUse"] for hook in group["hooks"]]
+        self.assertEqual(len(commands), 1, commands)
+        fixtures = sorted(p for p in (SHELLWISE / "tests" / "contract" / "shell-guard").iterdir() if p.is_file())
+        self.assertEqual(len(fixtures), 5, fixtures)
+        rules = slot_check.RULES["shell-guard"]
+        stub = self.tmp / "bin" / "shellwise"
+        stub.parent.mkdir()
+        data = self.tmp / "data"
+        (data / "shellwise").mkdir(parents=True)
+        (data / "shellwise" / "current").write_bytes(str(stub).encode("utf-8") + b"\n")
+        env = plain_env(CLAUDE_PLUGIN_ROOT=SHELLWISE.as_posix(), CLAUDE_PLUGIN_DATA=str(data),
+                        PATH=os.path.dirname(find_sh()) + os.pathsep + os.environ.get("PATH", ""))
+        event = json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(self.tmp)}).encode("utf-8")
+        for path in fixtures:
+            with self.subTest(fixture=path.name):
+                stub.write_bytes(("#!/bin/sh\ncat >/dev/null\ncat '%s'\n" % path.as_posix()).encode("utf-8"))
+                os.chmod(str(stub), 0o755)
+                proc = subprocess.run([find_sh(), "-c", commands[0]], input=event, env=env, cwd=str(self.tmp),
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, path.read_bytes(), b""))
+                verdict = slot_check.check("shell-guard", proc.stdout.decode("utf-8"))
+                want = (True, "") if path.name.startswith("pass") else (False, fail_rule(path.name, rules))
+                self.assertEqual((verdict.ok, verdict.rule), want, verdict)
+
     def test_shellwise_filler_manifest(self):
-        # the hook arrives with a later task; the rule checker key is added by Task 18
+        # the rule checker key is added by Task 18
         manifest = import_from(ASSEMBLE_DIR, "manifest")
         module = manifest.load_manifest(SHELLWISE, None, "repository")
         self.assertEqual(module.fills, "shell-guard")
