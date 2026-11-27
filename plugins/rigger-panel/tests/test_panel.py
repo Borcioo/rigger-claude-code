@@ -70,7 +70,7 @@ INBOX_CALLS = {
         "$.process.run(openCommand(await sysnameOf($), entry.link), { timeoutMs: 10_000 })",
     ),
 }
-APP_TOOLS = {"get_session"}
+APP_TOOLS = {"get_session", "list_sessions"}
 OPENER_RETURNS = {"return ['open', link]", "return ['cmd', '/c', 'start', '', link]", "return ['xdg-open', link]"}
 FILE_CALLS = {**MANIFEST_CALLS, **INBOX_CALLS}
 
@@ -289,7 +289,7 @@ class PanelTests(unittest.TestCase):
         output = proc.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
         self.assertEqual(proc.returncode, 0, output)
         passed = PASS_RE.findall(output)
-        self.assertTrue(passed and int(passed[-1]) >= 289, output)
+        self.assertTrue(passed and int(passed[-1]) >= 339, output)
         self.assertEqual(FAIL_RE.findall(output)[-1:], ["0"], output)
 
 

@@ -19,7 +19,8 @@ export type Entry = {
 }
 
 // The app's own view of this session (`get_session self`): `sessionId` is the `local_…` id.
-export type Identity = { sessionId: string; link: string; title: string; cwd: string }
+// `isSideSession`: another session started this one and it was not moved to top level.
+export type Identity = { sessionId: string; link: string; title: string; cwd: string; isSideSession: boolean }
 
 // `checkedAt`: when the folder was last read, the clock the ages are drawn against.
 export type InboxView = { phase: 'idle' | 'ready'; items: Entry[]; checkedAt: number; note?: string }
@@ -141,6 +142,8 @@ export type SelectRule = {
   pattern: string
   // A dot path into the session folder's `.claude/environments.json`.
   default?: string
+  // The label of a first option that leaves the placeholder's argument out of the call.
+  all?: string
 }
 
 // A tab a module declared in `panel.tabs` of its rigger-module.json, checked. `pane`: `m-<module>-<id>`.
@@ -161,7 +164,7 @@ export type ModuleTabs = { tabs: ModuleTab[]; skipped: string[]; recheck: boolea
 
 export type ModuleRow = { title: string; key?: string; detail?: string; url?: string }
 
-export type ModuleOption = { value: string; label: string }
+export type ModuleOption = { value: string; label: string; key?: string }
 
 // One module tab's rows. ready with `empty`: the empty state; failed: `note` is the failure line.
 export type ModulePane = {

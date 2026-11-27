@@ -12,7 +12,7 @@ const APP = 'ccd_session_mgmt'
 
 // Read once per session; null until the app has answered.
 const identity = atom({ plugin: 'rigger-panel', key: 'inboxIdentity' } as const, null as Identity | null, {
-  shape: 'inbox-identity-1',
+  shape: 'inbox-identity-2',
 })
 
 export async function inboxDir($: EngineInterface) {
@@ -74,7 +74,8 @@ async function lookUp($: EngineInterface): Promise<Identity | null> {
     const value = JSON.parse(text) as Record<string, unknown>
     const pick = (key: string) => (typeof value[key] === 'string' ? (value[key] as string) : '')
     if (!pick('sessionId').startsWith('local_')) throw new Error('get_session gave no local_ id')
-    const found: Identity = { sessionId: pick('sessionId'), link: pick('link'), title: pick('title'), cwd: pick('cwd') }
+    const isSideSession = pick('parentSessionId') !== '' && value.detached !== true
+    const found: Identity = { sessionId: pick('sessionId'), link: pick('link'), title: pick('title'), cwd: pick('cwd'), isSideSession }
     known = found
     await update($, identity, () => found)
     return found
@@ -99,6 +100,26 @@ export async function identityOf($: EngineInterface, isRetry = false): Promise<I
     pending = undefined
   })
   return pending
+}
+
+const LIST_LIMIT = 200
+
+// The ids of the sessions the app lists as archived. Any failure is an empty set: an entry is a
+// notice, so one shown too many is the safe side.
+export async function archivedIds($: EngineInterface): Promise<Set<string>> {
+  try {
+    const result = await callApp($, 'list_sessions', { include_archived: true, limit: LIST_LIMIT })
+    if (result.isError) return new Set()
+    // Anything but a list throws on `map` and is the empty set; an id that is not a string matches no entry.
+    const rows = JSON.parse(textOf(result)) as unknown[]
+    const ids = rows
+      .map(row => (typeof row === 'object' && row !== null ? (row as Record<string, unknown>) : {}))
+      .filter(row => row.isArchived === true)
+      .map(row => String(row.sessionId))
+    return new Set(ids)
+  } catch {
+    return new Set()
+  }
 }
 
 let isBadIdNamed = false

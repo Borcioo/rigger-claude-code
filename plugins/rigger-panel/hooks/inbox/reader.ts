@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { Entry, Identity, InboxView, OpenFailure } from '../../types/inbox'
 import { MAX_AGE_MS, parseEntry, visibleEntries } from './entries'
-import { closeAt, inboxDir, knownSessionId, reasonOf } from './writer'
+import { archivedIds, closeAt, inboxDir, knownSessionId, reasonOf } from './writer'
 
 export const POLL_MS = 5000
 
@@ -12,7 +12,7 @@ export const EMPTY_VIEW: InboxView = { phase: 'idle', items: [], checkedAt: 0 }
 // The same references as in writer.ts and view.tsx: the state scan reads an atom declared in the
 // file that uses it.
 const identity = atom({ plugin: 'rigger-panel', key: 'inboxIdentity' } as const, null as Identity | null, {
-  shape: 'inbox-identity-1',
+  shape: 'inbox-identity-2',
 })
 const view = atom({ plugin: 'rigger-panel', key: 'inboxView' } as const, EMPTY_VIEW, { shape: 'inbox-view-1' })
 // The last failed Open per session, with the entry time it failed for: view.tsx shows it only on
@@ -59,7 +59,19 @@ export async function loadView($: EngineInterface): Promise<InboxView> {
     }
   }
   const own = knownSessionId() ?? (await read($, identity))?.sessionId
-  return { phase: 'ready', items: visibleEntries(entries, closed, own, now), checkedAt: now }
+  const items = visibleEntries(entries, closed, own, now)
+  if (items.length === 0) return { phase: 'ready', items, checkedAt: now }
+  const archived = await archivedAt($, now)
+  return { phase: 'ready', items: items.filter(e => !archived.has(e.sessionId)), checkedAt: now }
+}
+
+// The app's archived sessions, asked at most once in ARCHIVE_TTL_MS and only while an entry would show.
+const ARCHIVE_TTL_MS = 30_000
+let archive: { at: number; ids: Set<string> } | undefined
+
+async function archivedAt($: EngineInterface, now: number) {
+  if (archive === undefined || now - archive.at >= ARCHIVE_TTL_MS) archive = { at: now, ids: await archivedIds($) }
+  return archive.ids
 }
 
 export async function refresh($: EngineInterface) {

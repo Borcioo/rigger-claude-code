@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -1109,6 +1110,206 @@ class HostListTests(TreeRepoCase):
         self.assertEqual(code, 0, status)
         self.assertEqual((out / LIST).read_bytes(), b"plugins/a/new.py\nplugins/a/x.py\n")
         self.assertEqual(status[1], "mode: changed-modules base start merge-base %s, modules a" % base_sha)
+
+
+# The snapshot's own scripts/gate.py in SnapshotTests: it records where it ran and what it read, waits for
+# the test to edit the source worktree, reads again and exits with the code the commit holds.
+SNAPSHOT_STUB = """import os, pathlib, sys, time
+out = pathlib.Path(sys.argv[sys.argv.index("--out") + 1])
+(out / "first.txt").write_text(pathlib.Path("a.txt").read_text())
+(out / "cwd.txt").write_text(os.getcwd())
+(out / "argv.txt").write_text("\\n".join(sys.argv[1:]))
+end = time.monotonic() + 30
+while not (out / "go").exists():
+    if time.monotonic() > end: sys.exit(9)
+    time.sleep(0.05)
+(out / "second.txt").write_text(pathlib.Path("a.txt").read_text())
+sys.exit(int(pathlib.Path("code.txt").read_text()))
+"""
+
+
+class SnapshotTests(TreeRepoCase):
+    def setUp(self):
+        super().setUp()
+        self.write("scripts/gate.py", SNAPSHOT_STUB)
+        self.write("code.txt", "0\n")
+        self.write(".gitignore", "ignored/\n__pycache__/\n.claude/worktrees/\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "stub gate")
+        self.out = self.base / "out"
+        self.out.mkdir()
+        # Where the snapshots go, beside the lane worktrees: empty once every run has ended.
+        self.temp = self.repo / ".claude" / "worktrees"
+        self.temp.mkdir(parents=True)
+
+    def worktrees(self):
+        return [line for line in git(self.repo, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")]
+
+    def run_snapshot(self, ref="HEAD", during=None, extra=()):
+        """gate.main(--snapshot ref) on a thread; `during` runs once the snapshot's gate has started."""
+        result = {}
+
+        def target():
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                try:
+                    result["code"] = gate.main(["--snapshot", ref, "--out", str(self.out), *extra], root=self.repo)
+                except BaseException as error:  # compared like any other result
+                    result["error"] = error
+            result["printed"] = printed.getvalue()
+
+        thread = threading.Thread(target=target)
+        thread.start()
+        end = time.monotonic() + 60
+        while not (self.out / "first.txt").exists() and thread.is_alive() and time.monotonic() < end:
+            time.sleep(0.05)
+        if during is not None:
+            during()
+        (self.out / "go").write_text("x")
+        thread.join(90)
+        self.assertFalse(thread.is_alive(), "the snapshot gate did not finish")
+        return result
+
+    def test_an_edit_in_the_source_worktree_during_the_run_does_not_reach_the_snapshot(self):
+        sha = git(self.repo, "rev-parse", "HEAD")
+        result = self.run_snapshot(during=lambda: self.write("a.txt", "edited\n"))
+        self.assertEqual(result.get("code"), 0, result)
+        self.assertEqual(((self.out / "first.txt").read_text(), (self.out / "second.txt").read_text()), ("a\n", "a\n"))
+        ran_in = Path((self.out / "cwd.txt").read_text())
+        self.assertNotEqual(os.path.normcase(os.path.realpath(ran_in)), os.path.normcase(os.path.realpath(self.repo)))
+        self.assertIn("# snapshot %s tree %s at " % (sha, self.head_tree()), result["printed"])
+        argv = (self.out / "argv.txt").read_text().splitlines()
+        self.assertEqual(argv[argv.index("--out") + 1], str(self.out))
+
+    def test_a_failing_gate_exits_with_its_code_and_leaves_no_worktree(self):
+        self.write("code.txt", "3\n")
+        git(self.repo, "commit", "-q", "-am", "failing gate")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 3, result)
+        self.assertEqual(self.worktrees(), ["worktree " + git(self.repo, "rev-parse", "--show-toplevel")])
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_an_interrupted_run_leaves_no_worktree(self):
+        with mock.patch.object(gate, "run_snapshot_child", side_effect=KeyboardInterrupt):
+            result = self.run_snapshot()
+        self.assertIsInstance(result.get("error"), KeyboardInterrupt, result)
+        self.assertEqual(len(self.worktrees()), 1)
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def stale_pass(self):
+        (self.out / "status.txt").write_text("TREE %s\n# gate passed, 1.0 s, tree %s\n" % (FAKE_TREE, FAKE_TREE))
+
+    def last_status_line(self):
+        return (self.out / "status.txt").read_text().splitlines()[-1]
+
+    def test_a_ref_git_cannot_resolve_fails_before_any_worktree(self):
+        self.stale_pass()
+        result = self.run_snapshot(ref="no-such-ref")
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("snapshot: cannot resolve no-such-ref", result["printed"])
+        self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
+        self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
+
+    def test_a_commit_without_a_gate_fails_and_leaves_no_worktree(self):
+        self.stale_pass()
+        git(self.repo, "rm", "-q", "scripts/gate.py")
+        git(self.repo, "commit", "-q", "-m", "no gate")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("has no scripts/gate.py", result["printed"])
+        self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
+        self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
+
+    def test_the_snapshot_goes_beside_the_lane_worktrees_of_the_main_checkout(self):
+        lane = self.temp / "lane"
+        git(self.repo, "worktree", "add", "-q", "--detach", str(lane), "HEAD")
+        self.addCleanup(git, self.repo, "worktree", "remove", "--force", str(lane))
+        sha = git(self.repo, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            (self.out / "go").write_text("x")
+            code = gate.main(["--snapshot", "HEAD", "--out", str(self.out)], root=lane)
+        self.assertEqual(code, 0, printed.getvalue())
+        ran_in = Path((self.out / "cwd.txt").read_text())
+        self.assertEqual(os.path.normcase(os.path.realpath(ran_in)),
+                         os.path.normcase(os.path.realpath(self.temp / ("gate-" + sha[:12]))))
+        self.assertEqual(sorted(p.name for p in self.temp.iterdir()), ["lane"])
+
+    def stale_lane(self):
+        """Another lane's worktree whose folder is away for now: git reads it as stale while it is gone."""
+        lane = self.base / "lane"
+        git(self.repo, "worktree", "add", "-q", "--detach", str(lane), "HEAD")
+        away = self.base / "lane-away"
+        lane.rename(away)
+        self.addCleanup(lambda: away.exists() and away.rename(lane))
+        return lane, away
+
+    def registered(self):
+        return [os.path.normcase(os.path.realpath(line[len("worktree "):])) for line in self.worktrees()]
+
+    def test_a_stale_registration_of_another_worktree_survives_the_run(self):
+        lane, away = self.stale_lane()
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 0, result)
+        away.rename(lane)
+        self.assertIn(os.path.normcase(os.path.realpath(lane)), self.registered())
+        self.assertEqual(git(lane, "rev-parse", "HEAD"), git(self.repo, "rev-parse", "HEAD"))
+
+    def test_a_snapshot_git_cannot_remove_is_unregistered_alone(self):
+        lane, away = self.stale_lane()
+        failed = subprocess.CompletedProcess([], 1, b"", b"remove refused")
+        with mock.patch.object(gate, "git_worktree_remove", return_value=failed):
+            result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 0, result)
+        self.assertIn("# snapshot removed: ", result["printed"])
+        away.rename(lane)
+        self.assertEqual(sorted(self.registered()), sorted(os.path.normcase(os.path.realpath(p)) for p in (self.repo, lane)))
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_the_status_line_comes_first_then_the_snapshot_line(self):
+        for ref in ("HEAD", "no-such-ref"):
+            with self.subTest(ref=ref):
+                (self.out / "first.txt").unlink(missing_ok=True)
+                lines = self.run_snapshot(ref=ref)["printed"].splitlines()
+                self.assertEqual(lines[0], "# status %s" % (self.out / "status.txt"))
+                if ref == "HEAD":
+                    self.assertTrue(lines[1].startswith("# snapshot "), lines)
+
+    def test_an_existing_snapshot_path_is_refused_and_left_alone(self):
+        self.stale_pass()
+        taken = self.temp / ("gate-" + git(self.repo, "rev-parse", "HEAD")[:12])
+        taken.mkdir()
+        (taken / "keep.txt").write_text("another run")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("already exists; remove it or let its run finish", result["printed"])
+        self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
+        self.assertEqual((taken / "keep.txt").read_text(), "another run")
+        self.assertEqual(len(self.worktrees()), 1)
+
+    def test_a_snapshot_path_git_does_not_ignore_is_refused(self):
+        self.write(".gitignore", "ignored/\n")
+        git(self.repo, "commit", "-q", "-am", "worktrees not ignored")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("is not ignored by git", result["printed"])
+        self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
+
+    def test_every_gate_option_reaches_the_snapshot(self):
+        # A new option of the parser that the snapshot run does not forward fails here.
+        dests = {action.dest for action in gate.build_parser()._actions if action.dest != "help"}
+        self.assertEqual(dests - gate.SNAPSHOT_FORWARDED, {"snapshot", "verify", "into"})
+        result = self.run_snapshot(extra=["--denylist", "d.txt", "--distro", "Other", "--changed-modules", "--base", "dev",
+                                          "--release"])
+        self.assertEqual(result.get("code"), 0, result)
+        argv = (self.out / "argv.txt").read_text().splitlines()
+        self.assertEqual(argv[argv.index("--denylist") + 1], os.path.abspath("d.txt"))
+        for pair in (["--distro", "Other"], ["--base", "dev"]):
+            self.assertEqual(argv[argv.index(pair[0]):argv.index(pair[0]) + 2], pair)
+        self.assertIn("--changed-modules", argv)
+        self.assertIn("--release", argv)
+
+    def test_snapshot_cannot_go_with_verify(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            gate.main(["--snapshot", "HEAD", "--verify", "status.txt"], root=self.repo)
 
 
 class MainTests(unittest.TestCase):

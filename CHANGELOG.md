@@ -5,6 +5,34 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-27
+
+### Added
+
+- rigger-panel: a module tab's select `default` also matches an option's `key` group, and an optional `all` label
+  adds a first option that leaves the select's argument out of the call.
+- rigger-panel: the desktop app's right-click menu in the transcript switches panel tabs on and off, like the
+  Tabs row; a tab whose pane was closed with its close mark shows `(closed)`, and a press opens it again.
+- gate: `scripts/gate.py --snapshot <ref>` gates a commit in a detached worktree under `.claude/worktrees/` with that commit's own
+  gate, so a side session still editing its worktree cannot fail the run with `tree changed during the gate`;
+  the worktree is removed afterwards, on a failure too. `/rigger-core:coordinate` runs its merge-point gate on
+  such a snapshot.
+- rigger-core: every reviewer brief names a scratch folder outside the reviewed tree, so the reviewer can run
+  mutants (`orchestrating-subagents`, Briefs).
+- rigger-core: a side session a coordinator started sends its result or question with `SendMessage` before it
+  ends the turn, since the app holds a turn-end note while any other side session works
+  (`/rigger-core:coordinate` briefs, `orchestrating-subagents`).
+
+### Changed
+
+- rigger-panel: an Inbox entry of a side session also closes when it receives another session's message, and an
+  entry of a session archived in the desktop app is hidden.
+
+### Fixed
+
+- rigger-core: the session watcher no longer reports a side session the user detached from the coordinator
+  (`lineageDetached`) in its held-note, quiet or cap lines.
+
 ## [0.9.0] - 2026-11-27
 
 ### Added

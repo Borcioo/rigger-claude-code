@@ -31,6 +31,9 @@ type Opts = {
   wrapResult?: unknown
   // The session id get_session answers, in place of SELF's.
   selfId?: string
+  // The session that started this one, and whether it was moved to top level since.
+  parent?: string
+  detached?: boolean
 }
 
 // The world beneath the plugin: the app answers get_session, files are recorded, the clock is fixed.
@@ -47,7 +50,11 @@ const world = (on: On, opts: Opts = {}): World => {
       if (opts.self === 'throw') throw new Error('no app here')
       if (opts.self === 'hang') return new Promise<never>(() => {})
       if (opts.self === 'error') return { value: { content: [{ type: 'text', text: 'Unknown session' }], isError: true } }
-      const self = opts.selfId === undefined ? SELF : { ...SELF, sessionId: opts.selfId }
+      const self = {
+        ...SELF,
+        ...(opts.selfId === undefined ? {} : { sessionId: opts.selfId }),
+        ...(opts.parent === undefined ? {} : { parentSessionId: opts.parent, detached: opts.detached ?? false }),
+      }
       return { value: { content: [{ type: 'text', text: JSON.stringify(self) }], isError: false } }
     }
     return { deny: 'not in this test' }
@@ -206,35 +213,81 @@ test('a permission entry closes as soon as the approved tool runs; one that neve
   expect(closedAt(w)).toBe('1000000')
 })
 
-// Only the owner's own prompt answers the entry: a message from another session, a task's
-// notification, a schedule or a plugin's prompt starts a turn too, and leaves the entry open.
-for (const [kind, isOwner] of [
-  ['composer', true],
-  ['sdk', true],
-  ['bridge', true],
-  ['slack-ping', true],
-  ['auto-continuation', true],
-  ['peer-send-message', false],
-  ['peer', false],
-  ['task-notification', false],
-  ['unclassified', false],
-  ['scheduled-trigger', false],
-  ['projects-relay', false],
-  ['channel', false],
-  ['coordinator', false],
-  ['observer', false],
-  ['observer-activity', false],
-  ['plugin', false],
+// The owner's own prompt answers the entry; another session's message answers it only in a session
+// another session started (in a top-level one it is a worker's report to its coordinator). A task's
+// notification, a schedule, a channel or a plugin's prompt starts a turn too, and leaves the entry open.
+const SIDE = { parent: 'local_boss' }
+for (const [kind, by] of [
+  ['composer', 'owner'],
+  ['sdk', 'owner'],
+  ['bridge', 'owner'],
+  ['slack-ping', 'owner'],
+  ['auto-continuation', 'owner'],
+  ['peer-send-message', 'peer'],
+  ['peer', 'peer'],
+  ['projects-relay', 'peer'],
+  ['coordinator', 'peer'],
+  ['task-notification', 'none'],
+  ['unclassified', 'none'],
+  ['scheduled-trigger', 'none'],
+  ['channel', 'none'],
+  ['observer', 'none'],
+  ['observer-activity', 'none'],
+  ['plugin', 'none'],
 ] as const) {
-  test(`a prompt from origin ${kind} ${isOwner ? 'closes' : 'leaves'} the own entry`, async ($, on) => {
-    const w = world(on)
-    await turn($, '')
-    expect(closedAt(w)).toBeUndefined()
-    await $.prompt.submit({ text: 'yes, go on', wait: false, origin: { kind } } as never)
-    await turn($, 'yes, go on')
-    expect(closedAt(w)).toBe(isOwner ? '1000000' : undefined)
-  })
+  for (const [where, opts] of [
+    ['a top-level session', {}],
+    ['a side session', SIDE],
+    ['a side session moved to top level', { ...SIDE, detached: true }],
+  ] as const) {
+    const closes = by === 'owner' || (by === 'peer' && where === 'a side session')
+    test(`a prompt from origin ${kind} in ${where} ${closes ? 'closes' : 'leaves'} the own entry`, async ($, on) => {
+      const w = world(on, opts)
+      await turn($, '')
+      expect(closedAt(w)).toBeUndefined()
+      await $.prompt.submit({ text: 'yes, go on', wait: false, origin: { kind } } as never)
+      await turn($, 'yes, go on')
+      expect(closedAt(w)).toBe(closes ? '1000000' : undefined)
+    })
+  }
 }
+
+// A notification queued after the owner's prompt, before the turn starts, does not undo the answer.
+test("the owner's prompt still closes the entry when a notification is queued after it", async ($, on) => {
+  const w = world(on)
+  await turn($, '')
+  await $.prompt.submit({ text: 'yes, go on', wait: false, origin: { kind: 'composer' } } as never)
+  await $.prompt.submit({ text: 'task done', wait: false, origin: { kind: 'task-notification' } } as never)
+  await turn($, 'yes, go on')
+  expect(closedAt(w)).toBe('1000000')
+})
+
+// The flags last only until the turn they were submitted for: the next turn, started by a notification
+// alone, closes nothing.
+test('an answer submitted before one turn does not close the entry at a later one', async ($, on) => {
+  const w = world(on)
+  await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } } as never)
+  await turn($, 'yes')
+  await w.clock.advance(1000)
+  await $.tool.call({ tool: WRAP, recap: 'r', ask: 'Approve?' } as never)
+  await w.clock.settle()
+  await $.prompt.submit({ text: 'task done', wait: false, origin: { kind: 'task-notification' } } as never)
+  await turn($, 'task done')
+  expect(closedAt(w)).toBe('1000000')
+})
+
+// A coordinator that messages a side session after its turn failed has answered the error entry.
+test("another session's message closes a side session's error entry", async ($, on) => {
+  const w = world(on, SIDE)
+  await turn($)
+  await complete($, 'aborted')
+  expect(entryAt(w).kind).toBe('error')
+  expect(closedAt(w)).toBeUndefined()
+  await w.clock.advance(1000)
+  await $.prompt.submit({ text: 'try again', wait: false, origin: { kind: 'peer' } } as never)
+  await turn($, 'try again')
+  expect(closedAt(w)).toBe('1001000')
+})
 
 test('a subagent writes nothing', async ($, on) => {
   const w = world(on)

@@ -58,12 +58,17 @@ function wrapFields(e: unknown, result: ToolCallResult): WrapFields {
 // closed once a tool call runs after it (the approval was given) or the turn ends without wrap_up.
 let turn = { wrapped: false, permission: false }
 
-// Whether the last prompt submitted came from the owner: typed (`composer`; the desktop app's own
-// input arrives as `sdk`), from a phone (`bridge`, `slack-ping`) or a click on the app's own buttons
-// (`auto-continuation`). A message from another session, a task notification, a schedule or a
-// plugin starts a turn too, but answers nothing the entry asked.
+// The prompts that answer the entry. The owner's: typed (`composer`; the desktop app's own input arrives
+// as `sdk`), from a phone (`bridge`, `slack-ping`) or a click on the app's own buttons
+// (`auto-continuation`). Another session's (`peer`, `peer-send-message`, `projects-relay`,
+// `coordinator`) only in a session another session started: those kinds also carry a worker's report
+// to its coordinator, which answers nothing the coordinator asked the owner. A task notification, a
+// schedule, a channel or a plugin starts a turn too, but answers nothing the entry asked.
 const OWNER_ORIGINS = new Set<PromptOrigin['kind']>(['composer', 'sdk', 'bridge', 'slack-ping', 'auto-continuation'])
-let isOwnerPrompt = false
+const PEER_ORIGINS = new Set<PromptOrigin['kind']>(['peer', 'peer-send-message', 'projects-relay', 'coordinator'])
+// What the prompts submitted since the last turn start were; sticky, so a notification queued after
+// the owner's prompt does not undo it.
+let submitted = { owner: false, peer: false }
 
 // Writer work never breaks the session: it runs after `next` and swallows its own failure. Without
 // the app's identity nothing is written and nothing is said; a write that fails is named on the
@@ -87,12 +92,18 @@ async function quietly($: EngineInterface, work: (id: Identity) => Promise<void>
 const write = ($: EngineInterface, make: (id: Identity, now: number) => Entry) =>
   quietly($, async id => writeEntry($, make(id, await $.clock.now())))
 
-const close = ($: EngineInterface) => quietly($, async id => closeAt($, id.sessionId, await $.clock.now()))
+const close = ($: EngineInterface, when: (id: Identity) => boolean = () => true) =>
+  quietly($, async id => {
+    if (when(id)) await closeAt($, id.sessionId, await $.clock.now())
+  })
 
 export function registerInbox(on: On) {
   // Recorded before `next`, which resolves only once the prompt's turn has started.
   on('prompt.submit', { text: EVERY }, async (_$, e, next) => {
-    isOwnerPrompt = OWNER_ORIGINS.has(e.origin.kind)
+    submitted = {
+      owner: submitted.owner || OWNER_ORIGINS.has(e.origin.kind),
+      peer: submitted.peer || PEER_ORIGINS.has(e.origin.kind),
+    }
     return next(e)
   })
 
@@ -101,10 +112,11 @@ export function registerInbox(on: On) {
     if (e.agentId !== undefined) return result
     nextTurn()
     turn = { wrapped: false, permission: false }
-    const isOwner = isOwnerPrompt
-    isOwnerPrompt = false
-    // The owner wrote in the session itself: whatever its entry asked is answered there.
-    if (isOwner && e.text.trim() !== '') await close($)
+    const by = submitted
+    submitted = { owner: false, peer: false }
+    // The owner, or for a side session another session, wrote to the session itself: whatever its entry
+    // asked is answered.
+    if ((by.owner || by.peer) && e.text.trim() !== '') await close($, id => by.owner || id.isSideSession)
     return result
   })
 

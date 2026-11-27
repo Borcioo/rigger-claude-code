@@ -79,7 +79,9 @@ relays.
 Contact runs both ways. An agent or side session that is unsure, or has failed the same step
 twice, stops and asks whoever started it, stating what it tried, what it saw and what it needs. A
 subagent without SendMessage does this as a blocked report and is resumed with the answer. A side
-session never asks the user unless the orchestrator says so. A side session dispatches the subagents
+session never asks the user unless the orchestrator says so. A side session a coordinator started
+sends its result or question to it with SendMessage (to the session that started it) before it
+ends the turn; a turn end alone is not a report. A side session dispatches the subagents
 whose results its turn reports in the foreground; parallel ones go as several Agent calls in one message.
 
 The orchestrator answers, splits the task or moves it to a stronger model with the last report. A
@@ -100,6 +102,8 @@ failure on the stronger model goes to the user with the diagnosis.
   `tools/slot-check/slot_check.py reviewer <reply file> --base <base> --head <head>` from the
   rigger-core plugin root; a refusal is a failed review.
 - Any skill or MCP server the task needs, a project's own included: name it in the brief.
+- Every reviewer brief names a scratch folder outside the reviewed tree for mutant copies and temp
+  configs; without one the reviewer runs no mutants.
 - Follow `templates/implementer-brief.md` at the rigger-core plugin root (two folders above this
   skill's folder). Every brief
   carries the project's pitfalls list (project CLAUDE.md; create the section if missing), every
