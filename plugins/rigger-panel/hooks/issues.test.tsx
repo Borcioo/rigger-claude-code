@@ -39,6 +39,8 @@ type Gh = {
   authRejects?: boolean
   // null: no origin remote.
   origin?: string | null
+  // The folder whose `origin` is `origin`; `git remote` run anywhere else reads another repository's.
+  originIn?: string
   issues?: unknown
   // Answers `gh issue list` in place of `issues`.
   list?: (argv: readonly string[]) => Ran
@@ -54,7 +56,7 @@ const ran = (stdout: string, exitCode = 0, stderr = ''): ProcessRunResult => ({
 
 const ENOENT = "failed to start: ENOENT: Command 'gh' not found or is in an unsafe location (current directory)"
 
-const answerRun = (gh: Gh) => (argv: readonly string[]): Ran => {
+const answerRun = (gh: Gh) => (argv: readonly string[], cwd?: string): Ran => {
   const line = argv.join(' ')
   if (argv[0] === 'gh' && gh.gh === false) return { deny: ENOENT }
   if (line === 'gh --version') return ran('gh version 2.87.0 (2026-02-18)\nhttps://github.com/cli/cli/releases/tag/v2.87.0\n')
@@ -65,6 +67,7 @@ const answerRun = (gh: Gh) => (argv: readonly string[]): Ran => {
       : ran('github.com\n  Logged in to github.com account someone (keyring)\n')
   }
   if (line === 'git remote get-url origin') {
+    if (gh.originIn !== undefined && cwd !== gh.originIn) return ran('https://github.com/other/engine-folder.git\n')
     return gh.origin === null ? ran('', 2, "error: No such remote 'origin'\n") : ran(`${gh.origin ?? ORIGIN}\n`)
   }
   if (argv[0] === 'gh' && argv[1] === 'issue' && argv[2] === 'list') {
@@ -80,6 +83,7 @@ const READ_ONLY = new Set([
   'gh --version',
   'gh auth status --hostname github.com',
   'git remote get-url origin',
+  'git rev-parse --path-format=absolute --git-common-dir',
   LIST_ARGV(REPO_NAME).join(' '),
   LIST_ARGV('other/repo').join(' '),
 ])
@@ -230,7 +234,7 @@ const runner = (on: On, gh: Gh) => {
   const runs: string[][] = []
   on('process.run', async (_, e) => {
     runs.push([...e.argv])
-    const answered = await answerRun(gh)(e.argv)
+    const answered = await answerRun(gh)(e.argv, e.init?.cwd)
     return 'deny' in answered ? { deny: answered.deny } : { value: answered }
   })
   return runs
@@ -241,6 +245,7 @@ const runner = (on: On, gh: Gh) => {
 const engine = (gh: Gh) => {
   const runs: string[][] = []
   const $ = {
+    session: { cwd: async () => '/work/project' },
     process: {
       run: async (argv: readonly string[]) => {
         runs.push([...argv])
@@ -379,6 +384,18 @@ const open = async ($: Engine) => {
   await $.command.run({ command: 'harness', args: '' } as never)
   return $.ui.mount({ ...PANE, surface: 'desktop' })
 }
+
+// The Issues pane shows the session folder's repository, not the one the engine was started in.
+test('the origin is read in the session folder', async ($, on) => {
+  const { runs } = world(on, started, { originIn: '/work/project' })
+  on('session.cwd', () => ({ value: '/work/project' }))
+  await $.session.start({ cwd: '/work/project', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'harness', args: '' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /^example\/demo$/ }))?.text).toBe('example/demo')
+  expect(lists(runs)).toEqual([LIST_ARGV(REPO_NAME)])
+  await ui.unmount()
+})
 
 const textOf = async (ui: Awaited<ReturnType<typeof open>>, word: RegExp) => (await ui.find({ type: 'Text', text: word }))?.text
 

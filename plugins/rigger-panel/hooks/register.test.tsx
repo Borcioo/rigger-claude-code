@@ -49,6 +49,7 @@ const world = (
   on('mcp.call', () => ({ deny: 'no MCP server in this test' }))
   on('process.run', () => ({ deny: 'no gh in this test' }))
   on('session.usage', () => ({ value: usage }))
+  on('session.id', () => ({ value: 'sess-1' }))
   on('fs.read', (_, e) => {
     // The environments file is read from the project, not the config dir these tests count.
     if (!e.path.includes('environments.json')) reads.push(e.path)
@@ -149,7 +150,7 @@ test('the label column is one width and no bar is drawn without a percentage', a
   expect(find(tree, node => node.type === 'Svg')).toEqual([])
 })
 
-const NAMES = ['plugins/installed_plugins.json', 'lessons-inbox.md', 'state/compact-guard.log']
+const NAMES = ['plugins/installed_plugins.json', 'lessons-inbox.md', 'state/compact-guard.log', 'rigger/state/sess-1.resolved.json']
 
 // The engine hands an `fs.read` hook the path resolved for the host: a drive letter and backslashes
 // on Windows, the working directory in front of a Windows path elsewhere. Compare what follows the drive.

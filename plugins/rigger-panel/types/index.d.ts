@@ -1,3 +1,32 @@
+// The inbox (hooks/inbox): kept here, as the types contract may import nothing.
+// question: the session asked something or is blocked on the owner; review: it finished and the
+// result waits to be checked; error: the turn was aborted, refused or died; permission: a tool call
+// waits for the owner's approval.
+export type EntryKind = 'question' | 'review' | 'error' | 'permission'
+
+// One session's current entry, as its file `<config>/rigger-panel/inbox/<sessionId>.json` holds it.
+export type Entry = {
+  v: 1
+  sessionId: string
+  link: string
+  title: string
+  cwd: string
+  kind: EntryKind
+  text: string
+  ask?: string
+  actions: string[]
+  at: number
+}
+
+// The app's own view of this session (`get_session self`): `sessionId` is the `local_…` id.
+export type Identity = { sessionId: string; link: string; title: string; cwd: string }
+
+// `checkedAt`: when the folder was last read, the clock the ages are drawn against.
+export type InboxView = { phase: 'idle' | 'ready'; items: Entry[]; checkedAt: number; note?: string }
+
+// A failed Open: `at` is the time of the entry it failed for.
+export type OpenFailure = { at: number; text: string }
+
 export type Snapshot = {
   tokens?: number
   window: number
@@ -87,6 +116,68 @@ export type Envs = {
   note?: string
 }
 
+// A project's tab choice as `$.store` keeps it under `tabs:<project>`: the tab ids the person switched
+// on and off there.
+export type TabChoice = { on: string[]; off: string[] }
+
+// The switchable tabs that are on for the session's project (`project`: the store key's folder).
+export type Tabs = { project?: string; on: string[] }
+
+// A JSON value as a module manifest holds it.
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
+
+// Where a module tab's text comes from: an MCP tool, or a program (argv, `./` against the module root).
+export type TabSource = { mcp: { server: string; tool: string; args: { [key: string]: Json } } } | { command: string[] }
+
+// The regex sources a tab's text is cut into rows with (`rows` in the manifest).
+export type RowRules = { pattern: string; detail?: string; url?: string; empty?: string }
+
+// A picker over values one source lists; its value fills `{select:<id>}` in the tab's source.
+export type SelectRule = {
+  id: string
+  label: string
+  type: 'string' | 'number'
+  source: TabSource
+  pattern: string
+  // A dot path into the session folder's `.claude/environments.json`.
+  default?: string
+}
+
+// A tab a module declared in `panel.tabs` of its rigger-module.json, checked. `pane`: `m-<module>-<id>`.
+export type ModuleTab = {
+  pane: string
+  module: string
+  id: string
+  title: string
+  root: string
+  source: TabSource
+  rows: RowRules
+  select: SelectRule[]
+}
+
+// The module tabs of this session, a line for each entry that was skipped, and `recheck`: the snapshot
+// was missing at session start, so the first turn reads it again.
+export type ModuleTabs = { tabs: ModuleTab[]; skipped: string[]; recheck: boolean }
+
+export type ModuleRow = { title: string; key?: string; detail?: string; url?: string }
+
+export type ModuleOption = { value: string; label: string }
+
+// One module tab's rows. ready with `empty`: the empty state; failed: `note` is the failure line.
+export type ModulePane = {
+  phase: 'loading' | 'ready' | 'failed'
+  rows: ModuleRow[]
+  empty?: boolean
+  capped?: boolean
+  // The text was cut before the rows were read.
+  truncated?: boolean
+  note?: string
+  // Lines about options a select dropped.
+  notices?: string[]
+  // Keyed by select id: the options read and the value chosen.
+  selects: { [id: string]: { options: ModuleOption[]; value: string } }
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'rigger-panel': {
@@ -95,6 +186,12 @@ declare module 'claude-code' {
       plan: Shaped<PlanStep[]>
       planAge: Shaped<PlanAge>
       envs: Shaped<Envs>
+      tabs: Shaped<Tabs>
+      moduleTabs: Shaped<ModuleTabs>
+      modulePanes: Shaped<{ [pane: string]: ModulePane }>
+      inboxIdentity: Shaped<Identity | null>
+      inboxView: Shaped<InboxView>
+      inboxOpenFailures: Shaped<Record<string, OpenFailure>>
     }
   }
 }

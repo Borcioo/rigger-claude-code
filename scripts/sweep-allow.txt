@@ -54,6 +54,9 @@ plugins/rigger-panel/hooks/register.test.tsx	['Windows home', { USERPROFILE: 'C:
 plugins/rigger-panel/hooks/register.test.tsx	['POSIX variable', { CLAUDE_CONFIG_DIR: '/Users/boss/.claude' }, '/Users/boss/.claude'],
 plugins/rigger-panel/hooks/register.test.tsx	['POSIX variable, trailing slash', { CLAUDE_CONFIG_DIR: '/Users/boss/.claude/' }, '/Users/boss/.claude'],
 plugins/rigger-panel/hooks/register.test.tsx	['POSIX home', { HOME: '/home/boss' }, '/home/boss/.claude'],
+plugins/rigger-panel/hooks/tabs.test.tsx	const WIN_CWD = 'C:\\work\\repo\\sub'
+plugins/rigger-panel/hooks/tabs.test.tsx	const WIN_GIT_DIR = 'C:/work/repo/.git/'
+plugins/rigger-panel/hooks/tabs.test.tsx	const WIN_KEY = 'tabs:C:/work/repo'
 plugins/rigger-panel/tests/test_panel.py	MACHINE_PATH_RE = re.compile(r"""['"`]([A-Za-z]:[\\/]|/Users/|/home/)""")
 # The SVG namespace, which an SVG drawn as an image needs.
 plugins/rigger-panel/hooks/plan.ts	xmlns="http://www.w3.org/2000/svg"
@@ -65,3 +68,27 @@ plugins/rigger-core/tools/review-scope/review_scope.py	_PREFIXES = (("\\\\?\\UNC
 plugins/rigger-core/tools/review-scope/tests/test_review_scope.py	("the extended UNC prefix", "\\\\?\\UNC\\localhost\\share\\bin", True),
 plugins/rigger-core/tools/review-scope/tests/test_review_scope.py	("the device UNC prefix", "\\\\.\\UNC\\localhost\\share\\bin", True),
 plugins/rigger-core/tools/review-scope/tests/test_review_scope.py	("a device with no drive", "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\bin", False),
+# rigger-panel inbox: the desktop app's session-link scheme and fake home folders in its fixtures
+plugins/rigger-panel/README.md	the entry's own session (`claude://claude.ai/epitaxy/<session id>`) is opened; anything else shows
+plugins/rigger-panel/hooks/inbox/entries.test.ts	const ID = { sessionId: 'local_abc', link: 'claude://claude.ai/epitaxy/local_abc', title: 'Alpha', cwd: '/w/alpha' }
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	const DIR = '/home/boss/.claude/rigger-panel/inbox'
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	link: `claude://claude.ai/epitaxy/${sessionId}`,
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	on('env.get', (_, e) => ({ value: { HOME: '/home/boss', ...opts.env }[e.name] }))
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	expect(runs).toEqual([['open', 'claude://claude.ai/epitaxy/local_alpha']])
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	expect(runs).toEqual([['cmd', '/c', 'start', '', 'claude://claude.ai/epitaxy/local_alpha']])
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	expect(runs).toEqual([['xdg-open', 'claude://claude.ai/epitaxy/local_alpha']])
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	const { runs, unames } = world(on, STANDARD(), { env: { OS: 'Windows_NT', USERPROFILE: '/home/boss' } })
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	'claude://claude.ai/epitaxy/local_x&calc',
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	'claude://claude.ai/epitaxy/local_x\nrm',
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	'x claude://claude.ai/epitaxy/local_alpha',
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	'claude://claude.ai/epitaxy/local_other',
+plugins/rigger-panel/hooks/inbox/pane.test.tsx	const link = 'claude://claude.ai/epitaxy/local_a'
+plugins/rigger-panel/hooks/inbox/reader.ts	const SESSION_LINK_PREFIX = 'claude://claude.ai/epitaxy/'
+plugins/rigger-panel/hooks/inbox/tab.test.tsx	const CONFIG = '/home/boss/.claude'
+plugins/rigger-panel/hooks/inbox/tab.test.tsx	link: `claude://claude.ai/epitaxy/${sessionId}`,
+plugins/rigger-panel/hooks/inbox/tab.test.tsx	const self = { sessionId: 'local_me', title: 'Me', cwd: '/work/me', link: 'claude://claude.ai/epitaxy/local_me' }
+plugins/rigger-panel/hooks/inbox/writer.test.tsx	const CONFIG = '/home/boss/.claude'
+plugins/rigger-panel/hooks/inbox/writer.test.tsx	link: 'claude://claude.ai/epitaxy/local_abc',
+plugins/rigger-panel/hooks/inbox/writer.test.tsx	const home = 'home' in opts ? opts.home : '/home/boss'
+# rigger-panel inbox: a Unicode-escape character class, not a UNC path
+plugins/rigger-panel/hooks/inbox/entries.ts	const CONTROL = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\p{Cf}\\u2028\\u2029]+', 'gu')

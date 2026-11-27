@@ -39,7 +39,7 @@ const reasonOf = (error: unknown) => clip(error instanceof Error ? error.message
 type Outcome<T> = { isDone: true; value: T } | { isDone: false }
 
 // A call with its own bound: the work, or the wait, whichever settles first.
-async function bounded<T>($: EngineInterface, ms: number, work: Promise<T>): Promise<Outcome<T>> {
+export async function bounded<T>($: EngineInterface, ms: number, work: Promise<T>): Promise<Outcome<T>> {
   const stop = new AbortController()
   const late = $.clock.sleep(ms, { signal: stop.signal }).then(
     () => ({ isDone: false }) as const,

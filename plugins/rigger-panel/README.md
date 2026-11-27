@@ -1,8 +1,9 @@
 # rigger-panel
 
 Opt-in. A function-hook plugin for Claude Code (`hooks/register.tsx`, no shell hooks, no rules) that
-adds four panes beside the chat. They open at session start; `/harness` opens them again and reads
-everything once more.
+adds five panes beside the chat, plus any tab a Rigger module declares ([Module tabs](#module-tabs)).
+They open at session start; `/harness` opens them again and reads everything once more. Each pane but
+Rigger is a tab that can be switched off per project ([Tabs](#tabs)).
 
 | Pane | Shows |
 |---|---|
@@ -10,8 +11,10 @@ everything once more.
 | Issues | your open GitHub issues in this repository, each with a `Start` button |
 | Plan | the session's task list, how old it is, and when it may be out of date |
 | Environments | the project's `.claude/environments.json` as cards |
+| Inbox | what the other sessions on this machine wait on: a question, a result to check, an error or an approval |
 
-All text is English. Nothing in the plugin writes to GitHub.
+All text is English. Nothing in the plugin writes to GitHub; a module tab runs only what its own
+module's manifest declares.
 
 ## Rigger
 
@@ -31,6 +34,115 @@ plugin cannot get, or a version that is not a commit hash, draws as `?`.
 The pane redraws every 30 seconds and after each turn. On a graphical surface the context bar is an
 `Svg`; on the terminal it is text.
 
+## Tabs
+
+The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments, Inbox), `[x]` when
+it is on, `[ ]` when it is off. A press switches the tab for this project and opens or closes its pane
+at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
+
+- **Where the choice is kept:** the plugin's own store (`$.store`, in the Claude Code config dir,
+  outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
+  (pane ids such as `rigger-issues`) switched on and off there.
+- **Project:** the parent folder of `git rev-parse --path-format=absolute --git-common-dir` run in the
+  session folder, so every worktree of a repository shares the main checkout's choice. When that
+  common dir is not a folder named `.git` (a submodule's `…/.git/modules/<name>`, a bare repository's
+  `…/repo.git`), the common dir itself. Outside git, the session folder itself.
+- **Default:** every tab is on, unless its id is in the config key `panel.tabs_off` (a list of tab ids;
+  levels 2 and 3, a company module or the personal `rigger/config.json`), read from rigger-core's
+  snapshot of the session (`<config dir>/rigger/state/<session id>.resolved.json`). A tab the project
+  switched on stays on; one it switched off stays off. A missing or unreadable snapshot means no
+  default off list.
+
+  ```json
+  { "schema": 1, "panel": { "tabs_off": ["rigger-envs"] } }
+  ```
+
+## Module tabs
+
+A Rigger module (any plugin with a `rigger-module.json`) adds a tab by declaring it under `panel.tabs`
+in that manifest. The panel knows no tool behind it: it calls the MCP tool or runs the command the tab
+names, cuts the text into rows with the module's regexes and draws a plain list with a `Refresh`
+button. The modules are the ones rigger-core's snapshot of the session lists
+(`<config dir>/rigger/state/<session id>.resolved.json`, `modules: [{ name, root }]`); each manifest is
+read from `<root>/rigger-module.json`. No snapshot, an unreadable manifest or no `panel` key adds no
+tab. The tab's pane id is `m-<module>-<id>`; [Tabs](#tabs), `panel.tabs_off` and the per-project store
+treat it like a built-in tab. rigger-core's SessionStart hooks may write the snapshot after the panel
+starts: when it was missing then, the first main-loop turn reads it once more, opens a tab that is now
+on and closes one that is now off.
+
+```json
+"panel": { "tabs": [ {
+  "id": "tickets",
+  "title": "Tickets",
+  "source": { "mcp": { "server": "tracker", "tool": "list-tickets",
+                       "args": { "assigned_to_me": true, "limit": 50, "project_id": "{select:project}" } } },
+  "rows": {
+    "pattern": "^- (?<key>[A-Z0-9]+-\\d+): (?<title>.+)$",
+    "detail": "^\\s+Status: (?<detail>[^|]+?)\\s*\\|",
+    "url": "https://example.com/tickets/{key}",
+    "empty": "^Tickets \\(0\\)"
+  },
+  "select": [ {
+    "id": "project", "label": "Project", "type": "number",
+    "options": { "mcp": { "server": "tracker", "tool": "list-projects", "args": {} },
+                 "pattern": "^- \\[(?<key>[A-Z0-9]+)\\] (?<label>.+) \\(ID: (?<value>\\d+)" },
+    "default": "tracker.project_id"
+  } ]
+} ] }
+```
+
+Every field is checked and a wrong type refused. An invalid entry is skipped, and the Rigger pane shows
+one line under Tabs: `module <m> tab <id>: skipped: <reason>` (`#<n>`, its place in the list, when the
+id itself is invalid; `*` when `panel.tabs` is not a list).
+
+- `id`: `^[A-Za-z0-9_-]{1,32}$`, unique within the module. The pane id `m-<module>-<id>` must match
+  `^[A-Za-z0-9_-]{1,64}$` (the shape `panel.tabs_off` takes) and must not be another module's.
+- `title`: a string of 1-40 characters.
+- `source`: exactly one of `mcp` (`{ server, tool, args? }`, `args` an object) or `command` (an argument
+  vector of 1-32 strings; an item the manifest writes starting `./` resolves against the module root,
+  before any `{select:…}` is filled in, so a chosen value is never rewritten). The command runs in
+  the session folder. The text is the MCP result's text blocks joined with `\n` (with no text block but
+  `structuredContent`, that as indented JSON), or the command's stdout. An error result, a non-zero
+  exit or a call that fails shows the failure line `module <m> tab <id>: <first line of the error>`
+  (cut at 200 characters); so does an MCP result with neither a text block nor `structuredContent`
+  (`<tool> returned no text`) and a command that exits 0 with blank stdout and something on stderr
+  (its first stderr line). Each call is bounded at 20 s.
+- `rows.pattern` (required): a JS regex compiled with flag `u`, matched against each line; a match
+  starts a row. Named groups: `title` (required), `key`, `url`, `detail`. `rows.detail`: a later line
+  that starts no row but matches it sets the row's `detail` from its `detail` group, when the row has
+  none yet. `rows.url`: a template where `{<group>}` is that group's value, percent-encoded; every group
+  it names must be a group of `rows.pattern`. Without `rows.url`, a `url` group is the link. A link that
+  does not start `https://` is dropped. `rows.empty`: a regex; when no line starts a row, any line
+  matching it shows the empty state (with rows, it is ignored). A regex that does not compile skips the tab.
+- **Fail closed:** blank text, or no row and a `rows.empty` match, shows `No items.`. Text with something in it, no
+  row and no `rows.empty` match shows exactly `module <m> tab <id>: output did not match its pattern`,
+  never the empty state.
+- **Bounds, before any regex runs:** the text is cut at 256 Ki characters, lines over 2000 characters
+  are skipped, at most 50 rows are kept (then `The first 50 are shown.`), and a regex source over 500
+  characters is refused. When the text was cut at 256 Ki, a long line was skipped or the engine cut
+  the command's stdout, the rows come with the note `list truncated`. The patterns run with no time bound (the manifest is the installed plugin's
+  own code), so keep them linear: no nested repetition such as `(a+)+`.
+- **A pick wins:** each read of a tab takes the next number and only the latest one writes; a pick
+  takes its number before it is stored, so a read for the old choice that is still running, or that
+  answers while the pick is being stored, never overwrites it.
+- `select` (at most 3): `id` like a tab id, `label` 1-40 characters, `type` `"string"` (the default) or
+  `"number"`. `options` is a source (`mcp` or `command`, with no `{select:…}` in it) plus `pattern`
+  with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200
+  options, a repeated value kept once, a value that starts with `-` or holds a control character
+  dropped. A select that a `command` source's argv names takes only values matching
+  `^[A-Za-z0-9._:@+][A-Za-z0-9._:@/+-]*$` (no leading `-` or `/`, no `=`: Windows tools read them as switches and delimiters); the others are dropped and the tab shows
+  `module <m> tab <id>: select <s>: <n> options dropped (not safe as a command argument)`. A number
+  select whose value is not a number fails. `default`: a
+  dot path into the session folder's `.claude/environments.json`; the option whose value equals that
+  value as a string is chosen first. A missing file, a missing key, invalid JSON or a value that is no
+  option picks the first option. The choice is kept for the session (in state, not the store) and a
+  new pick reads the rows again. Options that fail to load, or none, show the failure line and the
+  rows are not read.
+- `{select:<id>}`: an `args` value (top level) or an argv item that is exactly this gets the chosen
+  value, a number for a number select. A placeholder naming no declared select skips the tab.
+- Each row shows the key (when there is one), the title, the detail (dim) and a link. A tab is read
+  when its pane is first drawn, on `Refresh`, on a new pick, and again by `/harness` while it is on.
+
 ## Issues
 
 The open issues assigned to you (`--assignee @me`) in the GitHub repository of the session folder's
@@ -45,12 +157,20 @@ shell):
 
 Each row shows `#N`, the title (cut at 60 characters) and the state.
 
-- **Read-only:** the plugin runs only the four commands above. `tests/test_panel.py` fails on any
-  `gh issue create|edit|close|reopen|comment|delete|…`, any `gh pr`, any `gh api` with `-X`,
-  `--method`, `-f`, `-F`, `--field`, `--raw-field` or `--input`, any `git` command but
-  `git remote get-url`, any other program, any MCP tool named like a write and
-  any MCP call to a server other than the session app, and each pattern is proven against planted
-  lines. The tests also check every command the plugin starts against that list.
+- **Read-only:** of its own, the plugin runs only the four commands above, and `git rev-parse` for
+  [Tabs](#tabs); a [module tab](#module-tabs) runs the source its module declares. `tests/test_panel.py`
+  fails on any `gh issue create|edit|close|reopen|comment|delete|…`, any `gh pr`, any `gh api` with
+  `-X`, `--method`, `-f`, `-F`, `--field`, `--raw-field` or `--input`, any `git` command but
+  `git remote get-url` and `git rev-parse --path-format=absolute --git-common-dir`, any other program,
+  any program whose argument vector is not written out, any MCP tool named like a write and any MCP
+  call to a server other than the session app, and each pattern is proven against planted lines. The
+  one exception is the module tab's source: one MCP call and one program start in
+  `hooks/module-tabs.ts`, at one spelling each, allowed there and nowhere else. The [inbox](#inbox) has
+  the only others: its `get_session` call to the desktop app's `ccd_session_mgmt` server (in
+  `hooks/inbox/writer.ts`; no other tool of that server) and the system opener (`open`,
+  `cmd /c start`, `xdg-open`) with `uname -s` (in `hooks/inbox/reader.ts`), each at one spelling,
+  with the server, the tool and the opener's argument vectors pinned. The tests also check
+  every command the plugin starts against that list.
 - **Empty states** (one line each, a `Refresh` button, no error):
 
   | Situation | Line |
@@ -176,11 +296,55 @@ another folder than the one last read (a session moved into a worktree); there i
   after a Write or Edit of the file. Both read the cases in `tests/env-cases.ts`, so a change to
   `parseEnvironments` changes that file and `env_check.py` in the same commit.
 
+## Inbox
+
+The pane `rigger-inbox` (`hooks/inbox/`) lists what the other sessions on this machine wait on, so a
+session that stopped for you is not missed among many. Each session writes one entry for itself; every
+session reads the others'. `/inbox` opens the pane.
+
+- **What writes an entry** (main loop only, never a subagent):
+
+  | Kind | When |
+  |---|---|
+  | ❓ question | `wrap_up` (the built-in `WrapUp` or the desktop app's `mcp__ccd_turn__wrap_up`) with a question, or one marked blocked |
+  | ✅ result to check | `wrap_up` without either |
+  | ⏳ approval | a tool call that asks for permission: `waiting for approval: <tool>` |
+  | ⚠️ error | a turn that ends without `wrap_up` because it was aborted, failed or refused |
+
+  The built-in `WrapUp` result's own next-step box is used when there is one (the engine has masked
+  keys and tokens in it), else the call's input. Every text is cleaned (control and format characters
+  become spaces) and capped before it is written, and again when it is read.
+- **Where:** `<config dir>/rigger-panel/inbox/<session id>.json`, one file per session, replaced by its
+  next entry. `$.fs` cannot delete, so an entry is closed by `<session id>.closed`, which holds a time:
+  every entry written before it is hidden, the session's next entry shows again.
+- **What closes it:** a prompt you send in that session (typed, from the desktop app, from a phone or
+  a click on the app's own buttons; a message from another session, a task notification, a schedule
+  or a plugin does not), the next tool call after an approval entry or a turn that ends after it, and
+  `Close` on the item.
+- **What is shown:** the other sessions' open entries younger than 7 days, oldest first, each with
+  its title, folder, age, text, question, `Open` and `Close`; `Nothing waiting.` when there are none.
+  The folder is read again every 5 seconds. While anything waits, a band above the prompt says
+  `📥 N waiting · oldest: <title>, <age>` with an `Inbox` button.
+- **`Open`:** the desktop app draws a non-https link as plain text, so the entry's session link
+  (`claude://…`) is handed to the system opener: `open` on macOS, `cmd /c start "" <link>` on Windows,
+  `xdg-open` elsewhere (the system from `$.session.machine()`, else `OS`, else `uname -s`). The entry
+  file is written by another process and `cmd` re-parses its command line, so only the exact link of
+  the entry's own session (`claude://claude.ai/epitaxy/<session id>`) is opened; anything else shows
+  `not opened: the link is not a session link` and runs nothing.
+- **Without the desktop app:** the session's identity comes from the app (`get_session` on
+  `ccd_session_mgmt`, bounded at 5 seconds, asked again at most once per turn). Without it nothing is
+  written and nothing is said. With it, a write that fails shows
+  `rigger-panel inbox: entry not saved (<reason>)` on the status line.
+- **Tab off:** with the Inbox tab off for the project ([Tabs](#tabs)) the pane does not open at start
+  and the band is hidden. The session still writes its own entry, so the other sessions' inboxes keep
+  it, and `/inbox` still opens the pane.
+
 ## Tests
 
-`claude plugin test plugins/rigger-panel` runs `hooks/*.test.tsx`. `gh` and `git` are a stand-in
+`claude plugin test plugins/rigger-panel` runs every `*.test.ts` and `*.test.tsx` under `hooks/`. `gh` and `git` are a stand-in
 beneath the plugin that recognises each command by its whole argument vector, and the session app's
 `mcp.call` is a test hook, so no test reaches GitHub or starts a session. `tests/test_panel.py` runs
-that under the repository's test runner (`scripts/run_tests.py`; at least 130 passing), checks the
-source for machine paths, GitHub and git writes and programs other than `gh` and `git`, and skips the
+that under the repository's test runner (`scripts/run_tests.py`; at least 289 passing), checks the
+source for machine paths, GitHub and git writes and programs other than `gh` and `git` (the module
+tab's source and the inbox's calls excepted, each at its one spelling) in every file under `hooks/`, and skips the
 `claude` run with `--no-claude`.

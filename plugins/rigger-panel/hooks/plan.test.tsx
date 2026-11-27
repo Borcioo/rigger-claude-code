@@ -182,7 +182,7 @@ const PANE = {
   props: { title: 'Plan', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
 } as const
 
-test('all four panes open at start, and Plan keeps the steps', async ($, on) => {
+test('all five panes open at start, and Plan keeps the steps', async ($, on) => {
   const opened: string[] = []
   on('env.get', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'harness' } }))
@@ -199,7 +199,7 @@ test('all four panes open at start, and Plan keeps the steps', async ($, on) => 
   on('tool.call', () => ({ result: {} }))
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  expect([...opened].sort()).toEqual(['rigger-envs', 'rigger-issues', 'rigger-panel', 'rigger-plan'])
+  expect([...opened].sort()).toEqual(['rigger-envs', 'rigger-inbox', 'rigger-issues', 'rigger-panel', 'rigger-plan'])
   const empty = await $.ui.mount(PANE)
   expect((await empty.find({ type: 'Text', text: /No plan/ }))?.text).toBe('No plan.')
   await empty.unmount()
