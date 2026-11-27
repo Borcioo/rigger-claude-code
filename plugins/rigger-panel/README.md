@@ -129,7 +129,7 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200
   options, a repeated value kept once, a value that starts with `-` or holds a control character
   dropped. A select that a `command` source's argv names takes only values matching
-  `^[A-Za-z0-9._:@/=+-]+$` that do not start with `-`; the others are dropped and the tab shows
+  `^[A-Za-z0-9._:@+][A-Za-z0-9._:@/+-]*$` (no leading `-` or `/`, no `=`: Windows tools read them as switches and delimiters); the others are dropped and the tab shows
   `module <m> tab <id>: select <s>: <n> options dropped (not safe as a command argument)`. A number
   select whose value is not a number fails. `default`: a
   dot path into the session folder's `.claude/environments.json`; the option whose value equals that

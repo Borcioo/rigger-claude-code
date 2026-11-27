@@ -264,8 +264,8 @@ export function cutRows(text: string, rules: RowRules, sourceCut = false): Cut {
 
 const UNSAFE_VALUE = /^-|\p{Cc}/u
 // A value placed in a command's argv: a plain word a shell or a Windows batch file reads as itself,
-// never one that reads as an option.
-const ARGV_VALUE = /^(?!-)[A-Za-z0-9._:@/=+-]+$/u
+// never one that reads as an option (a leading `-` or `/`) or splits at a batch delimiter (`=`).
+const ARGV_VALUE = /^[A-Za-z0-9._:@+][A-Za-z0-9._:@/+-]*$/u
 
 // A select's options: `value` required, `label` else the value; values unique, at most 200. A value
 // that starts with `-` or holds a control character is dropped; one bound for command argv must be a

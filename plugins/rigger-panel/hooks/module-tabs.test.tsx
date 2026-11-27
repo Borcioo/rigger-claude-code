@@ -472,7 +472,7 @@ test('an option value that starts with a dash or holds a control character is dr
 })
 
 // Options whose values a command's argv may or may not take; `./x` is a value, never a module path.
-const ARGV_OPTIONS = ['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', '--exec=x', './x'].map(value => `- ${value} Label ${value}`).join('\n')
+const ARGV_OPTIONS = ['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', '--exec=x', 'k=v', '/c', './x'].map(value => `- ${value} Label ${value}`).join('\n')
 const STRING_SELECT = {
   id: 'project',
   label: 'Project',
@@ -487,7 +487,7 @@ test('a select value bound for command argv: only a plain word reaches it, the r
   await start($, w)
   const { ui, texts, select } = await drawTab($, w)
   expect(optionValues(select)).toEqual(['demo', './x'])
-  expect(texts).toContain('module tracker tab tickets: select project: 6 options dropped (not safe as a command argument)')
+  expect(texts).toContain('module tracker tab tickets: select project: 8 options dropped (not safe as a command argument)')
   expect(texts).toContain('QA and rollout')
   await ui.select({ key: 'select-project', value: './x' })
   await w.clock.settle()
@@ -506,7 +506,7 @@ test('a select value bound for MCP args keeps characters a command argument may 
   const w = world(on, files([tab]), { 'list-projects': text(ARGV_OPTIONS), 'list-tickets': text(TICKETS_TEXT) })
   await start($, w)
   const { ui, texts, select } = await drawTab($, w)
-  expect(optionValues(select)).toEqual(['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', './x'])
+  expect(optionValues(select)).toEqual(['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', 'k=v', '/c', './x'])
   expect(texts.filter(line => line.includes('dropped'))).toEqual([])
   await ui.unmount()
 })
