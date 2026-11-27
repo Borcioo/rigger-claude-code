@@ -309,6 +309,8 @@ export async function runSource(
       if (!outcome.isDone) return { error: `${source.mcp.tool} did not answer within ${CALL_MS / 1000} s` }
       const text = mcpText(outcome.value)
       if (outcome.value.isError) return { error: firstLine(text) || `${source.mcp.tool} reported an error` }
+      const silent = !outcome.value.content.some(block => block.type === 'text') && outcome.value.structuredContent === undefined
+      if (silent) return { error: `${source.mcp.tool} returned no text` }
       return { text }
     }
     const argv = source.command
@@ -316,6 +318,8 @@ export async function runSource(
     if (!outcome.isDone) return { error: `${source.command[0]} did not answer within ${CALL_MS / 1000} s` }
     const ran = outcome.value
     if (ran.exitCode !== 0) return { error: firstLine(ran.stderr) || firstLine(ran.stdout) || `exit code ${ran.exitCode}` }
+    // Only stderr, so the program said why it printed nothing.
+    if (ran.stdout.trim() === '' && firstLine(ran.stderr) !== '') return { error: firstLine(ran.stderr) }
     return { text: ran.stdout }
   } catch (error) {
     return { error: firstLine(reasonOf(error)) || 'the call failed with no reason' }

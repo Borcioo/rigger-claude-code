@@ -220,6 +220,23 @@ test('blank text and a line matching the empty pattern draw the empty state', as
   }
 })
 
+// A source that answered with nothing to read -> the failure line, never `No items.`.
+const SILENT: [string, Record<string, unknown>, string][] = [
+  ['an MCP result with no text block', { source: ticketsTab().source }, 'module tracker tab tickets: list-tickets returned no text'],
+  ['a command with only stderr', { source: { command: ['./bin/rows.sh'] } }, 'module tracker tab tickets: rows.sh: no token found'],
+]
+
+for (const [what, extra, line] of SILENT) {
+  test(`${what} is the failure line, not the empty state`, async ($, on) => {
+    const w = world(on, files([ticketsTab(extra)]), { 'list-tickets': { content: [{ type: 'image' }], isError: false } })
+    w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: '', stderr: '\nrows.sh: no token found\nusage: rows.sh' }
+    await start($, w)
+    const { ui, texts } = await drawTab($, w)
+    expect({ failure: texts.includes(line), empty: texts.includes('No items.') }).toEqual({ failure: true, empty: false })
+    await ui.unmount()
+  })
+}
+
 test('an error result is the failure line with the first line of its text', async ($, on) => {
   const w = world(on, files([ticketsTab()]), { 'list-tickets': text('\nUnauthorized: token expired\nretry later', true) })
   await start($, w)

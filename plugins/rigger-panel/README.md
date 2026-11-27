@@ -102,7 +102,9 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   the session folder. The text is the MCP result's text blocks joined with `\n` (with no text block but
   `structuredContent`, that as indented JSON), or the command's stdout. An error result, a non-zero
   exit or a call that fails shows the failure line `module <m> tab <id>: <first line of the error>`
-  (cut at 200 characters). Each call is bounded at 20 s.
+  (cut at 200 characters); so does an MCP result with neither a text block nor `structuredContent`
+  (`<tool> returned no text`) and a command that exits 0 with blank stdout and something on stderr
+  (its first stderr line). Each call is bounded at 20 s.
 - `rows.pattern` (required): a JS regex compiled with flag `u`, matched against each line; a match
   starts a row. Named groups: `title` (required), `key`, `url`, `detail`. `rows.detail`: a later line
   that starts no row but matches it sets the row's `detail` from its `detail` group, when the row has
