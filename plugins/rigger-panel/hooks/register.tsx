@@ -41,6 +41,7 @@ import {
 import type { PlanCall } from './plan'
 import { EMPTY_ISSUES, askSession, detectStartTool, loadIssues, refreshIssues, startIssue } from './issue-flow'
 import { cutLine, emptyText, shortTitle } from './issues'
+import { registerInbox } from './inbox/view'
 
 const PANE = 'rigger-panel'
 const ISSUES_PANE = 'rigger-issues'
@@ -166,6 +167,8 @@ const refresh = async ($: EngineInterface) => {
 }
 
 export const register: Register = on => {
+  registerInbox(on)
+
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'harness', description: 'Show the Rigger panel' })
     for (const [id, title] of PANE_TITLES) void $.ui.open({ id, title })

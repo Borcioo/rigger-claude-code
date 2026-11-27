@@ -1,3 +1,5 @@
+import type { Identity, InboxView, OpenFailure } from './inbox'
+
 export type Snapshot = {
   tokens?: number
   window: number
@@ -95,6 +97,9 @@ declare module 'claude-code' {
       plan: Shaped<PlanStep[]>
       planAge: Shaped<PlanAge>
       envs: Shaped<Envs>
+      inboxIdentity: Shaped<Identity | null>
+      inboxView: Shaped<InboxView>
+      inboxOpenFailures: Shaped<Record<string, OpenFailure>>
     }
   }
 }
