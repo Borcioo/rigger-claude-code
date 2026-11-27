@@ -21,7 +21,7 @@ and change it by forking.
 
 | Plugin | Install | Adds | Depends on |
 |---|---|---|---|
-| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps), agents (mapper, implementer, worker), context-guard and compact-guard hooks, token-audit, variant-run, drift-lint, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
+| `rigger-core` | default | skills (git-workflow, orchestrating-subagents, stack-tooling, e2e-playwright-speed, web-ui-traps), agents (mapper, implementer, worker), context-guard and compact-guard hooks, the turn guard (holds a turn while the session's own background work runs), the side-session guard (desktop app), the session watcher, token-audit, variant-run, drift-lint, `harness_start`, `/rigger-core:doctor`, `/rigger-core:harness-setup`, `/rigger-core:coordinate`, `/rigger-core:environments`, the state-file rule (main session) | none |
 | `rigger-rules` | default | the working rules, injected at session start and into subagents, plus every `*.md` file of your own `rules.d` folder | `rigger-core` |
 | `rigger-lessons` | default | lessons inbox count at session start, the capture rule, the `curate-lessons` skill, a lint for lessons, and opt-in background curation batches | `rigger-core` |
 | `rigger-talk` | opt-in | reply-format rules (language, length, report order) for the main session, configured through `userConfig` | `rigger-core` |
@@ -30,7 +30,7 @@ and change it by forking.
 | `rigger-testing` | default | the `testing` skill, the commit-time weak-test guard, `safe_edit.py` (in-place red runs) and the test-evidence and gate-lab tools | `rigger-core` |
 | `rigger-review` | default | the reviewer agent and the `review` skill: every changed file covered, per-language checklists, per-path review rules, and a closing JSON that rigger-core checks | `rigger-core` |
 | `rigger-wp` | opt-in, for WordPress developers | the `rigger-wp-traps` skill, the rule that says when to load it, the `wp-outbound-block` template, and the upstream WordPress agent skills behind `wordpress-router` | `rigger-core` |
-| `rigger-panel` | opt-in | the `/harness` command and four panes beside the chat: Rigger (the session's context, cost and limits, harness state), Issues (the GitHub issues assigned to you, read-only, through `gh`), Plan (the task list) and Environments (the project's `.claude/environments.json`) | none to run; the Rigger pane's version and Compaction rows read `rigger-core` files and its Lessons row reads the `rigger-lessons` inbox (a `?` without them) |
+| `rigger-panel` | opt-in | the `/harness` command and five panes beside the chat: Rigger (the session's context, cost and limits, harness state), Issues (your open GitHub issues in this repository, read-only, through `gh`), Plan (the task list), Environments (the project's `.claude/environments.json`) and Inbox (what other sessions on this machine wait on); tabs a module declares in its `rigger-module.json`; each tab but Rigger switched on or off per project | none to run; the Rigger pane's version and Compaction rows read `rigger-core` files and its Lessons row reads the `rigger-lessons` inbox (a `?` without them) |
 
 "Default" means this README recommends it; nothing is installed for you. Each plugin has its own
 `plugins/<plugin>/README.md`.
@@ -45,7 +45,8 @@ and change it by forking.
   C drive, or two folders above the `git` on PATH. Otherwise it runs every hook in PowerShell, where
   every Rigger hook fails.
 - `rigger-panel` needs a Claude Code build with function-hook plugins and a surface that docks
-  panes; its issues list needs `gh`, logged in, in a repo with a GitHub `origin`.
+  panes; its issues list needs `gh`, logged in, in a repo with a GitHub `origin`; a module tab needs
+  the MCP server or command its module names.
 
 `/rigger-core:doctor` checks all of this.
 
@@ -253,9 +254,10 @@ scanned: check those by hand.
 
 ## Platforms
 
-Windows is the tested platform. Linux is checked under WSL (Ubuntu, dash as `/bin/sh`) with a fresh
-isolated config. macOS is not verified; please open an issue with the command and its output when
-something fails.
+Windows is the platform used day to day. Every pull request runs the full gate on Linux and the test
+suite on macOS and Windows (`.github/workflows/test.yml`); Linux is also checked under WSL (Ubuntu,
+dash as `/bin/sh`) with a fresh isolated config. Please open an issue with the command and its output
+when something fails.
 
 ## Contributing and license
 
