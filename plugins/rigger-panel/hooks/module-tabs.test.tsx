@@ -365,6 +365,113 @@ for (const [what, environments, expected] of DEFAULTS) {
   })
 }
 
+// The environment value names a project by its key group, as a ticket prefix does.
+const KEY_DEFAULTS: [string, string, number][] = [
+  ['a key', JSON.stringify({ tracker: { prefix: 'TRK' } }), 61],
+  ['neither a value nor a key', JSON.stringify({ tracker: { prefix: 'NOPE' } }), 2],
+]
+
+for (const [what, environments, expected] of KEY_DEFAULTS) {
+  test(`a select default that is ${what} picks project ${expected}`, async ($, on) => {
+    const tab = ticketsTab({
+      source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
+      select: [{ ...PROJECT_SELECT, default: 'tracker.prefix' }],
+    })
+    const w = world(on, files([tab], { [ENVIRONMENTS]: environments }), {
+      'list-projects': text(PROJECTS_TEXT),
+      'list-tickets': text(TICKETS_TEXT),
+    })
+    await start($, w)
+    const { ui, select } = await drawTab($, w)
+    const call = w.calls.find(item => item.tool === 'list-tickets')
+    expect({ value: select?.props?.value, args: call?.args }).toEqual({ value: String(expected), args: { project_id: expected } })
+    await ui.unmount()
+  })
+}
+
+test("a select default matches an option's value before another option's key", async ($, on) => {
+  // Option 2's key is 61, option 61's value is 61: the value wins.
+  const projects = ['- [61] Demo - support (ID: 2, tickets: 318)', '- [TRK] Tracker harness (ID: 61, tickets: 1)'].join('\n')
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
+    select: [PROJECT_SELECT],
+  })
+  const w = world(on, files([tab], { [ENVIRONMENTS]: JSON.stringify({ tracker: { project_id: 61 } }) }), {
+    'list-projects': text(projects),
+    'list-tickets': text(TICKETS_TEXT),
+  })
+  await start($, w)
+  const { ui, select } = await drawTab($, w)
+  expect(select?.props?.value).toBe('61')
+  await ui.unmount()
+})
+
+const ALL_SELECT = { ...PROJECT_SELECT, all: 'All projects' }
+const optionLabels = (select: Found | undefined) => ((select?.props?.options ?? []) as { label: string }[]).map(option => option.label)
+
+const ALL_DEFAULTS: [string, Record<string, unknown>, string | undefined, string, Record<string, unknown>][] = [
+  ['no default', { all: 'All projects', default: undefined }, undefined, '-all', { assigned_to_me: true }],
+  ['a default that matches nothing', ALL_SELECT, JSON.stringify({ tracker: { project_id: 99 } }), '-all', { assigned_to_me: true }],
+  ['a default that matches', ALL_SELECT, JSON.stringify({ tracker: { project_id: 61 } }), '61', { assigned_to_me: true, project_id: 61 }],
+]
+
+for (const [what, extra, environments, value, args] of ALL_DEFAULTS) {
+  test(`a select with an all option and ${what} picks ${value}; all leaves the argument out of the call`, async ($, on) => {
+    const tab = ticketsTab({
+      source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { assigned_to_me: true, project_id: '{select:project}' } } },
+      select: [{ ...PROJECT_SELECT, ...extra }],
+    })
+    const w = world(on, files([tab], environments === undefined ? {} : { [ENVIRONMENTS]: environments }), {
+      'list-projects': text(PROJECTS_TEXT),
+      'list-tickets': text(TICKETS_TEXT),
+    })
+    await start($, w)
+    const { ui, select, texts } = await drawTab($, w)
+    const call = w.calls.find(item => item.tool === 'list-tickets')
+    expect({ value: select?.props?.value, labels: optionLabels(select), args: call?.args }).toEqual({
+      value,
+      labels: ['All projects', 'Demo - support', 'Tracker harness'],
+      args,
+    })
+    expect(texts).toContain('QA and rollout')
+    await ui.unmount()
+  })
+}
+
+test('picking the all option reads the rows again without the argument', async ($, on) => {
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
+    select: [ALL_SELECT],
+  })
+  const w = world(on, files([tab], { [ENVIRONMENTS]: JSON.stringify({ tracker: { project_id: 61 } }) }), {
+    'list-projects': text(PROJECTS_TEXT),
+    'list-tickets': text(TICKETS_TEXT),
+  })
+  await start($, w)
+  const { ui } = await drawTab($, w)
+  await ui.select({ key: 'select-project', value: '-all' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.calls.filter(item => item.tool === 'list-tickets').map(item => item.args)).toEqual([{ project_id: 61 }, {}])
+})
+
+test('the all option drops a command argv item that is only the placeholder', async ($, on) => {
+  const tab = ticketsTab({ source: { command: ['./bin/rows.sh', '--project', '{select:project}'] }, select: [{ ...STRING_SELECT, all: 'All' }] })
+  const w = world(on, files([tab]), { 'list-projects': text('- demo Demo') })
+  w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: TICKETS_TEXT }
+  await start($, w)
+  const { ui, texts, select } = await drawTab($, w)
+  expect(optionValues(select)).toEqual(['-all', 'demo'])
+  expect(texts).toContain('QA and rollout')
+  await ui.select({ key: 'select-project', value: 'demo' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.runs.map(run => run.argv)).toEqual([
+    [`${ROOT}/bin/rows.sh`, '--project'],
+    [`${ROOT}/bin/rows.sh`, '--project', 'demo'],
+  ])
+})
+
 test('picking another option reads the rows again with its value', async ($, on) => {
   const tab = ticketsTab({
     source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
@@ -587,6 +694,8 @@ const INVALID: [unknown, string][] = [
   [ticketsTab({ id: 'ok', select: [PROJECT_SELECT, PROJECT_SELECT] }), 'module tracker tab ok: skipped: select[1].id project is used twice'],
   [ticketsTab({ id: 'ok', select: [{ ...PROJECT_SELECT, options: { ...PROJECT_SELECT.options, pattern: '^(?<label>.+)$' } }] }), 'module tracker tab ok: skipped: select[0].options.pattern has no value group'],
   [ticketsTab({ id: 'ok', select: [{ ...PROJECT_SELECT, default: 7 }] }), 'module tracker tab ok: skipped: select[0].default is not a dot path'],
+  [ticketsTab({ id: 'ok', select: [{ ...PROJECT_SELECT, all: '' }] }), 'module tracker tab ok: skipped: select[0].all is not 1-40 characters'],
+  [ticketsTab({ id: 'ok', select: [{ ...PROJECT_SELECT, all: long(41) }] }), 'module tracker tab ok: skipped: select[0].all is not 1-40 characters'],
   [ticketsTab({ id: 'tickets' }), 'module tracker tab tickets: skipped: id is used twice in the module'],
 ]
 

@@ -102,6 +102,7 @@ const selectOf = (value: unknown, index: number, seen: Set<string>): SelectRule 
   if (!pattern.groups.includes('value')) return refuse(`${at}.options.pattern has no value group`)
   if (value.default !== undefined && (typeof value.default !== 'string' || !/^[^.]+(?:\.[^.]+)*$/u.test(value.default)))
     return refuse(`${at}.default is not a dot path`)
+  if (value.all !== undefined && !isText(value.all, TITLE_MAX)) return refuse(`${at}.all is not 1-${TITLE_MAX} characters`)
   return {
     id: value.id,
     label: value.label,
@@ -109,6 +110,7 @@ const selectOf = (value: unknown, index: number, seen: Set<string>): SelectRule 
     source,
     pattern: value.options.pattern as string,
     ...(value.default === undefined ? {} : { default: value.default as string }),
+    ...(value.all === undefined ? {} : { all: value.all as string }),
   }
 }
 
@@ -263,6 +265,9 @@ export function cutRows(text: string, rules: RowRules, sourceCut = false): Cut {
 }
 
 const UNSAFE_VALUE = /^-|\p{Cc}/u
+// The all option's value: it starts with `-`, so no option read from a source can hold it.
+const ALL = '-all'
+const OMIT = Symbol('omit')
 // A value placed in a command's argv: a plain word a shell or a Windows batch file reads as itself,
 // never one that reads as an option (a leading `-` or `/`) or splits at a batch delimiter (`=`).
 const ARGV_VALUE = /^[A-Za-z0-9._:@+][A-Za-z0-9._:@/+-]*$/u
@@ -283,7 +288,7 @@ export function cutOptions(text: string, rule: SelectRule, forArgv = false) {
       continue
     }
     if (rule.type === 'number' && !NUMBER.test(value)) refuse(`select ${rule.id} value ${value} is not a number`)
-    options.push({ value, label: groups.label || value })
+    options.push({ value, label: groups.label || value, ...(groups.key ? { key: groups.key } : {}) })
     if (options.length === OPTION_MAX) break
   }
   return { options, dropped }
@@ -337,20 +342,26 @@ export async function runSource(
 const rooted = (source: TabSource, root: string): TabSource =>
   'mcp' in source ? source : { command: source.command.map(item => (item.startsWith('./') ? `${root}/${item.slice(2)}` : item)) }
 
-// `{select:<id>}` as a whole value becomes the chosen value, a number for a number select.
+// `{select:<id>}` as a whole value becomes the chosen value, a number for a number select; with the
+// all option chosen, that args entry or argv item is left out.
 const filled = (source: TabSource, rules: SelectRule[], chosen: { [id: string]: string }): TabSource => {
-  const fill = <T>(value: T): T | string | number => {
+  const fill = <T>(value: T): T | string | number | typeof OMIT => {
     const id = typeof value === 'string' ? value.match(PLACEHOLDER)?.[1] : undefined
     const rule = rules.find(item => item.id === id)
     if (id === undefined || rule === undefined) return value
     const text = chosen[id] ?? ''
+    if (rule.all !== undefined && text === ALL) return OMIT
     return rule.type === 'number' ? Number(text) : text
   }
   if ('mcp' in source) {
-    const args = Object.fromEntries(Object.entries(source.mcp.args).map(([key, value]) => [key, fill(value)])) as { [key: string]: Json }
+    const args = Object.fromEntries(
+      Object.entries(source.mcp.args)
+        .map(([key, value]) => [key, fill(value)] as const)
+        .filter(([, value]) => value !== OMIT),
+    ) as { [key: string]: Json }
     return { mcp: { ...source.mcp, args } }
   }
-  return { command: source.command.map(item => String(fill(item))) }
+  return { command: source.command.map(fill).filter(item => item !== OMIT).map(String) }
 }
 
 // The value a dot path names in the session folder's `.claude/environments.json`; anything unreadable is none.
@@ -424,9 +435,17 @@ async function startLoad($: EngineInterface, pane: string, mine: number) {
         return await fail(reasonOf(error))
       }
       if (options.length === 0) return await fail(`select ${rule.id} has no options`)
+      if (rule.all !== undefined) options = [{ value: ALL, label: rule.all }, ...options]
       const kept = previous[rule.id]?.value
-      const wanted = kept ?? (rule.default === undefined ? undefined : await environmentValue($, cwd, rule.default))
-      const value = options.find(option => option.value === wanted)?.value ?? options[0]?.value ?? ''
+      // A kept choice matches by value; a default names an option by its value first, then by its key group.
+      const wanted = kept === undefined && rule.default !== undefined ? await environmentValue($, cwd, rule.default) : undefined
+      const named =
+        kept !== undefined
+          ? options.find(option => option.value === kept)
+          : wanted === undefined
+            ? undefined
+            : options.find(option => option.value === wanted) ?? options.find(option => option.key === wanted)
+      const value = (named ?? options[0])?.value ?? ''
       selects[rule.id] = { options, value }
     }
     const chosen = Object.fromEntries(Object.entries(selects).map(([id, held]) => [id, held.value]))
