@@ -96,6 +96,8 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
   const opened: string[] = []
   const closed: string[] = []
   const store: Record<string, unknown> = {}
+  // A program start that answers only when the test lets it.
+  const hanging: { program?: Promise<{ deny: string }> } = {}
   const clock = mock.clock(on, { now: 1000 })
   on('store.get', (_, e) => ({ value: store[e.key] }))
   on('store.set', (_, e) => {
@@ -134,13 +136,14 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
     runs.push({ argv: argv.map(norm), ...(e.init?.cwd ? { cwd: norm(e.init.cwd) } : {}) })
     const program = programs[norm(argv[0] ?? '')]
     if (program === undefined) return { deny: 'not this command in this test' }
+    if (hanging.program !== undefined) return hanging.program
     return { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...program } }
   })
   on('fs.read', (_, e) => {
     const body = state.files[norm(e.path)]
     return body === undefined ? { deny: 'missing' } : { value: body }
   })
-  return Object.assign(state, { calls, runs, programs, opened, closed, stored: store, clock })
+  return Object.assign(state, { calls, runs, programs, hanging, opened, closed, stored: store, clock })
 }
 
 const norm = (path: string) => path.replaceAll('\\', '/').replace(/^\/?[A-Za-z]:(?=\/)/, '')
@@ -234,6 +237,39 @@ for (const [what, extra, line] of SILENT) {
     const { ui, texts } = await drawTab($, w)
     expect({ failure: texts.includes(line), empty: texts.includes('No items.') }).toEqual({ failure: true, empty: false })
     await ui.unmount()
+  })
+}
+
+// A source that never answers -> the failure line once the 20 s bound passes, and not before.
+const HANGS: [string, Record<string, unknown>, string][] = [
+  ['an MCP call', {}, 'module tracker tab tickets: list-tickets did not answer within 20 s'],
+  ['a command', { source: { command: ['./bin/rows.sh'] } }, `module tracker tab tickets: ${ROOT}/bin/rows.sh did not answer within 20 s`],
+]
+
+for (const [what, extra, line] of HANGS) {
+  test(`${what} that never answers is the timeout failure after its bound`, async ($, on) => {
+    let release = () => {}
+    const never = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const w = world(on, files([ticketsTab(extra)]), { 'list-tickets': () => never.then(() => text('')) })
+    w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: TICKETS_TEXT }
+    w.hanging.program = never.then(() => ({ deny: 'released' }))
+    try {
+      await start($, w)
+      const first = await $.ui.mount({ ...paneOf(TICKETS, 'Tickets'), surface: 'desktop' })
+      await w.clock.settle()
+      await first.unmount()
+      await w.clock.advance(19_999)
+      const early = await drawTab($, w)
+      await early.ui.unmount()
+      await w.clock.advance(1)
+      const late = await drawTab($, w)
+      await late.ui.unmount()
+      expect({ early: early.texts.includes(line), late: late.texts.includes(line) }).toEqual({ early: false, late: true })
+    } finally {
+      release()
+    }
   })
 }
 
