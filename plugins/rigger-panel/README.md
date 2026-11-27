@@ -41,7 +41,9 @@ it is on, `[ ]` when it is off. A press switches the tab for this project and op
 at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
 In the desktop app the transcript's right-click menu holds the same rows (`[x] Issues`, `[ ] Inbox`, ...)
 beside the menu's other rows, and a press there does the same. Closing a pane with its close mark only
-hides it: the tab stays on, and `/harness` opens it again.
+hides it: the tab stays on and its row says `[x] Inbox (closed)`; a press on that row, or `/harness`,
+opens it again and keeps it on. Which panes are open comes from the engine (`$.ui.panes()`); when it
+cannot list them, every tab counts as open.
 
 - **Where the choice is kept:** the plugin's own store (`$.store`, in the Claude Code config dir,
   outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
@@ -169,8 +171,8 @@ Each row shows `#N`, the title (cut at 60 characters) and the state.
   call to a server other than the session app, and each pattern is proven against planted lines. The
   one exception is the module tab's source: one MCP call and one program start in
   `hooks/module-tabs.ts`, at one spelling each, allowed there and nowhere else. The [inbox](#inbox) has
-  the only others: its `get_session` call to the desktop app's `ccd_session_mgmt` server (in
-  `hooks/inbox/writer.ts`; no other tool of that server) and the system opener (`open`,
+  the only others: its `get_session` and `list_sessions` calls to the desktop app's `ccd_session_mgmt`
+  server (in `hooks/inbox/writer.ts`; no other tool of that server) and the system opener (`open`,
   `cmd /c start`, `xdg-open`) with `uname -s` (in `hooks/inbox/reader.ts`), each at one spelling,
   with the server, the tool and the opener's argument vectors pinned. The tests also check
   every command the plugin starts against that list.

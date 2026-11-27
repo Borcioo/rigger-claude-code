@@ -13,7 +13,7 @@ format. Releases are tagged `v<version>`.
 ### Added
 
 - rigger-panel: the desktop app's right-click menu in the transcript switches panel tabs on and off, like the
-  Tabs row.
+  Tabs row; a tab whose pane was closed with its close mark shows `(closed)`, and a press opens it again.
 
 ## [0.9.0] - 2026-11-27
 
