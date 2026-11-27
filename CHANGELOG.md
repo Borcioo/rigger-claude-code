@@ -5,6 +5,23 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-27
+
+### Added
+
+- rigger-panel: tabs are switched on and off per project from a Tabs row in the Rigger pane (worktrees of one
+  repository share the choice); config key `panel.tabs_off` (levels 2-3) sets the default-off list.
+- rigger-panel: a module declares its own tabs in `rigger-module.json` under `panel.tabs`. The panel reads an MCP
+  tool or a command, cuts rows with the module's named-group patterns, offers a select with a default from
+  `.claude/environments.json`, and shows a failure line instead of an empty list when the text does not match.
+- rigger-panel: an Inbox tab lists what every other session waits on (a question or result, an aborted turn, a
+  permission prompt), oldest first, with a count band above the prompt.
+
+### Fixed
+
+- rigger-panel: the Issues tab reads the git remote of the session folder, not the engine's folder.
+- rigger-lessons: the start tests no longer inherit the machine's `RIGGER_LESSONS_BATCH`.
+
 ### Changed
 
 - rigger-core's turn guard holds the end of a turn while any background shell task or background subagent of the
