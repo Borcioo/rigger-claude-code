@@ -4,6 +4,7 @@ Usage: python -I scripts/gate.py [--denylist FILE] [--distro NAME] [--out DIR]
        python -I scripts/gate.py --release --denylist FILE [...]
        python -I scripts/gate.py --changed-modules [--base REV] [--denylist FILE] [...]
        python -I scripts/gate.py --verify STATUS_FILE [--into BRANCH]
+       python -I scripts/gate.py --snapshot REF [other options]
 
 Every input is optional. With no --denylist the sweep runs with --no-denylist and the status says
 `denylist: none`. With no `claude` on PATH the suite runs with --no-claude and the status says so.
@@ -48,6 +49,13 @@ The status line after TREE is the mode: `mode: full`, or for --changed-modules
               working tree again, and a shared path among them exits 1; so does a recorded merge
               base that is not the merge base of --into (default main) and HEAD.
 --into        with --verify only: the branch the change merges into.
+--snapshot    gate commit REF (fetch first for a pushed branch: `origin/<branch>`) in a detached
+              worktree under the OS temp folder, so an edit in any checkout, a side session's included,
+              cannot change the gated tree mid-run. The commit's own scripts/gate.py runs there with the
+              other options (paths made absolute, --out defaulting to this checkout's gate folder). Prints
+              `# snapshot <sha> tree <tree> at <path>` first and, after the run, `# snapshot removed: …`
+              (or `# snapshot not removed: …`); the worktree is removed on a failure or an interrupt too.
+              Exit: the snapshot gate's, or 1 when REF does not resolve. Not with --verify.
 """
 
 import argparse
@@ -529,7 +537,77 @@ def fail_early(out, line):
     return 1
 
 
-def main(argv=None, root=ROOT):
+def no_git_env():
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+
+
+def snapshot_argv(args, out):
+    """The options of this run for the snapshot's own gate.py; paths absolute, since it runs in another folder."""
+    argv = ["--out", os.path.abspath(str(out)), "--distro", args.distro]
+    if args.denylist is not None:
+        argv += ["--denylist", os.path.abspath(args.denylist)]
+    if args.release:
+        argv.append("--release")
+    if args.changed_modules:
+        argv.append("--changed-modules")
+    if args.base is not None:
+        argv += ["--base", args.base]
+    return argv
+
+
+# The parser's options that snapshot_argv forwards; a test fails when a new option is missing here.
+SNAPSHOT_FORWARDED = {"out", "distro", "denylist", "release", "changed_modules", "base"}
+
+
+def run_snapshot_child(tree, argv):
+    """The snapshot's own gate, so the commit is gated by its own gate code; its output streams through."""
+    return subprocess.run(
+        [sys.executable, "-I", str(Path(tree) / "scripts" / "gate.py"), *argv], cwd=str(tree), stdin=subprocess.DEVNULL
+    ).returncode
+
+
+def remove_snapshot(root, holder, tree):
+    """Remove the snapshot worktree and its temp folder; the line to print."""
+    done = subprocess.run(
+        ["git", "worktree", "remove", "--force", str(tree)], cwd=str(root), env=no_git_env(),
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT,
+    )
+    shutil.rmtree(holder, ignore_errors=True)
+    subprocess.run(
+        ["git", "worktree", "prune"], cwd=str(root), env=no_git_env(), stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
+    )
+    if os.path.exists(holder):
+        detail = " ".join(done.stderr.decode("utf-8", "replace").split())
+        return "# snapshot not removed: %s (git worktree remove exit %d: %s)" % (holder, done.returncode, detail)
+    return "# snapshot removed: %s" % tree
+
+
+def snapshot_gate(ref, args, root, out):
+    """Gate commit `ref` in a detached worktree of `root`, so an edit in any checkout cannot change the
+    gated tree mid-run; the worktree is removed afterwards, on a failure or an interrupt too."""
+    try:
+        sha = git_list(root, "snapshot: cannot resolve %s" % ref, "rev-parse", "--verify", "--end-of-options",
+                       ref + "^{commit}")[0].strip()
+        tree = git_list(root, "snapshot: cannot read the tree of %s" % ref, "rev-parse", sha + "^{tree}")[0].strip()
+    except (TreeError, IndexError) as error:
+        print(str(error) if isinstance(error, TreeError) else "snapshot: cannot resolve %s" % ref, flush=True)
+        return 1
+    holder = tempfile.mkdtemp(prefix="rigger-gate-")
+    snapshot = Path(holder) / sha[:12]
+    try:
+        try:
+            git_list(root, "snapshot: cannot create the worktree", "worktree", "add", "--detach", str(snapshot), sha)
+        except TreeError as error:
+            print(str(error), flush=True)
+            return 1
+        print("# snapshot %s tree %s at %s" % (sha, tree, snapshot), flush=True)
+        return run_snapshot_child(snapshot, snapshot_argv(args, out))
+    finally:
+        print(remove_snapshot(root, holder, snapshot), flush=True)
+
+
+def build_parser():
     parser = argparse.ArgumentParser(description="Run the whole gate; read its status file instead of rerunning.")
     parser.add_argument("--denylist", help="the sweep's denylist (optional; --release requires it)")
     parser.add_argument("--release", action="store_true", help="also prove the denylist catches a planted term")
@@ -541,9 +619,22 @@ def main(argv=None, root=ROOT):
     )
     parser.add_argument("--base", default=None, help="with --changed-modules: the change starts at the merge base with this (default: main)")
     parser.add_argument("--into", default=None, help="with --verify: the branch the change merges into (default: main)")
+    parser.add_argument("--snapshot", metavar="REF", help="gate this commit in a detached temporary worktree")
+    return parser
+
+
+def main(argv=None, root=ROOT):
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.into is not None and args.verify is None:
         parser.error("--into needs --verify")
+    if args.snapshot is not None:
+        if args.verify is not None:
+            parser.error("--snapshot cannot be combined with --verify: verify the status file in the checkout it is about")
+        if args.base is not None and not args.changed_modules:
+            parser.error("--base needs --changed-modules")
+        out = Path(args.out) if args.out else run_tests.log_path(root).with_name("gate")
+        return snapshot_gate(args.snapshot, args, root, out)
     if args.verify is not None:
         code, line = verify(args.verify, root, into=args.into or DEFAULT_INTO)
         print(line, flush=True)

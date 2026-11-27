@@ -85,6 +85,7 @@ PATH it prints `SKIP wsl: wsl not on PATH`. Skipped legs are counted on the pass
 | `--out <folder>` | where the logs and `status.txt` go (default: a `gate` folder in the temp directory, named in the first line) |
 | `--changed-modules [--base REV]` | the gate of a module-only change: the changed modules' tests (and their readers) in place of the suite, here and under WSL, from one changed-file list the host writes; not with `--release` |
 | `--verify <status.txt>` | runs nothing; checks that the status file's pass line is about the current tree, names the mode (`full` or `changed-modules: <modules>`), and refuses a changed-modules result once the change holds a shared path or its recorded merge base is not the merge base of `--into <branch>` (default `main`) and HEAD |
+| `--snapshot <ref>` | gates that commit in a detached worktree under the temp folder, with the commit's own `gate.py` and the other flags, so an edit in any checkout cannot change the tree mid-run; prints the commit and tree first, removes the worktree afterwards (on a failure too); not with `--verify` |
 
 The last line is `# gate passed, <seconds> s[, skipped N], tree <id>` or `# gate failed: <legs>`.
 
