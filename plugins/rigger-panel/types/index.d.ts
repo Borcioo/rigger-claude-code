@@ -87,6 +87,13 @@ export type Envs = {
   note?: string
 }
 
+// A project's tab choice as `$.store` keeps it under `tabs:<project>`: the tab ids the person switched
+// on and off there.
+export type TabChoice = { on: string[]; off: string[] }
+
+// The switchable tabs that are on for the session's project (`project`: the store key's folder).
+export type Tabs = { project?: string; on: string[] }
+
 declare module 'claude-code' {
   interface PluginState {
     'rigger-panel': {
@@ -95,6 +102,7 @@ declare module 'claude-code' {
       plan: Shaped<PlanStep[]>
       planAge: Shaped<PlanAge>
       envs: Shaped<Envs>
+      tabs: Shaped<Tabs>
     }
   }
 }

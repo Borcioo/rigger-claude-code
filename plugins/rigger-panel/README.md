@@ -2,7 +2,8 @@
 
 Opt-in. A function-hook plugin for Claude Code (`hooks/register.tsx`, no shell hooks, no rules) that
 adds four panes beside the chat. They open at session start; `/harness` opens them again and reads
-everything once more.
+everything once more. Each pane but Rigger is a tab that can be switched off per project
+([Tabs](#tabs)).
 
 | Pane | Shows |
 |---|---|
@@ -31,6 +32,28 @@ plugin cannot get, or a version that is not a commit hash, draws as `?`.
 The pane redraws every 30 seconds and after each turn. On a graphical surface the context bar is an
 `Svg`; on the terminal it is text.
 
+## Tabs
+
+The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments), `[x]` when
+it is on, `[ ]` when it is off. A press switches the tab for this project and opens or closes its pane
+at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
+
+- **Where the choice is kept:** the plugin's own store (`$.store`, in the Claude Code config dir,
+  outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
+  (pane ids such as `rigger-issues`) switched on and off there.
+- **Project:** the parent folder of `git rev-parse --path-format=absolute --git-common-dir` run in the
+  session folder, so every worktree of a repository shares the main checkout's choice; outside git,
+  the session folder itself.
+- **Default:** every tab is on, unless its id is in the config key `panel.tabs_off` (a list of tab ids;
+  levels 2 and 3, a company module or the personal `rigger/config.json`), read from rigger-core's
+  snapshot of the session (`<config dir>/rigger/state/<session id>.resolved.json`). A tab the project
+  switched on stays on; one it switched off stays off. A missing or unreadable snapshot means no
+  default off list.
+
+  ```json
+  { "schema": 1, "panel": { "tabs_off": ["rigger-envs"] } }
+  ```
+
 ## Issues
 
 The open issues assigned to you (`--assignee @me`) in the GitHub repository of the session folder's
@@ -45,10 +68,11 @@ shell):
 
 Each row shows `#N`, the title (cut at 60 characters) and the state.
 
-- **Read-only:** the plugin runs only the four commands above. `tests/test_panel.py` fails on any
+- **Read-only:** the plugin runs only the four commands above, and `git rev-parse` for
+  [Tabs](#tabs). `tests/test_panel.py` fails on any
   `gh issue create|edit|close|reopen|comment|delete|…`, any `gh pr`, any `gh api` with `-X`,
   `--method`, `-f`, `-F`, `--field`, `--raw-field` or `--input`, any `git` command but
-  `git remote get-url`, any other program, any MCP tool named like a write and
+  `git remote get-url` and `git rev-parse --path-format=absolute --git-common-dir`, any other program, any MCP tool named like a write and
   any MCP call to a server other than the session app, and each pattern is proven against planted
   lines. The tests also check every command the plugin starts against that list.
 - **Empty states** (one line each, a `Refresh` button, no error):

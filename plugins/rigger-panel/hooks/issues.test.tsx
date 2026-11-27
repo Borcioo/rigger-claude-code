@@ -83,6 +83,7 @@ const READ_ONLY = new Set([
   'gh --version',
   'gh auth status --hostname github.com',
   'git remote get-url origin',
+  'git rev-parse --path-format=absolute --git-common-dir',
   LIST_ARGV(REPO_NAME).join(' '),
   LIST_ARGV('other/repo').join(' '),
 ])

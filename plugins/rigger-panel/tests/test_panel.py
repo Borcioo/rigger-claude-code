@@ -22,8 +22,9 @@ MACHINE_PATH_RE = re.compile(r"""['"`]([A-Za-z]:[\\/]|/Users/|/home/)""")
 SEP = r"""['"`\s,]+"""
 # The panel only reads. Each pattern is one way to write: a gh issue subcommand that changes an
 # issue, any gh pr command, gh api with a method or a field, a git command other than
-# `git remote get-url`, a program other than gh and git, an MCP tool named like a GitHub write, or an
-# MCP call to any server but the session app's.
+# `git remote get-url` and `git rev-parse --path-format=absolute --git-common-dir`, a program other
+# than gh and git, an MCP tool named like a GitHub write, or an MCP call to any server but the
+# session app's.
 Q = r"""['"`]"""
 WRITE_RES = {
     "gh issue write": re.compile(
@@ -33,7 +34,11 @@ WRITE_RES = {
     "gh api write": re.compile(
         r"(?i)\bgh" + SEP + r"api\b[^\n]*?" + r"""['"`\s,=](-X|--method|-f|-F|--field|--raw-field|--input)\b"""
     ),
-    "git write": re.compile(Q + r"git" + Q + r"\s*,\s*" + Q + r"(?!remote" + Q + r"\s*,\s*" + Q + r"get-url" + Q + ")"),
+    "git write": re.compile(
+        Q + r"git" + Q + r"\s*,\s*" + Q + r"(?!remote" + Q + r"\s*,\s*" + Q + r"get-url" + Q
+        + r"|rev-parse" + Q + r"\s*,\s*" + Q + r"--path-format=absolute" + Q + r"\s*,\s*" + Q + r"--git-common-dir" + Q
+        + r"\s*\])"
+    ),
     "other program": re.compile(r"process\.run\(\s*\[\s*(?!" + Q + r"(gh|git)" + Q + ")"),
     "MCP write tool": re.compile(
         r"(?i)\b(add|edit|create|update|delete|close|merge|assign|lock|push|fork|submit|dismiss)[-_ ]?([a-z]+[-_]){0,3}"
@@ -78,6 +83,8 @@ PLANTED = {
         "await $.process.run([\"git\", \"tag\", \"v1\"])",
         "await $.process.run(['git', 'remote', 'set-url', 'origin', 'x'])",
         "await $.process.run(['git', 'remote', 'add', 'x', 'y'])",
+        "await $.process.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir', '--output', 'x'])",
+        "await $.process.run(['git', 'rev-parse', 'HEAD'])",
     ],
     "other program": [
         "await $.process.run(['sh', '-c', 'curl -X POST x'])",
@@ -94,6 +101,7 @@ ALLOWED = [
     "await $.process.run(['gh', 'auth', 'status', '--hostname', 'github.com'])",
     "await $.process.run(['gh', 'api', 'repos/x/y/issues'])",
     "await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: RUN_MS })",
+    "await $.process.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], {",
     "const list = await $.process.run(\n    ['gh', 'issue', 'list'],\n  )",
     "await update($, plan, steps => closePlan(steps, running))",
     "$.mcp.call(SESSIONS, 'start_session', startArgs(repo, number, title))",
@@ -124,6 +132,8 @@ class PanelTests(unittest.TestCase):
         self.assertRegex(text, r"'gh', 'issue', 'list'")
         self.assertRegex(text, r"'git', 'remote', 'get-url', 'origin'")
         self.assertIn("gh issue view", text)
+        tabs = (PLUGIN / "hooks" / "tabs.ts").read_text(encoding="utf-8")
+        self.assertIn("['git', 'rev-parse', '--path-format=absolute', '--git-common-dir']", tabs)
 
     def test_write_scan_catches_every_planted_write(self):
         for name, lines in PLANTED.items():

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Envs, PlanEvidence, PlanStep, Snapshot } from '../types'
+import type { Envs, PlanEvidence, PlanStep, Snapshot, Tabs } from '../types'
 import { configDir } from './config-dir'
 import { EMPTY_ENVS, loadEnvs, loadEnvsIfMoved, setEnvsCwd } from './env-flow'
 import {
@@ -41,17 +41,12 @@ import {
 import type { PlanCall } from './plan'
 import { EMPTY_ISSUES, askSession, detectStartTool, loadIssues, refreshIssues, startIssue } from './issue-flow'
 import { cutLine, emptyText, shortTitle } from './issues'
+import { TABS, loadTabs, openTabs, toggleTab } from './tabs'
 
 const PANE = 'rigger-panel'
 const ISSUES_PANE = 'rigger-issues'
 const PLAN_PANE = 'rigger-plan'
 const ENVS_PANE = 'rigger-envs'
-const PANE_TITLES = [
-  [PANE, 'Rigger'],
-  [ISSUES_PANE, 'Issues'],
-  [PLAN_PANE, 'Plan'],
-  [ENVS_PANE, 'Environments'],
-] as const
 const REFRESH_MS = 30_000
 const EMPTY: Snapshot = { window: 0, agents: 0, updatedAt: 0 }
 
@@ -104,6 +99,11 @@ const markNudged = ($: EngineInterface) => update($, planAge, age => ({ ...age, 
 
 const envs = atom({ plugin: 'rigger-panel', key: 'envs' } as const, EMPTY_ENVS, {
   shape: 'envs-1',
+})
+
+// The same reference as in tabs.ts.
+const tabs = atom({ plugin: 'rigger-panel', key: 'tabs' } as const, { on: TABS.map(tab => tab.id) } as Tabs, {
+  shape: 'tabs-1',
 })
 
 const HARNESS_LABELS = ['Context', 'Session cost', 'Weekly limit', 'Agents in session', 'Rigger', 'Lessons in inbox', 'Compaction']
@@ -168,7 +168,8 @@ const refresh = async ($: EngineInterface) => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'harness', description: 'Show the Rigger panel' })
-    for (const [id, title] of PANE_TITLES) void $.ui.open({ id, title })
+    // Only the tabs that are on for this project open; the Rigger pane always does.
+    void openTabs($, await loadTabs($, e.cwd))
     void refresh($)
     // GitHub and the environments file are read when the pane opens and on Refresh, never on this timer.
     void loadIssues($)
@@ -179,8 +180,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'harness' }, async $ => {
-    await Promise.all(PANE_TITLES.map(([id, title]) => $.ui.open({ id, title })))
-    await Promise.all([refresh($), loadIssues($), loadEnvs($), detectStartTool($)])
+    const opening = loadTabs($).then(ids => openTabs($, ids))
+    await Promise.all([opening, refresh($), loadIssues($), loadEnvs($), detectStartTool($)])
 
     return { text: 'Rigger panel opened.' }
   })
@@ -409,9 +410,10 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const elements = $.ui.resolve(e)
-    const { Box, Text } = elements
+    const { Box, Text, Button } = elements
     const Svg = svgOf(elements, e.surface)
     const now = await read($, snapshot)
+    const shown = await read($, tabs)
     const width = labelWidth(HARNESS_LABELS)
     const line = (label: string, value: string) => textRow(elements, width, label, value)
     // The context figures and, under them, a bar of how full the window is.
@@ -438,6 +440,16 @@ export const register: Register = on => {
         {line('Rigger', now.version ?? '?')}
         {line('Lessons in inbox', now.lessons === undefined ? '?' : String(now.lessons))}
         {line('Compaction', now.guard ?? '?')}
+        <Box flexDirection="column" marginTop={BLOCK_GAP}>
+          <Text bold>Tabs</Text>
+          <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
+            {TABS.map(tab => (
+              <Button key={`tab-${tab.id}`} onPress={() => void toggleTab($, tab.id)}>
+                {`${shown.on.includes(tab.id) ? '[x]' : '[ ]'} ${tab.title}`}
+              </Button>
+            ))}
+          </Box>
+        </Box>
       </Box>
     )
   })
