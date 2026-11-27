@@ -5,6 +5,20 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Added
+
+- gate: `scripts/gate.py --snapshot <ref>` gates a commit in a detached temporary worktree with that commit's own
+  gate, so a side session still editing its worktree cannot fail the run with `tree changed during the gate`;
+  the worktree is removed afterwards, on a failure too. `/rigger-core:coordinate` runs its merge-point gate on
+  such a snapshot.
+- rigger-core: every reviewer brief names a scratch folder outside the reviewed tree, so the reviewer can run
+  mutants (`orchestrating-subagents`, Briefs).
+
+### Fixed
+
+- rigger-core: the session watcher no longer reports a side session the user detached from the coordinator
+  (`lineageDetached`) in its held-note, quiet or cap lines.
+
 ## [0.9.0] - 2026-11-27
 
 ### Added
