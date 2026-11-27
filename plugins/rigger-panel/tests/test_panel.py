@@ -76,18 +76,18 @@ FILE_CALLS = {**MANIFEST_CALLS, **INBOX_CALLS}
 
 
 def inbox_pin_hits(name, text):
-    """The rules behind INBOX_CALLS: writer.ts calls only ccd_session_mgmt and only its APP_TOOLS, each by a
-    literal name; reader.ts's openCommand returns only the OPENER_RETURNS argv."""
+    """The rules behind INBOX_CALLS: writer.ts calls only ccd_session_mgmt; callApp, defined there and not
+    exported, is called (in any file) only with one of APP_TOOLS as a literal name; reader.ts's
+    openCommand returns only the OPENER_RETURNS argv."""
     hits = set()
     text = text.replace("\r\n", "\n")
-    if name == "inbox/writer.ts":
-        if "const APP = 'ccd_session_mgmt'\n" not in text:
-            hits.add("app server")
-        calls = re.findall(r"\bcallApp\(", text)
-        tools = re.findall(r"\bcallApp\(\s*\$\s*,\s*'([A-Za-z0-9_]+)'", text)
-        defined = len(re.findall(r"\bfunction callApp\(", text))
-        if len(tools) != len(calls) - defined or not set(tools) <= APP_TOOLS:
-            hits.add("app tool")
+    if name == "inbox/writer.ts" and "const APP = 'ccd_session_mgmt'\n" not in text:
+        hits.add("app server")
+    calls = re.findall(r"\bcallApp\(", text)
+    tools = re.findall(r"\bcallApp\(\s*\$\s*,\s*'([A-Za-z0-9_]+)'", text)
+    defined = len(re.findall(r"^async function callApp\(", text, re.M)) if name == "inbox/writer.ts" else 0
+    if len(tools) != len(calls) - defined or not set(tools) <= APP_TOOLS:
+        hits.add("app tool")
     if name == "inbox/reader.ts":
         body = re.search(r"export function openCommand\([^)]*\)[^{]*\{(.*?)\n\}", text, re.S)
         returns = re.findall(r"return\b[^\n]*", body.group(1)) if body else []
@@ -237,6 +237,8 @@ class PanelTests(unittest.TestCase):
             ("inbox/reader.ts", reader.replace("return ['xdg-open', link]", "return ['sh', '-c', link]"), "opener argv"),
             ("inbox/view.tsx", "await $.process.run(['open', link])", "other program"),
             ("inbox/view.tsx", mcp, "MCP server"),
+            ("inbox/view.tsx", "await callApp($, 'send_message', {})", "app tool"),
+            ("inbox/writer.ts", writer.replace("async function callApp(", "export async function callApp("), "app tool"),
             ("register.tsx", opener, "variable program"),
             ("register.tsx", uname, "other program"),
         ]
@@ -287,7 +289,7 @@ class PanelTests(unittest.TestCase):
         output = proc.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
         self.assertEqual(proc.returncode, 0, output)
         passed = PASS_RE.findall(output)
-        self.assertTrue(passed and int(passed[-1]) >= 267, output)
+        self.assertTrue(passed and int(passed[-1]) >= 268, output)
         self.assertEqual(FAIL_RE.findall(output)[-1:], ["0"], output)
 
 
