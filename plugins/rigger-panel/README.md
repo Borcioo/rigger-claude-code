@@ -335,7 +335,7 @@ session reads the others'. `/inbox` opens the pane.
 `claude plugin test plugins/rigger-panel` runs every `*.test.ts` and `*.test.tsx` under `hooks/`. `gh` and `git` are a stand-in
 beneath the plugin that recognises each command by its whole argument vector, and the session app's
 `mcp.call` is a test hook, so no test reaches GitHub or starts a session. `tests/test_panel.py` runs
-that under the repository's test runner (`scripts/run_tests.py`; at least 267 passing), checks the
+that under the repository's test runner (`scripts/run_tests.py`; at least 268 passing), checks the
 source for machine paths, GitHub and git writes and programs other than `gh` and `git` (the module
 tab's source and the inbox's calls excepted, each at its one spelling) in every file under `hooks/`, and skips the
 `claude` run with `--no-claude`.
