@@ -100,6 +100,8 @@ failure on the stronger model goes to the user with the diagnosis.
   `tools/slot-check/slot_check.py reviewer <reply file> --base <base> --head <head>` from the
   rigger-core plugin root; a refusal is a failed review.
 - Any skill or MCP server the task needs, a project's own included: name it in the brief.
+- Every reviewer brief names a scratch folder outside the reviewed tree for mutant copies and temp
+  configs; without one the reviewer runs no mutants.
 - Follow `templates/implementer-brief.md` at the rigger-core plugin root (two folders above this
   skill's folder). Every brief
   carries the project's pitfalls list (project CLAUDE.md; create the section if missing), every
