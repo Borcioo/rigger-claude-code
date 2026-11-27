@@ -158,7 +158,7 @@ for (const [what, cwd, gitDir, key] of KEYS) {
   test(`${what} keys its choice by ${key}`, async ($, on) => {
     const w = world(on, { cwd, gitDirs: { [cwd]: gitDir }, store: { [`tabs:${key}`]: { on: [], off: ['rigger-plan'] } } })
     await start($, w, cwd)
-    expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-envs'])
+    expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-envs', 'rigger-inbox'])
   })
 }
 
