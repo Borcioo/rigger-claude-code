@@ -85,7 +85,9 @@ one full gate runs on the machine at a time.
    lines (head sha, its gate's exit line and counts, open questions, the file's path); read the
    file's head (up to the first `##` after Summary), the whole file only when a decision needs it,
    and hand it to the reviewer by path. Every question and decision goes to you,
-   never to the user. Run each gate command once yourself before it goes in a brief. A part that
+   never to the user. The brief says: send your result or question to the coordinator with
+   `SendMessage` (to the session that started you) before you end the turn; a turn end alone is
+   not a report (the app holds its note while any other side session works). Run each gate command once yourself before it goes in a brief. A part that
    designs or plans loads the brainstorm and plans skills the Skill triggers table names and sends its
    questions and design to you. Before each brief, check the project's MCP servers (your tool list,
    `.mcp.json`, `mcp` in `.claude/environments.json`) and name in the brief what the part may use.
@@ -94,7 +96,10 @@ one full gate runs on the machine at a time.
    clean, and the exit line and counts of its own gate log; plus a focused run of the one or
    two tests that carry the task's main risk. A side session runs the full gate on its branch
    before it reports; you run the full gate only once per merge point, never per branch: where
-   the project has a gate lock, your run blocks every building session. Answer questions; after a
+   the project has a gate lock, your run blocks every building session. Run it on a detached
+   snapshot of the pushed commit (fetch first), never in a side session's worktree, where its edits change the
+   tree mid-run: the project's snapshot option where it has one (`--snapshot <ref>`), else
+   `git worktree add --detach <git-ignored folder inside the repository, not the OS temp folder> <sha>`, removed afterwards, on a failure too. Answer questions; after a
    second failure on one step split the task or move it to a stronger model. A follow-up of a few
    lines for an idle session's files may go to the integrating session as its own commit when no
    other writer is active on those files. After the evidence check, call

@@ -444,6 +444,18 @@ class WatchTests(Tmp):
         code, line, _ = self.run_watch(10 ** 9)
         self.assertTrue(line.startswith("session-watch: nothing to watch: "), line)
 
+    def test_a_session_the_user_detached_is_in_no_line(self):
+        # The app keeps spawnedFrom on a session the user detached from this one and marks it
+        # lineageDetached; it is no longer linked here, so neither its note nor its quiet state wakes us.
+        t = newest_ts("pending_tool.jsonl")
+        self.host([{"sessionId": self.OTHER, "title": "Engine", "at": round((t + 100) * 1000)}])
+        self.child()
+        self.child(sid=self.OTHER, cli="cli-engine", name="engine", lineageDetached=True, lineageDetachedBy="user")
+        self.transcript(fixture_lines("idle_after_summary.jsonl"))
+        self.transcript(fixture_lines("pending_tool.jsonl"), cli="cli-engine")
+        code, out, waited = self.run_watch(t + 300)
+        self.assertEqual((code, out, waited), (0, "session-watch: cap: 30 min; theme-kit (idle)\n", 1800))
+
     # errors
     def assertError(self, result, waited=0, needle=""):
         code, line, w = result

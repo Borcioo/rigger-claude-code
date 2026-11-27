@@ -299,6 +299,7 @@ class Watch:
             return [], []
         notes = self.queued(host, host_path)
         children = []
+        detached = set()
         for path in sorted(glob.glob(os.path.join(glob.escape(os.path.dirname(host_path)), "local_*.json"))):
             if path == host_path:
                 continue
@@ -308,9 +309,13 @@ class Watch:
             origin = doc.get("spawnedFrom")
             if not isinstance(origin, dict) or origin.get("sessionId") != self.host:
                 continue
+            if doc.get("lineageDetached") is True:  # the user detached it: no longer linked here
+                detached.add(doc.get("sessionId"))
+                continue
             if doc.get("isArchived") is True or origin.get("userFork") is True:
                 continue
             children.append(doc)
+        notes = [note for note in notes if note[0] not in detached]
         states = [(child, self.child_state(child, now)) for child in children]
         self.last_states = states
         by_id = {child.get("sessionId"): (child, state) for child, state in states}
