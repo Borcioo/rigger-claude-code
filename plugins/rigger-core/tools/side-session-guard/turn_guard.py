@@ -144,8 +144,8 @@ def one_line(text):
 
 
 def block_reason(task_id, kind, description, path, count):
-    until = ("a shell loop under `timeout` of a few minutes; its completion notice arrives after that call, "
-             "and you repeat while it runs" if kind == "subagent"
+    until = ("Bash `sleep 60` or PowerShell `Start-Sleep 60`, repeated while the agent runs; its completion "
+             "notice arrives after such a call" if kind == "subagent"
              else "until %s ends with an [exited with code N] line" % path)
     return ('%s background task %s ("%s") is still running. Wait for it inside this turn with one bounded '
             'foreground wait (%s), then continue; end the turn only with a result or a question. If it is '

@@ -150,9 +150,9 @@ class FilterTests(Base):
         self.assertHeld((reason, note), "a21a4cf9bbd611542")
         self.assertEqual(clock.now, 0.0)
         self.assertIn('"bg review"', reason)
-        self.assertIn("completion notice", reason)
-        self.assertIn("under `timeout`", reason)
-        self.assertIn("repeat while it runs", reason)
+        self.assertIn("one bounded foreground wait (Bash `sleep 60` or PowerShell `Start-Sleep 60`, repeated while "
+                      "the agent runs; its completion notice arrives after such a call)", reason)
+        self.assertNotIn("timeout", reason)   # PowerShell's `timeout` is timeout.exe, which exits at once
         self.assertAllowed(self.check([task("a21a4cf9bbd611542", kind="subagent", status="completed")]))
 
     def test_a_subagent_skips_the_poll_of_a_shell_task_too(self):
