@@ -79,7 +79,7 @@ class LessonsStartTests(unittest.TestCase):
         self.cfg = self.tmp / "cfg"
 
     def base_env(self):
-        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "ANTHROPIC_", "HARNESS_"))}
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "ANTHROPIC_", "HARNESS_", "RIGGER_LESSONS_"))}
         env["HOME"] = str(self.home)
         env["USERPROFILE"] = str(self.home)
         return env
@@ -497,7 +497,7 @@ class SkillLessonsTests(unittest.TestCase):
         self.inbox = self.tmp / "lessons-inbox.md"
 
     def env(self):
-        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_"))}
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("CLAUDE_", "HARNESS_", "RIGGER_LESSONS_"))}
         env["HARNESS_LESSONS_INBOX"] = str(self.inbox)
         return env
 
