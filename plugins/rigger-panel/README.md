@@ -117,7 +117,8 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   never the empty state.
 - **Bounds, before any regex runs:** the text is cut at 256 Ki characters, lines over 2000 characters
   are skipped, at most 50 rows are kept (then `The first 50 are shown.`), and a regex source over 500
-  characters is refused. The patterns run with no time bound (the manifest is the installed plugin's
+  characters is refused. When the text was cut at 256 Ki, a long line was skipped or the engine cut
+  the command's stdout, the rows come with the note `list truncated`. The patterns run with no time bound (the manifest is the installed plugin's
   own code), so keep them linear: no nested repetition such as `(a+)+`.
 - **A pick wins:** each read of a tab takes the next number and only the latest one writes; a pick
   takes its number before it is stored, so a read for the old choice that is still running, or that

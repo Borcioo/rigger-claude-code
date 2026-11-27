@@ -207,15 +207,18 @@ export async function readModuleTabs($: EngineInterface, modules: unknown) {
 
 // --- cutting text into rows ---
 
-// The text a regex may see: at most 256 KiB, no line over 2000 characters.
-const linesOf = (text: string) =>
-  text
+// The text a regex may see: at most 256 KiB, no line over 2000 characters; `cut` when either bound
+// left something out.
+const linesOf = (text: string) => {
+  const all = text
     .slice(0, TEXT_MAX)
     .split('\n')
     .map(line => (line.endsWith('\r') ? line.slice(0, -1) : line))
-    .filter(line => line.length <= LINE_MAX)
+  const lines = all.filter(line => line.length <= LINE_MAX)
+  return { lines, cut: text.length > TEXT_MAX || lines.length < all.length }
+}
 
-export type Cut = { kind: 'empty' } | { kind: 'rows'; rows: ModuleRow[]; capped: boolean } | { kind: 'unmatched' }
+export type Cut = { kind: 'empty' } | { kind: 'rows'; rows: ModuleRow[]; capped: boolean; truncated: boolean } | { kind: 'unmatched' }
 
 const linkOf = (rules: RowRules, groups: { [name: string]: string | undefined }) => {
   if (rules.url !== undefined) {
@@ -225,10 +228,12 @@ const linkOf = (rules: RowRules, groups: { [name: string]: string | undefined })
   return groups.url !== undefined && HTTPS.test(groups.url) ? groups.url : undefined
 }
 
-// Fail closed: text that holds something but no row is never shown as an empty list.
-export function cutRows(text: string, rules: RowRules): Cut {
+// Fail closed: text that holds something but no row is never shown as an empty list. `sourceCut`:
+// the source itself said its output was cut.
+export function cutRows(text: string, rules: RowRules, sourceCut = false): Cut {
   if (text.slice(0, TEXT_MAX).trim() === '') return { kind: 'empty' }
-  const lines = linesOf(text)
+  const { lines, cut } = linesOf(text)
+  const truncated = cut || sourceCut
   const empty = rules.empty === undefined ? undefined : new RegExp(rules.empty, 'u')
   if (empty && lines.some(line => empty.test(line))) return { kind: 'empty' }
   const pattern = new RegExp(rules.pattern, 'u')
@@ -239,7 +244,7 @@ export function cutRows(text: string, rules: RowRules): Cut {
     const found = pattern.exec(line)
     const groups = found?.groups ?? {}
     if (found && groups.title) {
-      if (rows.length === ROW_MAX) return { kind: 'rows', rows, capped: true }
+      if (rows.length === ROW_MAX) return { kind: 'rows', rows, capped: true, truncated }
       const url = linkOf(rules, groups)
       current = {
         title: groups.title,
@@ -253,7 +258,7 @@ export function cutRows(text: string, rules: RowRules): Cut {
       if (value) current.detail = value
     }
   }
-  return rows.length === 0 ? { kind: 'unmatched' } : { kind: 'rows', rows, capped: false }
+  return rows.length === 0 ? { kind: 'unmatched' } : { kind: 'rows', rows, capped: false, truncated }
 }
 
 const UNSAFE_VALUE = /^-|\p{Cc}/u
@@ -268,7 +273,7 @@ export function cutOptions(text: string, rule: SelectRule, forArgv = false) {
   const pattern = new RegExp(rule.pattern, 'u')
   const options: ModuleOption[] = []
   let dropped = 0
-  for (const line of linesOf(text)) {
+  for (const line of linesOf(text).lines) {
     const groups = pattern.exec(line)?.groups
     const value = groups?.value
     if (!value || options.some(option => option.value === value)) continue
@@ -302,7 +307,7 @@ export async function runSource(
   $: EngineInterface,
   source: TabSource,
   cwd: string | undefined,
-): Promise<{ text: string } | { error: string }> {
+): Promise<{ text: string; isCut?: boolean } | { error: string }> {
   try {
     if ('mcp' in source) {
       const outcome = await bounded($, CALL_MS, $.mcp.call(source.mcp.server, source.mcp.tool, source.mcp.args))
@@ -320,7 +325,7 @@ export async function runSource(
     if (ran.exitCode !== 0) return { error: firstLine(ran.stderr) || firstLine(ran.stdout) || `exit code ${ran.exitCode}` }
     // Only stderr, so the program said why it printed nothing.
     if (ran.stdout.trim() === '' && firstLine(ran.stderr) !== '') return { error: firstLine(ran.stderr) }
-    return { text: ran.stdout }
+    return { text: ran.stdout, isCut: ran.isStdoutTruncated }
   } catch (error) {
     return { error: firstLine(reasonOf(error)) || 'the call failed with no reason' }
   }
@@ -426,12 +431,19 @@ async function startLoad($: EngineInterface, pane: string, mine: number) {
     const chosen = Object.fromEntries(Object.entries(selects).map(([id, held]) => [id, held.value]))
     const ran = await runSource($, filled(source, tab.select, chosen), cwd)
     if ('error' in ran) return await fail(ran.error)
-    const cut = cutRows(ran.text, tab.rows)
+    const cut = cutRows(ran.text, tab.rows, ran.isCut === true)
     if (cut.kind === 'unmatched') return await fail('output did not match its pattern')
     await write(() =>
       cut.kind === 'empty'
         ? { phase: 'ready', rows: [], empty: true, selects, ...noted() }
-        : { phase: 'ready', rows: cut.rows, ...(cut.capped ? { capped: true } : {}), selects, ...noted() },
+        : {
+            phase: 'ready',
+            rows: cut.rows,
+            ...(cut.capped ? { capped: true } : {}),
+            ...(cut.truncated ? { truncated: true } : {}),
+            selects,
+            ...noted(),
+          },
     )
   } finally {
     if (running.get(pane) === mine) running.delete(pane)

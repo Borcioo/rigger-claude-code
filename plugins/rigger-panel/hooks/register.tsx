@@ -529,6 +529,7 @@ export const register: Register = on => {
           </Box>
         ))}
         {ready?.capped && <Text dimColor>The first 50 are shown.</Text>}
+        {ready?.truncated && <Text dimColor>list truncated</Text>}
       </Box>
     )
   })

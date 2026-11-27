@@ -92,7 +92,7 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
   const state = { files, cwd: '/repo' }
   const calls: Call[] = []
   const runs: Run[] = []
-  const programs: Record<string, { exitCode: number; stdout: string; stderr?: string }> = {}
+  const programs: Record<string, { exitCode: number; stdout: string; stderr?: string; isStdoutTruncated?: boolean }> = {}
   const opened: string[] = []
   const closed: string[] = []
   const store: Record<string, unknown> = {}
@@ -134,7 +134,7 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
     runs.push({ argv: argv.map(norm), ...(e.init?.cwd ? { cwd: norm(e.init.cwd) } : {}) })
     const program = programs[norm(argv[0] ?? '')]
     if (program === undefined) return { deny: 'not this command in this test' }
-    return { value: { stderr: '', ...program, isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...program } }
   })
   on('fs.read', (_, e) => {
     const body = state.files[norm(e.path)]
@@ -263,6 +263,25 @@ test('a large output stays bounded: 50 rows and a note, a huge line skipped, and
   expect(cutRows(`header\n${'\n'.repeat(256 * 1024)}- TRK-5: late`, rules)).toEqual({ kind: 'unmatched' })
   expect(Date.now() - began).toBeLessThan(3000)
 })
+
+// Output that was cut somewhere -> whether the rows come with `list truncated`.
+const TRUNCATED: [string, { stdout: string; isStdoutTruncated?: boolean }, boolean][] = [
+  ['whole output', { stdout: TICKETS_TEXT }, false],
+  ['text past 256 Ki', { stdout: `${TICKETS_TEXT}\n${'\n'.repeat(256 * 1024)}- TRK-5: late` }, true],
+  ['a line over 2000 characters', { stdout: `${TICKETS_TEXT}\n${'y'.repeat(2001)}` }, true],
+  ['stdout cut by the engine', { stdout: TICKETS_TEXT, isStdoutTruncated: true }, true],
+]
+
+for (const [what, output, truncated] of TRUNCATED) {
+  test(`${what}: the rows are drawn${truncated ? ' with a list truncated note' : ' with no note'}`, async ($, on) => {
+    const w = world(on, files([ticketsTab({ source: { command: ['./bin/rows.sh'] } })]), {})
+    w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, ...output }
+    await start($, w)
+    const { ui, texts } = await drawTab($, w)
+    expect({ rows: texts.includes('QA and rollout'), note: texts.includes('list truncated') }).toEqual({ rows: true, note: truncated })
+    await ui.unmount()
+  })
+}
 
 // environments.json contents -> the project the select starts on and the number the call gets.
 const DEFAULTS: [string, string | undefined, number][] = [
