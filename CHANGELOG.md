@@ -13,6 +13,9 @@ format. Releases are tagged `v<version>`.
   such a snapshot.
 - rigger-core: every reviewer brief names a scratch folder outside the reviewed tree, so the reviewer can run
   mutants (`orchestrating-subagents`, Briefs).
+- rigger-core: a side session a coordinator started sends its result or question with `SendMessage` before it
+  ends the turn, since the app holds a turn-end note while any other side session works
+  (`/rigger-core:coordinate` briefs, `orchestrating-subagents`).
 
 ### Fixed
 

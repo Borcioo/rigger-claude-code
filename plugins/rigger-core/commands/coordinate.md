@@ -85,7 +85,9 @@ one full gate runs on the machine at a time.
    lines (head sha, its gate's exit line and counts, open questions, the file's path); read the
    file's head (up to the first `##` after Summary), the whole file only when a decision needs it,
    and hand it to the reviewer by path. Every question and decision goes to you,
-   never to the user. Run each gate command once yourself before it goes in a brief. A part that
+   never to the user. The brief says: send your result or question to the coordinator with
+   `SendMessage` (to the session that started you) before you end the turn; a turn end alone is
+   not a report (the app holds its note while any other side session works). Run each gate command once yourself before it goes in a brief. A part that
    designs or plans loads the brainstorm and plans skills the Skill triggers table names and sends its
    questions and design to you. Before each brief, check the project's MCP servers (your tool list,
    `.mcp.json`, `mcp` in `.claude/environments.json`) and name in the brief what the part may use.
