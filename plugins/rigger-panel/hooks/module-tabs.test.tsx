@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cutRows } from './module-tabs'
+import { cutOptions, cutRows } from './module-tabs'
 
 const paneOf = (requestId: string, title: string) =>
   ({
@@ -291,6 +291,13 @@ test('picking another option reads the rows again with its value', async ($, on)
   const again = await drawTab($, w)
   expect(again.select?.props?.value).toBe('61')
   await again.ui.unmount()
+})
+
+// A chosen value reaches command argv: one read as an option there, or with a control character, is no option.
+test('an option value that starts with a dash or holds a control character is dropped', () => {
+  const rule = { id: 'project', label: 'Project', type: 'string', pattern: '^- (?<value>\\S+) (?<label>.+)$' } as never
+  const text = '- --exec=x Dash\n- a\u0007b Bell\n- demo Demo\n- -n Short'
+  expect(cutOptions(text, rule)).toEqual([{ value: 'demo', label: 'Demo' }])
 })
 
 test('options that fail to load are the failure line and the rows are not read', async ($, on) => {

@@ -256,6 +256,8 @@ export function cutRows(text: string, rules: RowRules): Cut {
   return rows.length === 0 ? { kind: 'unmatched' } : { kind: 'rows', rows, capped: false }
 }
 
+const UNSAFE_VALUE = /^-|\p{Cc}/u
+
 // A select's options: `value` required, `label` else the value; values unique, at most 200.
 export function cutOptions(text: string, rule: SelectRule): ModuleOption[] {
   const pattern = new RegExp(rule.pattern, 'u')
@@ -263,7 +265,9 @@ export function cutOptions(text: string, rule: SelectRule): ModuleOption[] {
   for (const line of linesOf(text)) {
     const groups = pattern.exec(line)?.groups
     const value = groups?.value
-    if (!value || options.some(option => option.value === value)) continue
+    // A value lands in MCP args and command argv: a leading `-` would read as an option there, and a
+    // control character has no place in either, so such an option is dropped.
+    if (!value || UNSAFE_VALUE.test(value) || options.some(option => option.value === value)) continue
     if (rule.type === 'number' && !NUMBER.test(value)) refuse(`select ${rule.id} value ${value} is not a number`)
     options.push({ value, label: groups.label || value })
     if (options.length === OPTION_MAX) break
