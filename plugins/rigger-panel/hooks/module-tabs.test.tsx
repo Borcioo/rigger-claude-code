@@ -382,7 +382,59 @@ test('a read that answers right after the pick is written never takes the pick b
 test('an option value that starts with a dash or holds a control character is dropped', () => {
   const rule = { id: 'project', label: 'Project', type: 'string', pattern: '^- (?<value>\\S+) (?<label>.+)$' } as never
   const text = '- --exec=x Dash\n- a\u0007b Bell\n- demo Demo\n- -n Short'
-  expect(cutOptions(text, rule)).toEqual([{ value: 'demo', label: 'Demo' }])
+  expect(cutOptions(text, rule).options).toEqual([{ value: 'demo', label: 'Demo' }])
+})
+
+// Options whose values a command's argv may or may not take; `./x` is a value, never a module path.
+const ARGV_OPTIONS = ['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', '--exec=x', './x'].map(value => `- ${value} Label ${value}`).join('\n')
+const STRING_SELECT = {
+  id: 'project',
+  label: 'Project',
+  options: { mcp: { server: 'tracker', tool: 'list-projects', args: {} }, pattern: '^- (?<value>\\S+) (?<label>.+)$' },
+}
+const optionValues = (select: Found | undefined) => ((select?.props?.options ?? []) as { value: string }[]).map(option => option.value)
+
+test('a select value bound for command argv: only a plain word reaches it, the rest dropped with a notice', async ($, on) => {
+  const tab = ticketsTab({ source: { command: ['./bin/rows.sh', '--project', '{select:project}'] }, select: [STRING_SELECT] })
+  const w = world(on, files([tab]), { 'list-projects': text(ARGV_OPTIONS) })
+  w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: TICKETS_TEXT }
+  await start($, w)
+  const { ui, texts, select } = await drawTab($, w)
+  expect(optionValues(select)).toEqual(['demo', './x'])
+  expect(texts).toContain('module tracker tab tickets: select project: 6 options dropped (not safe as a command argument)')
+  expect(texts).toContain('QA and rollout')
+  await ui.select({ key: 'select-project', value: './x' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.runs.map(run => run.argv)).toEqual([
+    [`${ROOT}/bin/rows.sh`, '--project', 'demo'],
+    [`${ROOT}/bin/rows.sh`, '--project', './x'],
+  ])
+})
+
+test('a select value bound for MCP args keeps characters a command argument may not take', async ($, on) => {
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project: '{select:project}' } } },
+    select: [STRING_SELECT],
+  })
+  const w = world(on, files([tab]), { 'list-projects': text(ARGV_OPTIONS), 'list-tickets': text(TICKETS_TEXT) })
+  await start($, w)
+  const { ui, texts, select } = await drawTab($, w)
+  expect(optionValues(select)).toEqual(['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', './x'])
+  expect(texts.filter(line => line.includes('dropped'))).toEqual([])
+  await ui.unmount()
+})
+
+test("a select's options command resolves ./ against the module root too", async ($, on) => {
+  const select = { ...STRING_SELECT, options: { command: ['./bin/options.sh'], pattern: STRING_SELECT.options.pattern } }
+  const tab = ticketsTab({ source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project: '{select:project}' } } }, select: [select] })
+  const w = world(on, files([tab]), { 'list-tickets': text(TICKETS_TEXT) })
+  w.programs[`${ROOT}/bin/options.sh`] = { exitCode: 0, stdout: '- demo Demo' }
+  await start($, w)
+  const { ui, texts } = await drawTab($, w)
+  expect(w.runs.map(run => run.argv)).toEqual([[`${ROOT}/bin/options.sh`]])
+  expect(texts).toContain('QA and rollout')
+  await ui.unmount()
 })
 
 test('options that fail to load are the failure line and the rows are not read', async ($, on) => {

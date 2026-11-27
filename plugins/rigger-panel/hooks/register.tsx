@@ -510,6 +510,9 @@ export const register: Register = on => {
             />
           )
         })}
+        {(now?.notices ?? []).map(line => (
+          <Text dimColor>{line}</Text>
+        ))}
         {(now === undefined || now.phase === 'loading') && <Text dimColor>Loading…</Text>}
         {now?.phase === 'failed' && <Text color="red">{now.note ?? 'unknown reason'}</Text>}
         {ready?.empty && <Text dimColor>No items.</Text>}

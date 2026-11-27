@@ -141,6 +141,8 @@ export type ModulePane = {
   empty?: boolean
   capped?: boolean
   note?: string
+  // Lines about options a select dropped.
+  notices?: string[]
   // Keyed by select id: the options read and the value chosen.
   selects: { [id: string]: { options: ModuleOption[]; value: string } }
 }

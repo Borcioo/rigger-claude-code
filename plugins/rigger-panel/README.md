@@ -97,7 +97,8 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   `^[A-Za-z0-9_-]{1,64}$` (the shape `panel.tabs_off` takes) and must not be another module's.
 - `title`: a string of 1-40 characters.
 - `source`: exactly one of `mcp` (`{ server, tool, args? }`, `args` an object) or `command` (an argument
-  vector of 1-32 strings; an item starting `./` resolves against the module root). The command runs in
+  vector of 1-32 strings; an item the manifest writes starting `./` resolves against the module root,
+  before any `{select:…}` is filled in, so a chosen value is never rewritten). The command runs in
   the session folder. The text is the MCP result's text blocks joined with `\n` (with no text block but
   `structuredContent`, that as indented JSON), or the command's stdout. An error result, a non-zero
   exit or a call that fails shows the failure line `module <m> tab <id>: <first line of the error>`
@@ -123,7 +124,10 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   `"number"`. `options` is a source (`mcp` or `command`, with no `{select:…}` in it) plus `pattern`
   with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200
   options, a repeated value kept once, a value that starts with `-` or holds a control character
-  dropped (it would reach a command's argv); a number select whose value is not a number fails. `default`: a
+  dropped. A select that a `command` source's argv names takes only values matching
+  `^[A-Za-z0-9._:@/=+-]+$` that do not start with `-`; the others are dropped and the tab shows
+  `module <m> tab <id>: select <s>: <n> options dropped (not safe as a command argument)`. A number
+  select whose value is not a number fails. `default`: a
   dot path into the session folder's `.claude/environments.json`; the option whose value equals that
   value as a string is chosen first. A missing file, a missing key, invalid JSON or a value that is no
   option picks the first option. The choice is kept for the session (in state, not the store) and a
