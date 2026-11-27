@@ -485,17 +485,15 @@ export const register: Register = on => {
     )
   })
 
-  // The transcript's right-click menu (the desktop app's only) gets a row per tab after the rows beneath it:
-  // a pane header has no room for one, and a press switches the tab as the Tabs row does.
-  on('ui.render', { component: 'ContextMenu' }, async ($, e, next) => {
-    const beneath = await next(e)
-    if (e.surface !== 'desktop') return beneath
+  // The transcript's right-click menu (raised on the desktop app only) gets a row per tab: a pane header has
+  // no room for one, and a press switches the tab as the Tabs row does. The engine asks each plugin for its
+  // own rows and keeps every other plugin's, so this hook answers only the panel's.
+  on('ui.render', { component: 'ContextMenu' }, async ($, e) => {
     const { Box, Button } = $.ui.resolve(e)
     const shown = await read($, tabs)
     const listed = switchable(await read($, moduleTabs))
     return (
       <Box flexDirection="column">
-        {beneath}
         {listed.map(tab => (
           <Button key={`menu-tab-${tab.id}`} onPress={() => void toggleTab($, tab.id)}>
             {`${shown.on.includes(tab.id) ? '[x]' : '[ ]'} ${tab.title}`}

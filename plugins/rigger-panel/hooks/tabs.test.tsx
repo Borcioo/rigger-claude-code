@@ -131,9 +131,9 @@ test('switching a tab off closes its pane and stores it, and the next session op
 const MENU = { plugin: 'rigger-panel', surface: 'desktop', component: 'ContextMenu', props: {} } as const
 
 // The transcript's right-click menu lists every switchable tab, and a press switches it like the Tabs row.
-test('the right-click menu has a row per tab that switches it, beside the rows beneath it', async ($, on) => {
+test("the right-click menu has a row per tab that switches it, beside another plugin's rows", async ($, on) => {
   const w = world(on)
-  // A row the engine or another plugin draws beneath this one.
+  // Another plugin's row in the same menu.
   on('ui.render', ($$, e) => {
     const { Button } = $$.ui.resolve(e)
     return (
@@ -159,14 +159,6 @@ test('the right-click menu has a row per tab that switches it, beside the rows b
   await again.unmount()
   expect(w.opened.at(-1)).toBe('rigger-inbox')
   expect(await buttonText($, 'rigger-issues')).toBe('[ ] Issues')
-})
-
-test('another surface draws no tab rows in the menu', async ($, on) => {
-  const w = world(on)
-  await start($, w)
-  const ui = await $.ui.mount({ ...MENU, surface: 'terminal' } as never)
-  expect(await ui.find({ key: 'menu-tab-rigger-issues' })).toBeUndefined()
-  await ui.unmount()
 })
 
 test('a worktree of the same repository shares the choice, and a folder outside git keys by itself', async ($, on) => {
