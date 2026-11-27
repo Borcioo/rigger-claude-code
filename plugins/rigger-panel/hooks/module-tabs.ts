@@ -349,25 +349,39 @@ function setPane($: EngineInterface, pane: string, change: (last: ModulePane | u
   return update($, modulePanes, last => ({ ...last, [pane]: change(last[pane]) }))
 }
 
-// Claimed before the first await, so a draw and a Refresh in one tick make one read.
-const claimed = new Set<string>()
+// Each load of a pane takes the next number; only the latest may write, so a load a pick overtook
+// drops its result instead of writing the old choice back. `running` holds the number of the load
+// in flight, so a draw and a Refresh in one tick make one read.
+const latest = new Map<string, number>()
+const running = new Map<string, number>()
 
-// Reads a module tab's options (keeping a choice still offered), then its rows. Rows are cleared first,
-// so a failed read never leaves the previous list standing as current.
+// Reads a module tab's options (keeping a choice still offered), then its rows, unless a read is
+// already running. Rows are cleared first, so a failed read never leaves the previous list standing.
 export async function loadModuleTab($: EngineInterface, pane: string) {
-  if (claimed.has(pane)) return
-  claimed.add(pane)
+  if (running.has(pane)) return
+  await startLoad($, pane)
+}
+
+async function startLoad($: EngineInterface, pane: string) {
+  const mine = (latest.get(pane) ?? 0) + 1
+  latest.set(pane, mine)
+  running.set(pane, mine)
+  const current = () => latest.get(pane) === mine
+  const write = async (change: (last: ModulePane | undefined) => ModulePane) => {
+    if (current()) await setPane($, pane, change)
+  }
   try {
     // Read before any write: a load a drawing started writes only once that drawing is done.
     const cwd = await $.session.cwd().catch(() => undefined)
     const tab = (await read($, moduleTabs)).tabs.find(item => item.pane === pane)
     if (tab === undefined) return
-    await setPane($, pane, last => ({ phase: 'loading', rows: [], selects: last?.selects ?? {} }))
+    await write(last => ({ phase: 'loading', rows: [], selects: last?.selects ?? {} }))
     const previous = (await read($, modulePanes))[pane]?.selects ?? {}
     const selects: ModulePane['selects'] = {}
-    const fail = (reason: string) => setPane($, pane, () => ({ phase: 'failed', rows: [], note: tabLine(tab, reason), selects }))
+    const fail = (reason: string) => write(() => ({ phase: 'failed', rows: [], note: tabLine(tab, reason), selects }))
     for (const rule of tab.select) {
       const ran = await runSource($, rule.source, tab.root, cwd)
+      if (!current()) return
       if ('error' in ran) return await fail(`select ${rule.id}: ${ran.error}`)
       let options: ModuleOption[]
       try {
@@ -386,24 +400,25 @@ export async function loadModuleTab($: EngineInterface, pane: string) {
     if ('error' in ran) return await fail(ran.error)
     const cut = cutRows(ran.text, tab.rows)
     if (cut.kind === 'unmatched') return await fail('output did not match its pattern')
-    await setPane($, pane, () =>
+    await write(() =>
       cut.kind === 'empty'
         ? { phase: 'ready', rows: [], empty: true, selects }
         : { phase: 'ready', rows: cut.rows, ...(cut.capped ? { capped: true } : {}), selects },
     )
   } finally {
-    claimed.delete(pane)
+    if (running.get(pane) === mine) running.delete(pane)
   }
 }
 
-// A pick in a select: kept for the session, then the tab is read again with it.
+// A pick in a select: kept for the session, then the tab is read again with it, overtaking a read
+// still running for the old choice.
 export async function chooseOption($: EngineInterface, pane: string, id: string, value: string) {
   await setPane($, pane, last => {
     const held = last?.selects[id]
     const base = last ?? { phase: 'loading', rows: [], selects: {} }
     return held === undefined ? base : { ...base, selects: { ...base.selects, [id]: { ...held, value } } }
   })
-  await loadModuleTab($, pane)
+  await startLoad($, pane)
 }
 
 // /harness reads every module tab that is open again.
