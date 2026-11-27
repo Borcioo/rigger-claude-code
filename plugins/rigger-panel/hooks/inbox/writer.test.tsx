@@ -206,22 +206,22 @@ test('a permission entry closes as soon as the approved tool runs; one that neve
   expect(closedAt(w)).toBe('1000000')
 })
 
-// Only the owner's own prompt answers the entry: a message from another session, a task's
-// notification, a schedule or a plugin's prompt starts a turn too, and leaves the entry open.
+// The owner's own prompt or another session's message answers the entry: a task's notification, a
+// schedule, a channel or a plugin's prompt starts a turn too, and leaves the entry open.
 for (const [kind, isOwner] of [
   ['composer', true],
   ['sdk', true],
   ['bridge', true],
   ['slack-ping', true],
   ['auto-continuation', true],
-  ['peer-send-message', false],
-  ['peer', false],
+  ['peer-send-message', true],
+  ['peer', true],
+  ['projects-relay', true],
+  ['coordinator', true],
   ['task-notification', false],
   ['unclassified', false],
   ['scheduled-trigger', false],
-  ['projects-relay', false],
   ['channel', false],
-  ['coordinator', false],
   ['observer', false],
   ['observer-activity', false],
   ['plugin', false],
@@ -235,6 +235,19 @@ for (const [kind, isOwner] of [
     expect(closedAt(w)).toBe(isOwner ? '1000000' : undefined)
   })
 }
+
+// A coordinator that messages a side session after its turn failed has answered the error entry.
+test("another session's message closes an error entry", async ($, on) => {
+  const w = world(on)
+  await turn($)
+  await complete($, 'aborted')
+  expect(entryAt(w).kind).toBe('error')
+  expect(closedAt(w)).toBeUndefined()
+  await w.clock.advance(1000)
+  await $.prompt.submit({ text: 'try again', wait: false, origin: { kind: 'peer' } } as never)
+  await turn($, 'try again')
+  expect(closedAt(w)).toBe('1001000')
+})
 
 test('a subagent writes nothing', async ($, on) => {
   const w = world(on)

@@ -5,6 +5,11 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Changed
+
+- rigger-panel: an Inbox entry also closes when its session receives another session's message, and an entry
+  of a session archived in the desktop app is hidden.
+
 ## [0.9.0] - 2026-11-27
 
 ### Added

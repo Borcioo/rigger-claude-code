@@ -70,7 +70,7 @@ INBOX_CALLS = {
         "$.process.run(openCommand(await sysnameOf($), entry.link), { timeoutMs: 10_000 })",
     ),
 }
-APP_TOOLS = {"get_session"}
+APP_TOOLS = {"get_session", "list_sessions"}
 OPENER_RETURNS = {"return ['open', link]", "return ['cmd', '/c', 'start', '', link]", "return ['xdg-open', link]"}
 FILE_CALLS = {**MANIFEST_CALLS, **INBOX_CALLS}
 

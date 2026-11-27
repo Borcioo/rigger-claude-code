@@ -317,12 +317,16 @@ session reads the others'. `/inbox` opens the pane.
 - **Where:** `<config dir>/rigger-panel/inbox/<session id>.json`, one file per session, replaced by its
   next entry. `$.fs` cannot delete, so an entry is closed by `<session id>.closed`, which holds a time:
   every entry written before it is hidden, the session's next entry shows again.
-- **What closes it:** a prompt you send in that session (typed, from the desktop app, from a phone or
-  a click on the app's own buttons; a message from another session, a task notification, a schedule
-  or a plugin does not), the next tool call after an approval entry or a turn that ends after it, and
-  `Close` on the item.
+- **What closes it:** the next prompt that session receives from you (typed, from the desktop app,
+  from a phone or a click on the app's own buttons) or from another session (a message, a
+  coordinating session's delivery or hand-off; a task notification, a schedule, a channel or a plugin
+  does not), the next tool call after an approval entry or a turn that ends after it, and `Close` on
+  the item. A session waiting in a permission dialog starts no new turn, so its approval entry stays.
 - **What is shown:** the other sessions' open entries younger than 7 days, oldest first, each with
   its title, folder, age, text, question, `Open` and `Close`; `Nothing waiting.` when there are none.
+  An entry of a session the desktop app lists as archived is hidden (`list_sessions` on
+  `ccd_session_mgmt`, bounded at 5 seconds, asked at most once in 30 seconds and only while an entry
+  would show); when the app does not answer, every entry shows.
   The folder is read again every 5 seconds. While anything waits, a band above the prompt says
   `📥 N waiting · oldest: <title>, <age>` with an `Inbox` button.
 - **`Open`:** the desktop app draws a non-https link as plain text, so the entry's session link
