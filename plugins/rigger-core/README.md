@@ -76,8 +76,8 @@ every session start, clear and compaction prints `rigger: slot <path> is empty: 
 When a session tries to end its turn while a background `shell` task (any command) or background subagent of its own
 still runs, the Stop hook blocks the stop with one line naming the task and telling the session to wait for it
 inside the turn with one bounded foreground wait, then end the turn with a result or a question. A shell task is
-first waited for up to 4 s; a subagent blocks at once. A task stopped with TaskStop is not held, and neither is a
-`Monitor`, which outlives turns by design. At most 2 blocks per task and 2 per turn; the counts are
+first waited for up to 4 s, and the block gives a bounded Bash wait on its output file; a subagent blocks once, telling the session to dispatch such agents in the foreground and end the turn naming the pending agent. A task stopped with TaskStop is not held, and neither is a
+`Monitor`, which outlives turns by design. At most 2 blocks per shell task, 1 per subagent and 2 per turn; the counts are
 `<config dir>/state/<session id>.turn-guard.json`, and the folder is made when missing. An error inside the check
 allows the stop and writes one line to the debug log. When the count cannot be written, the first Stop of a chain is held and the chained
 one is allowed with a one-line note. Never held: a `claude -p` run, a session whose state file says

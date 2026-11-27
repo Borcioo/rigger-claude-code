@@ -79,7 +79,8 @@ relays.
 Contact runs both ways. An agent or side session that is unsure, or has failed the same step
 twice, stops and asks whoever started it, stating what it tried, what it saw and what it needs. A
 subagent without SendMessage does this as a blocked report and is resumed with the answer. A side
-session never asks the user unless the orchestrator says so.
+session never asks the user unless the orchestrator says so. A side session dispatches the subagents
+whose results its turn reports in the foreground; parallel ones go as several Agent calls in one message.
 
 The orchestrator answers, splits the task or moves it to a stronger model with the last report. A
 failure on the stronger model goes to the user with the diagnosis.

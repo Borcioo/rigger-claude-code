@@ -6,6 +6,7 @@ python -I test_turn_guard.py
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -149,11 +150,20 @@ class FilterTests(Base):
                                   clock=clock)
         self.assertHeld((reason, note), "a21a4cf9bbd611542")
         self.assertEqual(clock.now, 0.0)
-        self.assertIn('"bg review"', reason)
-        self.assertIn("one bounded foreground wait (Bash `sleep 60` or PowerShell `Start-Sleep 60`, repeated while "
-                      "the agent runs; its completion notice arrives after such a call)", reason)
-        self.assertNotIn("timeout", reason)   # PowerShell's `timeout` is timeout.exe, which exits at once
+        self.assertEqual(reason, 'turn-guard: agent a21a4cf9bbd611542 ("bg review") runs in the background. If its '
+                         'result belongs in this turn, dispatch such agents in the foreground (several Agent calls in '
+                         'one message run in parallel). Now end the turn stating that only agent a21a4cf9bbd611542 is '
+                         'pending; its notice wakes you.')
         self.assertAllowed(self.check([task("a21a4cf9bbd611542", kind="subagent", status="completed")]))
+
+    def test_a_subagent_is_held_once(self):
+        """Nothing in the turn can wait on an agent: the next Stop, in this turn or a later one, allows."""
+        agent = task("a21a4cf9bbd611542", kind="subagent", command=None)
+        self.assertHeld(self.check([agent]), "a21a4cf9bbd611542")
+        reason, note = self.check([agent], stop_hook_active=True)
+        self.assertIsNone(reason)
+        self.assertIn("still runs after 1 hold;", note)
+        self.assertEqual(self.check([agent], prompt_id="prompt-2"), (None, None))
 
     def test_a_subagent_skips_the_poll_of_a_shell_task_too(self):
         self.output()
@@ -374,16 +384,36 @@ class CapTests(Base):
         self.assertNotIn("\r", reason)
         self.assertIn('"line one line two ', reason)
         self.assertNotIn("x" * 61, reason)
-        self.assertIn("wait", reason)
+        self.assertIn("Wait", reason)
 
     def test_shell_reason_names_its_output_file_and_how_to_end_the_turn(self):
-        path = self.output()
+        path = self.output().replace("\\", "/")
         reason, _ = self.check([task()])
-        self.assertIn(path, reason)
-        self.assertIn("[exited with code N]", reason)
-        self.assertIn("bounded foreground wait", reason)
-        self.assertIn("only with a result or a question", reason)
-        self.assertIn("server", reason)
+        command = ("timeout 600 sh -c 'until grep -qE \"^\\[(exited with code|killed)\" \"%s\"; do sleep 5; done'"
+                   % path)
+        self.assertEqual(reason, 'turn-guard: background task b58ki4brf ("gate run") is still running. Wait with one '
+                         'bounded foreground Bash call: %s; then continue, and end the turn only with a result or a '
+                         'question. If it is meant to outlive the turn (a server, a watcher), say so and end the turn. '
+                         'Block 1 of 2.' % command)
+        # A command the app's Bash tool runs: no double backslash, no sleep over 5 s.
+        self.assertNotIn("\\\\", reason)
+        self.assertEqual(re.findall(r"\bsleep (\d+)", reason), ["5"])
+
+    def test_the_wait_command_returns_on_each_trailer(self):
+        sh = shutil.which("sh") or os.path.join(os.environ.get("ProgramFiles", ""), "Git", "usr", "bin", "sh.exe")
+        self.assertTrue(os.path.isfile(sh), "sh not found")
+        for trailer in ("partial\n\n[exited with code 3]\n", "\n[killed]\n"):
+            with self.subTest(trailer=trailer):
+                path = self.output(text=trailer)
+                command = turn_guard.wait_command(path)
+                self.assertTrue(command.startswith("timeout 600 "), command)
+                # A 15 s bound and no pipes: a wait that never ends exits 124 instead of hanging the suite.
+                script = self.write(os.path.join(self.root, "wait.sh"), "timeout 15 " + command[len("timeout 600 "):] + "\n")
+                started = time.monotonic()
+                returncode = subprocess.run([sh, script], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.DEVNULL, timeout=60).returncode
+                self.assertEqual(returncode, 0, "the wait did not see the trailer")
+                self.assertLess(time.monotonic() - started, 10)
 
 
 class LogTests(Base):

@@ -9,7 +9,7 @@ would only loop. A running shell task is waited for up to POLL_BOUND seconds (it
 running subagent blocks at once and no shell task is polled with it. A task still running blocks the turn
 with a one-line reason naming the task and how to wait for it. Never held: a `claude -p` run
 (`CLAUDE_CODE_ENTRYPOINT=sdk-cli`, which waits for its tasks itself), a session whose state file says
-`coordinator: true`, a task already blocked CAP times (the next Stop allows with one line), a turn
+`coordinator: true`, a task already blocked CAP (shell) or SUBAGENT_CAP times (the next Stop allows with one line), a turn
 (`prompt_id`) already blocked TURN_CAP times, a Stop chain already blocked once when the event has no
 `prompt_id`, and every session when config `turn_guard.enabled` is false (levels 2-4). No env variable marks
 a side session (docs/superpowers/spikes/phase-3b/side-session-marker.md), so every other session is held too.
@@ -31,7 +31,8 @@ import time
 
 PREFIX = "turn-guard:"
 COUNT_SUFFIX = ".turn-guard.json"
-CAP = 2                 # blocks per task id
+CAP = 2                 # blocks per shell task id
+SUBAGENT_CAP = 1        # blocks per subagent: nothing in the turn can wait on one
 TURN_CAP = 2            # blocks per turn (prompt_id), across its tasks
 POLL_BOUND = 4.0        # seconds one Stop waits for a shell task to end
 POLL_STEP = 0.25
@@ -143,14 +144,28 @@ def one_line(text):
     return text if len(text) <= DESCRIPTION_MAX else text[:DESCRIPTION_MAX - 3] + "..."
 
 
+def cap(kind):
+    return SUBAGENT_CAP if kind == "subagent" else CAP
+
+
+def wait_command(path):
+    """A bounded foreground Bash command that returns when the output file gains its trailer: forward slashes
+    and double quotes, so Git Bash keeps a Windows path; a 5 s step, since the app refuses a long sleep."""
+    return ("timeout 600 sh -c 'until grep -qE \"^\\[(exited with code|killed)\" \"%s\"; do sleep 5; done'"
+            % path.replace("\\", "/"))
+
+
 def block_reason(task_id, kind, description, path, count):
-    until = ("Bash `sleep 60` or PowerShell `Start-Sleep 60`, repeated while the agent runs; its completion "
-             "notice arrives after such a call" if kind == "subagent"
-             else "until %s ends with an [exited with code N] line" % path)
-    return ('%s background task %s ("%s") is still running. Wait for it inside this turn with one bounded '
-            'foreground wait (%s), then continue; end the turn only with a result or a question. If it is '
-            'meant to outlive the turn (a server, a watcher), say so and end the turn. Block %d of %d.'
-            % (PREFIX, task_id, one_line(description), until, count, CAP))
+    if kind == "subagent":
+        # Nothing in a turn can wait on an agent (no file signal, long sleeps refused): one block, then the turn ends.
+        return ('%s agent %s ("%s") runs in the background. If its result belongs in this turn, dispatch such '
+                'agents in the foreground (several Agent calls in one message run in parallel). Now end the turn '
+                'stating that only agent %s is pending; its notice wakes you.'
+                % (PREFIX, task_id, one_line(description), task_id))
+    return ('%s background task %s ("%s") is still running. Wait with one bounded foreground Bash call: %s; '
+            'then continue, and end the turn only with a result or a question. If it is meant to outlive the '
+            'turn (a server, a watcher), say so and end the turn. Block %d of %d.'
+            % (PREFIX, task_id, one_line(description), wait_command(path), count, CAP))
 
 
 def _load_counts(path):
@@ -205,13 +220,13 @@ def check(event, state, coordinator, environ, config_dir, clock=time.monotonic, 
     note = None
     open_tasks = []
     for task_id, kind, description in tasks:
-        if counts.get(task_id, 0) < CAP:
+        if counts.get(task_id, 0) < cap(kind):
             open_tasks.append((task_id, kind, description))
-        elif counts[task_id] == CAP and note is None and _save_counts(
-                count_path, dict(counts, **{task_id: CAP + 1}), turn):
-            counts[task_id] = CAP + 1
-            note = ('%s background task %s ("%s") still runs after %d holds; the turn ends without it.'
-                    % (PREFIX, task_id, one_line(description), CAP))
+        elif counts[task_id] == cap(kind) and note is None and _save_counts(
+                count_path, dict(counts, **{task_id: cap(kind) + 1}), turn):
+            counts[task_id] = cap(kind) + 1
+            note = ('%s background task %s ("%s") still runs after %d hold%s; the turn ends without it.'
+                    % (PREFIX, task_id, one_line(description), cap(kind), "" if cap(kind) == 1 else "s"))
     if not open_tasks:
         return None, note
     if prompt is None and event.get("stop_hook_active") is True:
