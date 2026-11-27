@@ -146,6 +146,22 @@ test('a worktree of the same repository shares the choice, and a folder outside 
   expect(w.stored['tabs:/repo']).toEqual({ on: [], off: ['rigger-plan'] })
 })
 
+// Session folder, what git prints as its common dir there, and the project key it gives: the parent
+// only of a `.git` folder; a submodule's or a bare repository's common dir is the key itself.
+const KEYS: [string, string, string, string][] = [
+  ['a normal checkout', '/work/app/src', '/work/app/.git', '/work/app'],
+  ['a submodule', '/work/app/lib/x', '/work/app/.git/modules/x', '/work/app/.git/modules/x'],
+  ['a bare repository', '/srv/app.git', '/srv/app.git', '/srv/app.git'],
+]
+
+for (const [what, cwd, gitDir, key] of KEYS) {
+  test(`${what} keys its choice by ${key}`, async ($, on) => {
+    const w = world(on, { cwd, gitDirs: { [cwd]: gitDir }, store: { [`tabs:${key}`]: { on: [], off: ['rigger-plan'] } } })
+    await start($, w, cwd)
+    expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-envs'])
+  })
+}
+
 // A session folder, git's answer there and the store key, as on Windows.
 const WIN_CWD = 'C:\\work\\repo\\sub'
 const WIN_GIT_DIR = 'C:/work/repo/.git/'

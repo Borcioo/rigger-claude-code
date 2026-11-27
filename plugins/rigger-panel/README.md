@@ -43,8 +43,9 @@ at once; session start and `/harness` open only the tabs that are on. The Rigger
   outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
   (pane ids such as `rigger-issues`) switched on and off there.
 - **Project:** the parent folder of `git rev-parse --path-format=absolute --git-common-dir` run in the
-  session folder, so every worktree of a repository shares the main checkout's choice; outside git,
-  the session folder itself.
+  session folder, so every worktree of a repository shares the main checkout's choice. When that
+  common dir is not a folder named `.git` (a submodule's `…/.git/modules/<name>`, a bare repository's
+  `…/repo.git`), the common dir itself. Outside git, the session folder itself.
 - **Default:** every tab is on, unless its id is in the config key `panel.tabs_off` (a list of tab ids;
   levels 2 and 3, a company module or the personal `rigger/config.json`), read from rigger-core's
   snapshot of the session (`<config dir>/rigger/state/<session id>.resolved.json`). A tab the project
