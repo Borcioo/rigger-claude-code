@@ -86,6 +86,11 @@ test('visibleEntries drops old, closed and own entries and sorts oldest first', 
   expect(ids).toEqual(['local_first', 'local_reopened', 'local_new'])
 })
 
+test('visibleEntries drops an entry stamped more than 5 minutes ahead, which would never age out', () => {
+  const list = [entry('local_soon', NOW + 5 * 60_000), entry('local_future', NOW + 5 * 60_000 + 1)]
+  expect(visibleEntries(list, {}, undefined, NOW).map(e => e.sessionId)).toEqual(['local_soon'])
+})
+
 test('ageText rounds to minutes, hours and days', () => {
   expect(ageText(30_000)).toBe('now')
   expect(ageText(8 * 60_000)).toBe('8 min')
@@ -100,7 +105,8 @@ test('bandText names the count and the oldest entry, and nothing when empty', ()
 })
 
 test('parseEntry refuses a session id that is not a local_ id', () => {
-  for (const sessionId of ['local_', 'abc', 'local_a b', 'local_x"; rm', `local_${'a'.repeat(65)}`]) {
+  // Junk before (`^`) or after (`$`) a valid id would reach `cmd /c start` through the session link.
+  for (const sessionId of ['local_', 'abc', 'local_a b', 'local_x"; rm', `local_${'a'.repeat(65)}`, 'x&calc&local_a', 'local_a&calc']) {
     expect(parseEntry(JSON.stringify(entryOf({ ...ID, sessionId }, 'review', 't', 1)))).toBeNull()
   }
   expect(parseEntry(JSON.stringify(entryOf({ ...ID, sessionId: `local_${'a'.repeat(64)}` }, 'review', 't', 1)))?.sessionId).toHaveLength(70)

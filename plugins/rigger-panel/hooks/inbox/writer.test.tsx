@@ -29,6 +29,8 @@ type Opts = {
   home?: string | undefined
   // What the tool beneath the plugin answers a wrap_up call with.
   wrapResult?: unknown
+  // The session id get_session answers, in place of SELF's.
+  selfId?: string
 }
 
 // The world beneath the plugin: the app answers get_session, files are recorded, the clock is fixed.
@@ -45,7 +47,8 @@ const world = (on: On, opts: Opts = {}): World => {
       if (opts.self === 'throw') throw new Error('no app here')
       if (opts.self === 'hang') return new Promise<never>(() => {})
       if (opts.self === 'error') return { value: { content: [{ type: 'text', text: 'Unknown session' }], isError: true } }
-      return { value: { content: [{ type: 'text', text: JSON.stringify(SELF) }], isError: false } }
+      const self = opts.selfId === undefined ? SELF : { ...SELF, sessionId: opts.selfId }
+      return { value: { content: [{ type: 'text', text: JSON.stringify(self) }], isError: false } }
     }
     return { deny: 'not in this test' }
   })
@@ -382,3 +385,17 @@ for (const [name, dispatch] of [
     expect(w.status).toEqual([])
   })
 }
+
+// The id becomes a file name: one the app answers in another shape writes nothing, and says so once.
+test('a session id from get_session that is not a local_ id writes no file and is named once', async ($, on) => {
+  const w = world(on, { selfId: 'local_a/../../x' })
+  await turn($)
+  await $.tool.call({ tool: WRAP, recap: 'r' } as never)
+  await w.clock.settle()
+  await complete($, 'aborted')
+  await turn($, '')
+  await $.tool.call({ tool: WRAP, recap: 'again' } as never)
+  await w.clock.settle()
+  expect(Object.keys(w.writes)).toEqual([])
+  expect(w.status.filter(text => text?.includes('not a session id'))).toHaveLength(1)
+})

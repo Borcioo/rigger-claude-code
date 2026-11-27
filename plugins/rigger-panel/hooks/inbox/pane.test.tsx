@@ -59,7 +59,14 @@ const ran = (exitCode: number, stdout: string, stderr: string) => ({
   isStderrTruncated: false,
 })
 
-type WorldOpts ={ env?: Record<string, string>; machine?: string; uname?: string; openerFails?: string }
+// `mtimes`: a file's modification time in the listing, by name; any other file was written just now.
+type WorldOpts = {
+  env?: Record<string, string>
+  machine?: string
+  uname?: string
+  openerFails?: string
+  mtimes?: Record<string, number>
+}
 
 // The world beneath the plugin: an inbox folder, the app's session tools and the system opener.
 const world = (on: On, files: Record<string, string>, opts: WorldOpts = {}) => {
@@ -85,10 +92,13 @@ const world = (on: On, files: Record<string, string>, opts: WorldOpts = {}) => {
   )
   on('fs.list', (_, e) => {
     if (posix(e.path) !== DIR) return { deny: 'missing' }
-    return { value: Object.keys(files).map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) }
+    const listed = Object.keys(files).map(name => ({ name, kind: 'file', size: 1, mtimeMs: opts.mtimes?.[name] ?? NOW, isLink: false }))
+    return { value: listed }
   })
+  const reads: string[] = []
   on('fs.read', (_, e) => {
     const path = posix(e.path)
+    reads.push(path.slice(DIR.length + 1))
     const text = path.startsWith(`${DIR}/`) ? files[path.slice(DIR.length + 1)] : undefined
     return text === undefined ? { deny: 'missing' } : { value: text }
   })
@@ -122,7 +132,7 @@ const world = (on: On, files: Record<string, string>, opts: WorldOpts = {}) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
-  return { files, runs, unames, clock, registered, opened }
+  return { files, runs, unames, clock, registered, opened, reads }
 }
 
 const open = async ($: Engine, surface: 'terminal' | 'desktop' = 'desktop') => {
@@ -189,6 +199,37 @@ test('an entry older than 7 days is not shown', async ($, on) => {
   world(on, { 'local_alpha.json': entry('local_alpha', 'Alpha', NOW - 7 * 86_400_000 - 1) })
   const ui = await open($)
   expect((await ui.find({ type: 'Text', text: /Nothing|Alpha/ }))?.text).toBe('Nothing waiting.')
+  await ui.unmount()
+})
+
+// Every session's file stays in the folder, so the poll reads only files written in the last 7 days.
+test('a file last written more than 7 days ago is not read at all', async ($, on) => {
+  const old = NOW - 7 * 86_400_000 - 1
+  const { reads } = world(
+    on,
+    {
+      'local_old.json': entry('local_old', 'Old', NOW - 1000),
+      'local_old.closed': String(NOW - 2000),
+      'local_alpha.json': entry('local_alpha', 'Alpha', NOW - 1000),
+    },
+    { mtimes: { 'local_old.json': old, 'local_old.closed': old } },
+  )
+  const ui = await open($)
+  expect((await ui.find({ type: 'Text', text: /Alpha ·|Old ·/ }))?.text).toBe('❓ Alpha · alpha · now')
+  expect(reads.filter(name => name.startsWith('local_old'))).toEqual([])
+  expect(reads).toContain('local_alpha.json')
+  await ui.unmount()
+})
+
+// A file named and holding an id with junk before `local_`: its link matches the session-link check, so
+// only the id check keeps `&calc` from `cmd /c start`.
+test('an entry whose session id carries junk before local_ is not shown and opens nothing', async ($, on) => {
+  const id = 'x&calc&local_a'
+  const { runs } = world(on, { [`${id}.json`]: entry(id, 'Crafted', NOW - 1000) }, { env: { OS: 'Windows_NT' } })
+  const ui = await open($)
+  expect((await ui.find({ type: 'Text', text: /Nothing|Crafted/ }))?.text).toBe('Nothing waiting.')
+  expect(await ui.find({ type: 'Button', key: `open-${id}` })).toBeUndefined()
+  expect(runs).toEqual([])
   await ui.unmount()
 })
 

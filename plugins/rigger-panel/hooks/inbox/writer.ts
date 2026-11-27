@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { Entry, Identity } from '../../types/inbox'
 import { configDir } from '../config-dir'
+import { SESSION_ID } from './entries'
 
 export const STATUS_PREFIX = 'rigger-panel inbox'
 // The built-in tool and the desktop app's own: a session has one or the other.
@@ -100,14 +101,29 @@ export async function identityOf($: EngineInterface, isRetry = false): Promise<I
   return pending
 }
 
-export async function writeEntry($: EngineInterface, entry: Entry) {
+let isBadIdNamed = false
+
+// The id becomes a file name, so it is held to the shape parseEntry accepts; anything else (a path
+// separator, `..`) writes nothing, and the status line names it once per session.
+async function fileOf($: EngineInterface, sessionId: string, suffix: string) {
   const dir = await inboxDir($)
-  if (dir) await $.fs.write(`${dir}/${entry.sessionId}.json`, JSON.stringify(entry))
+  if (!dir) return undefined
+  if (!SESSION_ID.test(sessionId)) {
+    if (!isBadIdNamed) $.ui.status(`${STATUS_PREFIX}: not a session id, nothing written (${sessionId.slice(0, 80)})`)
+    isBadIdNamed = true
+    return undefined
+  }
+  return `${dir}/${sessionId}${suffix}`
+}
+
+export async function writeEntry($: EngineInterface, entry: Entry) {
+  const path = await fileOf($, entry.sessionId, '.json')
+  if (path) await $.fs.write(path, JSON.stringify(entry))
 }
 
 // `$.fs` cannot delete, so an entry is closed by a marker holding the time it was closed at:
 // every entry written before it is hidden, the session's next one shows again.
 export async function closeAt($: EngineInterface, sessionId: string, at: number) {
-  const dir = await inboxDir($)
-  if (dir) await $.fs.write(`${dir}/${sessionId}.closed`, String(at))
+  const path = await fileOf($, sessionId, '.closed')
+  if (path) await $.fs.write(path, String(at))
 }

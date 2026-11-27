@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Entry, Identity, InboxView, OpenFailure } from '../../types/inbox'
-import { parseEntry, visibleEntries } from './entries'
+import { MAX_AGE_MS, parseEntry, visibleEntries } from './entries'
 import { closeAt, inboxDir, knownSessionId, reasonOf } from './writer'
 
 export const POLL_MS = 5000
@@ -31,7 +31,11 @@ export async function loadView($: EngineInterface): Promise<InboxView> {
   if (!dir) return { phase: 'ready', items: [], checkedAt: now, note: 'no config folder' }
   let names: string[]
   try {
-    names = (await $.fs.list(dir)).filter(entry => entry.kind === 'file').map(entry => entry.name)
+    // Every session's file stays in the folder: one not written for 7 days holds only hidden entries, so
+    // it is not read.
+    names = (await $.fs.list(dir))
+      .filter(entry => entry.kind === 'file' && entry.mtimeMs >= now - MAX_AGE_MS)
+      .map(entry => entry.name)
   } catch {
     return { phase: 'ready', items: [], checkedAt: now }
   }

@@ -1,6 +1,9 @@
 import type { Entry, EntryKind, Identity } from '../../types/inbox'
 
 export const MAX_AGE_MS = 7 * 24 * 3600 * 1000
+// Clocks of two sessions on one machine agree; an entry stamped further ahead would never age out or
+// close (a close marker holds the time it was written).
+export const MAX_AHEAD_MS = 5 * 60_000
 export const ICONS: Record<EntryKind, string> = { question: '❓', review: '✅', error: '⚠️', permission: '⏳' }
 const KINDS = new Set<string>(Object.keys(ICONS))
 
@@ -99,7 +102,8 @@ export function visibleEntries(
   now: number,
 ): Entry[] {
   return entries
-    .filter(e => e.sessionId !== ownId && e.at >= now - MAX_AGE_MS && !((closed[e.sessionId] ?? -Infinity) >= e.at))
+    .filter(e => e.sessionId !== ownId && e.at >= now - MAX_AGE_MS && e.at <= now + MAX_AHEAD_MS)
+    .filter(e => !((closed[e.sessionId] ?? -Infinity) >= e.at))
     .sort((a, b) => a.at - b.at)
 }
 
