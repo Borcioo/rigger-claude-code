@@ -41,7 +41,8 @@ export const isTabOn = (id: string, tabsOff: readonly string[], choice: TabChoic
 const slashes = (path: string) => path.replaceAll('\\', '/').replace(/(?<=.)\/+$/u, '')
 
 // The main checkout's folder, so every worktree of a repository shares one choice: the parent of git's
-// common dir. Outside git (or when git fails) the session folder itself.
+// common dir when that is a `.git` folder, else the common dir. Outside git (or when git fails) the
+// session folder itself.
 export async function projectKey($: EngineInterface, fallback?: string) {
   const cwd = (await $.session.cwd().catch(() => undefined)) ?? fallback
   if (!cwd) return undefined
@@ -54,6 +55,7 @@ export async function projectKey($: EngineInterface, fallback?: string) {
     const dir = slashes(lines[0]?.trim() ?? '')
     // An old git echoes the unknown flag back; only one absolute path is an answer.
     if (ran.exitCode === 0 && lines.length === 1 && /^(?:[A-Za-z]:)?\//u.test(dir)) {
+      if (!dir.endsWith('/.git')) return dir
       const parent = dir.replace(/\/[^/]+$/u, '')
       if (parent !== dir) return parent === '' || /^[A-Za-z]:$/u.test(parent) ? `${parent}/` : parent
     }

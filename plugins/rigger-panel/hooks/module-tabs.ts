@@ -207,15 +207,18 @@ export async function readModuleTabs($: EngineInterface, modules: unknown) {
 
 // --- cutting text into rows ---
 
-// The text a regex may see: at most 256 KiB, no line over 2000 characters.
-const linesOf = (text: string) =>
-  text
+// The text a regex may see: at most 256 KiB, no line over 2000 characters; `cut` when either bound
+// left something out.
+const linesOf = (text: string) => {
+  const all = text
     .slice(0, TEXT_MAX)
     .split('\n')
     .map(line => (line.endsWith('\r') ? line.slice(0, -1) : line))
-    .filter(line => line.length <= LINE_MAX)
+  const lines = all.filter(line => line.length <= LINE_MAX)
+  return { lines, cut: text.length > TEXT_MAX || lines.length < all.length }
+}
 
-export type Cut = { kind: 'empty' } | { kind: 'rows'; rows: ModuleRow[]; capped: boolean } | { kind: 'unmatched' }
+export type Cut = { kind: 'empty' } | { kind: 'rows'; rows: ModuleRow[]; capped: boolean; truncated: boolean } | { kind: 'unmatched' }
 
 const linkOf = (rules: RowRules, groups: { [name: string]: string | undefined }) => {
   if (rules.url !== undefined) {
@@ -225,12 +228,12 @@ const linkOf = (rules: RowRules, groups: { [name: string]: string | undefined })
   return groups.url !== undefined && HTTPS.test(groups.url) ? groups.url : undefined
 }
 
-// Fail closed: text that holds something but no row is never shown as an empty list.
-export function cutRows(text: string, rules: RowRules): Cut {
+// Fail closed: text that holds something but no row is never shown as an empty list. `sourceCut`:
+// the source itself said its output was cut.
+export function cutRows(text: string, rules: RowRules, sourceCut = false): Cut {
   if (text.slice(0, TEXT_MAX).trim() === '') return { kind: 'empty' }
-  const lines = linesOf(text)
-  const empty = rules.empty === undefined ? undefined : new RegExp(rules.empty, 'u')
-  if (empty && lines.some(line => empty.test(line))) return { kind: 'empty' }
+  const { lines, cut } = linesOf(text)
+  const truncated = cut || sourceCut
   const pattern = new RegExp(rules.pattern, 'u')
   const detail = rules.detail === undefined ? undefined : new RegExp(rules.detail, 'u')
   const rows: ModuleRow[] = []
@@ -239,7 +242,7 @@ export function cutRows(text: string, rules: RowRules): Cut {
     const found = pattern.exec(line)
     const groups = found?.groups ?? {}
     if (found && groups.title) {
-      if (rows.length === ROW_MAX) return { kind: 'rows', rows, capped: true }
+      if (rows.length === ROW_MAX) return { kind: 'rows', rows, capped: true, truncated }
       const url = linkOf(rules, groups)
       current = {
         title: groups.title,
@@ -253,26 +256,37 @@ export function cutRows(text: string, rules: RowRules): Cut {
       if (value) current.detail = value
     }
   }
-  return rows.length === 0 ? { kind: 'unmatched' } : { kind: 'rows', rows, capped: false }
+  if (rows.length > 0) return { kind: 'rows', rows, capped: false, truncated }
+  // The empty pattern counts only when no row was cut: a header that matches it never hides rows.
+  const empty = rules.empty === undefined ? undefined : new RegExp(rules.empty, 'u')
+  return empty && lines.some(line => empty.test(line)) ? { kind: 'empty' } : { kind: 'unmatched' }
 }
 
 const UNSAFE_VALUE = /^-|\p{Cc}/u
+// A value placed in a command's argv: a plain word a shell or a Windows batch file reads as itself,
+// never one that reads as an option (a leading `-` or `/`) or splits at a batch delimiter (`=`).
+const ARGV_VALUE = /^[A-Za-z0-9._:@+][A-Za-z0-9._:@/+-]*$/u
 
-// A select's options: `value` required, `label` else the value; values unique, at most 200.
-export function cutOptions(text: string, rule: SelectRule): ModuleOption[] {
+// A select's options: `value` required, `label` else the value; values unique, at most 200. A value
+// that starts with `-` or holds a control character is dropped; one bound for command argv must be a
+// plain word, and each that is not is counted in `dropped`.
+export function cutOptions(text: string, rule: SelectRule, forArgv = false) {
   const pattern = new RegExp(rule.pattern, 'u')
   const options: ModuleOption[] = []
-  for (const line of linesOf(text)) {
+  let dropped = 0
+  for (const line of linesOf(text).lines) {
     const groups = pattern.exec(line)?.groups
     const value = groups?.value
-    // A value lands in MCP args and command argv: a leading `-` would read as an option there, and a
-    // control character has no place in either, so such an option is dropped.
-    if (!value || UNSAFE_VALUE.test(value) || options.some(option => option.value === value)) continue
+    if (!value || options.some(option => option.value === value)) continue
+    if (forArgv ? !ARGV_VALUE.test(value) : UNSAFE_VALUE.test(value)) {
+      if (forArgv) dropped++
+      continue
+    }
     if (rule.type === 'number' && !NUMBER.test(value)) refuse(`select ${rule.id} value ${value} is not a number`)
     options.push({ value, label: groups.label || value })
     if (options.length === OPTION_MAX) break
   }
-  return options
+  return { options, dropped }
 }
 
 // --- running a source ---
@@ -293,27 +307,35 @@ const mcpText = (result: { content: { type: string; text?: string }[]; structure
 export async function runSource(
   $: EngineInterface,
   source: TabSource,
-  root: string,
   cwd: string | undefined,
-): Promise<{ text: string } | { error: string }> {
+): Promise<{ text: string; isCut?: boolean } | { error: string }> {
   try {
     if ('mcp' in source) {
       const outcome = await bounded($, CALL_MS, $.mcp.call(source.mcp.server, source.mcp.tool, source.mcp.args))
       if (!outcome.isDone) return { error: `${source.mcp.tool} did not answer within ${CALL_MS / 1000} s` }
       const text = mcpText(outcome.value)
       if (outcome.value.isError) return { error: firstLine(text) || `${source.mcp.tool} reported an error` }
+      const silent = !outcome.value.content.some(block => block.type === 'text') && outcome.value.structuredContent === undefined
+      if (silent) return { error: `${source.mcp.tool} returned no text` }
       return { text }
     }
-    const argv = source.command.map(item => (item.startsWith('./') ? `${root}/${item.slice(2)}` : item))
+    const argv = source.command
     const outcome = await bounded($, CALL_MS, $.process.run(argv, { ...(cwd ? { cwd } : {}), timeoutMs: CALL_MS }))
     if (!outcome.isDone) return { error: `${source.command[0]} did not answer within ${CALL_MS / 1000} s` }
     const ran = outcome.value
     if (ran.exitCode !== 0) return { error: firstLine(ran.stderr) || firstLine(ran.stdout) || `exit code ${ran.exitCode}` }
-    return { text: ran.stdout }
+    // Only stderr, so the program said why it printed nothing.
+    if (ran.stdout.trim() === '' && firstLine(ran.stderr) !== '') return { error: firstLine(ran.stderr) }
+    return { text: ran.stdout, isCut: ran.isStdoutTruncated }
   } catch (error) {
     return { error: firstLine(reasonOf(error)) || 'the call failed with no reason' }
   }
 }
+
+// A manifest's own argv item starting `./` resolves against the module root; done before any select
+// value is filled in, so a chosen value is never rewritten.
+const rooted = (source: TabSource, root: string): TabSource =>
+  'mcp' in source ? source : { command: source.command.map(item => (item.startsWith('./') ? `${root}/${item.slice(2)}` : item)) }
 
 // `{select:<id>}` as a whole value becomes the chosen value, a number for a number select.
 const filled = (source: TabSource, rules: SelectRule[], chosen: { [id: string]: string }): TabSource => {
@@ -359,13 +381,18 @@ const running = new Map<string, number>()
 // already running. Rows are cleared first, so a failed read never leaves the previous list standing.
 export async function loadModuleTab($: EngineInterface, pane: string) {
   if (running.has(pane)) return
-  await startLoad($, pane)
+  await startLoad($, pane, claimLoad(pane))
 }
 
-async function startLoad($: EngineInterface, pane: string) {
+// Takes the next number before any await, so a load still running can no longer write.
+const claimLoad = (pane: string) => {
   const mine = (latest.get(pane) ?? 0) + 1
   latest.set(pane, mine)
   running.set(pane, mine)
+  return mine
+}
+
+async function startLoad($: EngineInterface, pane: string, mine: number) {
   const current = () => latest.get(pane) === mine
   const write = async (change: (last: ModulePane | undefined) => ModulePane) => {
     if (current()) await setPane($, pane, change)
@@ -378,14 +405,21 @@ async function startLoad($: EngineInterface, pane: string) {
     await write(last => ({ phase: 'loading', rows: [], selects: last?.selects ?? {} }))
     const previous = (await read($, modulePanes))[pane]?.selects ?? {}
     const selects: ModulePane['selects'] = {}
-    const fail = (reason: string) => write(() => ({ phase: 'failed', rows: [], note: tabLine(tab, reason), selects }))
+    const notices: string[] = []
+    const noted = () => (notices.length > 0 ? { notices } : {})
+    const fail = (reason: string) => write(() => ({ phase: 'failed', rows: [], note: tabLine(tab, reason), selects, ...noted() }))
+    const source = rooted(tab.source, tab.root)
+    const argvIds = 'command' in source ? placeholders(source) : []
     for (const rule of tab.select) {
-      const ran = await runSource($, rule.source, tab.root, cwd)
+      const ran = await runSource($, rooted(rule.source, tab.root), cwd)
       if (!current()) return
       if ('error' in ran) return await fail(`select ${rule.id}: ${ran.error}`)
       let options: ModuleOption[]
       try {
-        options = cutOptions(ran.text, rule)
+        const cut = cutOptions(ran.text, rule, argvIds.includes(rule.id))
+        options = cut.options
+        if (cut.dropped > 0)
+          notices.push(tabLine(tab, `select ${rule.id}: ${cut.dropped} option${cut.dropped === 1 ? '' : 's'} dropped (not safe as a command argument)`))
       } catch (error) {
         return await fail(reasonOf(error))
       }
@@ -396,14 +430,21 @@ async function startLoad($: EngineInterface, pane: string) {
       selects[rule.id] = { options, value }
     }
     const chosen = Object.fromEntries(Object.entries(selects).map(([id, held]) => [id, held.value]))
-    const ran = await runSource($, filled(tab.source, tab.select, chosen), tab.root, cwd)
+    const ran = await runSource($, filled(source, tab.select, chosen), cwd)
     if ('error' in ran) return await fail(ran.error)
-    const cut = cutRows(ran.text, tab.rows)
+    const cut = cutRows(ran.text, tab.rows, ran.isCut === true)
     if (cut.kind === 'unmatched') return await fail('output did not match its pattern')
     await write(() =>
       cut.kind === 'empty'
-        ? { phase: 'ready', rows: [], empty: true, selects }
-        : { phase: 'ready', rows: cut.rows, ...(cut.capped ? { capped: true } : {}), selects },
+        ? { phase: 'ready', rows: [], empty: true, selects, ...noted() }
+        : {
+            phase: 'ready',
+            rows: cut.rows,
+            ...(cut.capped ? { capped: true } : {}),
+            ...(cut.truncated ? { truncated: true } : {}),
+            selects,
+            ...noted(),
+          },
     )
   } finally {
     if (running.get(pane) === mine) running.delete(pane)
@@ -413,12 +454,18 @@ async function startLoad($: EngineInterface, pane: string) {
 // A pick in a select: kept for the session, then the tab is read again with it, overtaking a read
 // still running for the old choice.
 export async function chooseOption($: EngineInterface, pane: string, id: string, value: string) {
-  await setPane($, pane, last => {
-    const held = last?.selects[id]
-    const base = last ?? { phase: 'loading', rows: [], selects: {} }
-    return held === undefined ? base : { ...base, selects: { ...base.selects, [id]: { ...held, value } } }
-  })
-  await startLoad($, pane)
+  const mine = claimLoad(pane)
+  try {
+    await setPane($, pane, last => {
+      const held = last?.selects[id]
+      const base = last ?? { phase: 'loading', rows: [], selects: {} }
+      return held === undefined ? base : { ...base, selects: { ...base.selects, [id]: { ...held, value } } }
+    })
+  } catch (error) {
+    if (running.get(pane) === mine) running.delete(pane)
+    throw error
+  }
+  await startLoad($, pane, mine)
 }
 
 // /harness reads every module tab that is open again.

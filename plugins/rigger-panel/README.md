@@ -44,8 +44,9 @@ at once; session start and `/harness` open only the tabs that are on. The Rigger
   outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
   (pane ids such as `rigger-issues`) switched on and off there.
 - **Project:** the parent folder of `git rev-parse --path-format=absolute --git-common-dir` run in the
-  session folder, so every worktree of a repository shares the main checkout's choice; outside git,
-  the session folder itself.
+  session folder, so every worktree of a repository shares the main checkout's choice. When that
+  common dir is not a folder named `.git` (a submodule's `…/.git/modules/<name>`, a bare repository's
+  `…/repo.git`), the common dir itself. Outside git, the session folder itself.
 - **Default:** every tab is on, unless its id is in the config key `panel.tabs_off` (a list of tab ids;
   levels 2 and 3, a company module or the personal `rigger/config.json`), read from rigger-core's
   snapshot of the session (`<config dir>/rigger/state/<session id>.resolved.json`). A tab the project
@@ -98,32 +99,40 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   `^[A-Za-z0-9_-]{1,64}$` (the shape `panel.tabs_off` takes) and must not be another module's.
 - `title`: a string of 1-40 characters.
 - `source`: exactly one of `mcp` (`{ server, tool, args? }`, `args` an object) or `command` (an argument
-  vector of 1-32 strings; an item starting `./` resolves against the module root). The command runs in
+  vector of 1-32 strings; an item the manifest writes starting `./` resolves against the module root,
+  before any `{select:…}` is filled in, so a chosen value is never rewritten). The command runs in
   the session folder. The text is the MCP result's text blocks joined with `\n` (with no text block but
   `structuredContent`, that as indented JSON), or the command's stdout. An error result, a non-zero
   exit or a call that fails shows the failure line `module <m> tab <id>: <first line of the error>`
-  (cut at 200 characters). Each call is bounded at 20 s.
+  (cut at 200 characters); so does an MCP result with neither a text block nor `structuredContent`
+  (`<tool> returned no text`) and a command that exits 0 with blank stdout and something on stderr
+  (its first stderr line). Each call is bounded at 20 s.
 - `rows.pattern` (required): a JS regex compiled with flag `u`, matched against each line; a match
   starts a row. Named groups: `title` (required), `key`, `url`, `detail`. `rows.detail`: a later line
   that starts no row but matches it sets the row's `detail` from its `detail` group, when the row has
   none yet. `rows.url`: a template where `{<group>}` is that group's value, percent-encoded; every group
   it names must be a group of `rows.pattern`. Without `rows.url`, a `url` group is the link. A link that
-  does not start `https://` is dropped. `rows.empty`: a regex; any line matching it shows the empty
-  state. A regex that does not compile skips the tab.
-- **Fail closed:** blank text or a `rows.empty` match shows `No items.`. Text with something in it, no
+  does not start `https://` is dropped. `rows.empty`: a regex; when no line starts a row, any line
+  matching it shows the empty state (with rows, it is ignored). A regex that does not compile skips the tab.
+- **Fail closed:** blank text, or no row and a `rows.empty` match, shows `No items.`. Text with something in it, no
   row and no `rows.empty` match shows exactly `module <m> tab <id>: output did not match its pattern`,
   never the empty state.
 - **Bounds, before any regex runs:** the text is cut at 256 Ki characters, lines over 2000 characters
   are skipped, at most 50 rows are kept (then `The first 50 are shown.`), and a regex source over 500
-  characters is refused. The patterns run with no time bound (the manifest is the installed plugin's
+  characters is refused. When the text was cut at 256 Ki, a long line was skipped or the engine cut
+  the command's stdout, the rows come with the note `list truncated`. The patterns run with no time bound (the manifest is the installed plugin's
   own code), so keep them linear: no nested repetition such as `(a+)+`.
-- **A pick wins:** each read of a tab takes the next number and only the latest one writes, so a pick
-  made while a read for the old choice runs is never overwritten by it.
+- **A pick wins:** each read of a tab takes the next number and only the latest one writes; a pick
+  takes its number before it is stored, so a read for the old choice that is still running, or that
+  answers while the pick is being stored, never overwrites it.
 - `select` (at most 3): `id` like a tab id, `label` 1-40 characters, `type` `"string"` (the default) or
   `"number"`. `options` is a source (`mcp` or `command`, with no `{select:…}` in it) plus `pattern`
   with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200
   options, a repeated value kept once, a value that starts with `-` or holds a control character
-  dropped (it would reach a command's argv); a number select whose value is not a number fails. `default`: a
+  dropped. A select that a `command` source's argv names takes only values matching
+  `^[A-Za-z0-9._:@+][A-Za-z0-9._:@/+-]*$` (no leading `-` or `/`, no `=`: Windows tools read them as switches and delimiters); the others are dropped and the tab shows
+  `module <m> tab <id>: select <s>: <n> options dropped (not safe as a command argument)`. A number
+  select whose value is not a number fails. `default`: a
   dot path into the session folder's `.claude/environments.json`; the option whose value equals that
   value as a string is chosen first. A missing file, a missing key, invalid JSON or a value that is no
   option picks the first option. The choice is kept for the session (in state, not the store) and a

@@ -169,7 +169,11 @@ export type ModulePane = {
   rows: ModuleRow[]
   empty?: boolean
   capped?: boolean
+  // The text was cut before the rows were read.
+  truncated?: boolean
   note?: string
+  // Lines about options a select dropped.
+  notices?: string[]
   // Keyed by select id: the options read and the value chosen.
   selects: { [id: string]: { options: ModuleOption[]; value: string } }
 }

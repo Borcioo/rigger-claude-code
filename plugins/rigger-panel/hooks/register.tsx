@@ -513,6 +513,9 @@ export const register: Register = on => {
             />
           )
         })}
+        {(now?.notices ?? []).map(line => (
+          <Text dimColor>{line}</Text>
+        ))}
         {(now === undefined || now.phase === 'loading') && <Text dimColor>Loading…</Text>}
         {now?.phase === 'failed' && <Text color="red">{now.note ?? 'unknown reason'}</Text>}
         {ready?.empty && <Text dimColor>No items.</Text>}
@@ -529,6 +532,7 @@ export const register: Register = on => {
           </Box>
         ))}
         {ready?.capped && <Text dimColor>The first 50 are shown.</Text>}
+        {ready?.truncated && <Text dimColor>list truncated</Text>}
       </Box>
     )
   })

@@ -92,10 +92,12 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
   const state = { files, cwd: '/repo' }
   const calls: Call[] = []
   const runs: Run[] = []
-  const programs: Record<string, { exitCode: number; stdout: string; stderr?: string }> = {}
+  const programs: Record<string, { exitCode: number; stdout: string; stderr?: string; isStdoutTruncated?: boolean }> = {}
   const opened: string[] = []
   const closed: string[] = []
   const store: Record<string, unknown> = {}
+  // A program start that answers only when the test lets it.
+  const hanging: { program?: Promise<{ deny: string }> } = {}
   const clock = mock.clock(on, { now: 1000 })
   on('store.get', (_, e) => ({ value: store[e.key] }))
   on('store.set', (_, e) => {
@@ -136,13 +138,14 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
     runs.push({ argv: argv.map(norm), ...(e.init?.cwd ? { cwd: norm(e.init.cwd) } : {}) })
     const program = programs[norm(argv[0] ?? '')]
     if (program === undefined) return { deny: 'not this command in this test' }
-    return { value: { stderr: '', ...program, isStdoutTruncated: false, isStderrTruncated: false } }
+    if (hanging.program !== undefined) return hanging.program
+    return { value: { stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...program } }
   })
   on('fs.read', (_, e) => {
     const body = state.files[norm(e.path)]
     return body === undefined ? { deny: 'missing' } : { value: body }
   })
-  return Object.assign(state, { calls, runs, programs, opened, closed, stored: store, clock })
+  return Object.assign(state, { calls, runs, programs, hanging, opened, closed, stored: store, clock })
 }
 
 const norm = (path: string) => path.replaceAll('\\', '/').replace(/^\/?[A-Za-z]:(?=\/)/, '')
@@ -222,6 +225,71 @@ test('blank text and a line matching the empty pattern draw the empty state', as
   }
 })
 
+// A source that answered with nothing to read -> the failure line, never `No items.`.
+const SILENT: [string, Record<string, unknown>, string][] = [
+  ['an MCP result with no text block', { source: ticketsTab().source }, 'module tracker tab tickets: list-tickets returned no text'],
+  ['a command with only stderr', { source: { command: ['./bin/rows.sh'] } }, 'module tracker tab tickets: rows.sh: no token found'],
+]
+
+test('an MCP result with only structuredContent is read as its indented JSON', async ($, on) => {
+  const tab = ticketsTab({ rows: { pattern: '^\\s*"title": "(?<title>[^"]+)"' } })
+  const answer = { content: [], isError: false, structuredContent: { items: [{ title: 'Structured row' }] } }
+  const w = world(on, files([tab]), { 'list-tickets': answer })
+  await start($, w)
+  const { ui, texts } = await drawTab($, w)
+  expect({ row: texts.includes('Structured row'), failed: texts.some(line => line.startsWith('module ')) }).toEqual({ row: true, failed: false })
+  await ui.unmount()
+})
+
+for (const [what, extra, line] of SILENT) {
+  test(`${what} is the failure line, not the empty state`, async ($, on) => {
+    const w = world(on, files([ticketsTab(extra)]), { 'list-tickets': { content: [{ type: 'image' }], isError: false } })
+    w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: '', stderr: '\nrows.sh: no token found\nusage: rows.sh' }
+    await start($, w)
+    const { ui, texts } = await drawTab($, w)
+    expect({ failure: texts.includes(line), empty: texts.includes('No items.') }).toEqual({ failure: true, empty: false })
+    await ui.unmount()
+  })
+}
+
+// A source that never answers -> the failure line once the 20 s bound passes, and not before.
+const HANGS: [string, Record<string, unknown>, string][] = [
+  ['an MCP call', {}, 'module tracker tab tickets: list-tickets did not answer within 20 s'],
+  ['a command', { source: { command: ['./bin/rows.sh'] } }, `module tracker tab tickets: ${ROOT}/bin/rows.sh did not answer within 20 s`],
+]
+
+for (const [what, extra, line] of HANGS) {
+  test(`${what} that never answers is the timeout failure after its bound`, async ($, on) => {
+    let release = () => {}
+    const never = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const w = world(on, files([ticketsTab(extra)]), { 'list-tickets': () => never.then(() => text('')) })
+    w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: TICKETS_TEXT }
+    w.hanging.program = never.then(() => ({ deny: 'released' }))
+    try {
+      await start($, w)
+      const first = await $.ui.mount({ ...paneOf(TICKETS, 'Tickets'), surface: 'desktop' })
+      await w.clock.settle()
+      await first.unmount()
+      await w.clock.advance(19_999)
+      const early = await drawTab($, w)
+      await early.ui.unmount()
+      await w.clock.advance(1)
+      const late = await drawTab($, w)
+      await late.ui.unmount()
+      expect({ early: early.texts.includes(line), late: late.texts.includes(line) }).toEqual({ early: false, late: true })
+    } finally {
+      release()
+    }
+  })
+}
+
+test('rows beside a line that matches the empty pattern are drawn, not the empty state', () => {
+  const cut = cutRows(`Tickets (0) closed, open below:\n${TICKETS_TEXT}`, ROWS)
+  expect(cut.kind === 'rows' ? cut.rows.map(row => row.key) : cut.kind).toEqual(['TRK-22', 'TRK-23'])
+})
+
 test('an error result is the failure line with the first line of its text', async ($, on) => {
   const w = world(on, files([ticketsTab()]), { 'list-tickets': text('\nUnauthorized: token expired\nretry later', true) })
   await start($, w)
@@ -248,6 +316,25 @@ test('a large output stays bounded: 50 rows and a note, a huge line skipped, and
   expect(cutRows(`header\n${'\n'.repeat(256 * 1024)}- TRK-5: late`, rules)).toEqual({ kind: 'unmatched' })
   expect(Date.now() - began).toBeLessThan(3000)
 })
+
+// Output that was cut somewhere -> whether the rows come with `list truncated`.
+const TRUNCATED: [string, { stdout: string; isStdoutTruncated?: boolean }, boolean][] = [
+  ['whole output', { stdout: TICKETS_TEXT }, false],
+  ['text past 256 Ki', { stdout: `${TICKETS_TEXT}\n${'\n'.repeat(256 * 1024)}- TRK-5: late` }, true],
+  ['a line over 2000 characters', { stdout: `${TICKETS_TEXT}\n${'y'.repeat(2001)}` }, true],
+  ['stdout cut by the engine', { stdout: TICKETS_TEXT, isStdoutTruncated: true }, true],
+]
+
+for (const [what, output, truncated] of TRUNCATED) {
+  test(`${what}: the rows are drawn${truncated ? ' with a list truncated note' : ' with no note'}`, async ($, on) => {
+    const w = world(on, files([ticketsTab({ source: { command: ['./bin/rows.sh'] } })]), {})
+    w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, ...output }
+    await start($, w)
+    const { ui, texts } = await drawTab($, w)
+    expect({ rows: texts.includes('QA and rollout'), note: texts.includes('list truncated') }).toEqual({ rows: true, note: truncated })
+    await ui.unmount()
+  })
+}
 
 // environments.json contents -> the project the select starts on and the number the call gets.
 const DEFAULTS: [string, string | undefined, number][] = [
@@ -329,11 +416,113 @@ test('a pick made while the tab is loading wins over that load', async ($, on) =
   await again.ui.unmount()
 })
 
+// The read for the old value answers the moment the pick is written, before the new read starts.
+test('a read that answers right after the pick is written never takes the pick back', async ($, on) => {
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
+    select: [PROJECT_SELECT],
+  })
+  let release = () => {}
+  const slow = new Promise<McpAnswer>(resolve => {
+    release = () => resolve(text(TICKETS_TEXT))
+  })
+  const picked = text('Tickets (1):\n\n- TRK-61: Picked project work\n')
+  let reads = 0
+  const w = world(on, files([tab]), {
+    'list-projects': text(PROJECTS_TEXT),
+    'list-tickets': args => (args.project_id === 61 ? picked : ++reads === 1 ? text(TICKETS_TEXT) : slow),
+  })
+  let pickWritten = false
+  let staleWrote = false
+  // A test's hook on the pane state: right after the pick lands, the old read answers.
+  on('state.set', { plugin: 'rigger-panel', key: 'modulePanes' }, async (_, e, next) => {
+    const done = await next(e)
+    type Held = { rows: { title: string }[]; selects: Record<string, { value: string }> }
+    const pane = (e.value as { value: Record<string, Held | undefined> }).value[TICKETS]
+    if (!pickWritten && pane?.selects.project?.value === '61') {
+      pickWritten = true
+      release()
+      for (let i = 0; i < 200 && !staleWrote; i++) await Promise.resolve()
+    } else if (pickWritten && pane?.rows.some(row => row.title === 'QA and rollout')) staleWrote = true
+    return done
+  })
+  await start($, w)
+  const first = await drawTab($, w)
+  await first.ui.press({ key: 'refresh' })
+  for (let i = 0; i < 200 && reads < 2; i++) await Promise.resolve()
+  expect(reads).toBe(2)
+  await first.ui.unmount()
+  const ui = await $.ui.mount({ ...paneOf(TICKETS, 'Tickets'), surface: 'desktop' })
+  await ui.select({ key: 'select-project', value: '61' })
+  await w.clock.settle()
+  await ui.unmount()
+  const again = await drawTab($, w)
+  expect({ pickWritten, staleWrote, value: again.select?.props?.value, picked: again.texts.includes('Picked project work') }).toEqual({
+    pickWritten: true,
+    staleWrote: false,
+    value: '61',
+    picked: true,
+  })
+  await again.ui.unmount()
+})
+
 // A chosen value reaches command argv: one read as an option there, or with a control character, is no option.
 test('an option value that starts with a dash or holds a control character is dropped', () => {
   const rule = { id: 'project', label: 'Project', type: 'string', pattern: '^- (?<value>\\S+) (?<label>.+)$' } as never
   const text = '- --exec=x Dash\n- a\u0007b Bell\n- demo Demo\n- -n Short'
-  expect(cutOptions(text, rule)).toEqual([{ value: 'demo', label: 'Demo' }])
+  expect(cutOptions(text, rule).options).toEqual([{ value: 'demo', label: 'Demo' }])
+})
+
+// Options whose values a command's argv may or may not take; `./x` is a value, never a module path.
+const ARGV_OPTIONS = ['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', '--exec=x', 'k=v', '/c', './x'].map(value => `- ${value} Label ${value}`).join('\n')
+const STRING_SELECT = {
+  id: 'project',
+  label: 'Project',
+  options: { mcp: { server: 'tracker', tool: 'list-projects', args: {} }, pattern: '^- (?<value>\\S+) (?<label>.+)$' },
+}
+const optionValues = (select: Found | undefined) => ((select?.props?.options ?? []) as { value: string }[]).map(option => option.value)
+
+test('a select value bound for command argv: only a plain word reaches it, the rest dropped with a notice', async ($, on) => {
+  const tab = ticketsTab({ source: { command: ['./bin/rows.sh', '--project', '{select:project}'] }, select: [STRING_SELECT] })
+  const w = world(on, files([tab]), { 'list-projects': text(ARGV_OPTIONS) })
+  w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: TICKETS_TEXT }
+  await start($, w)
+  const { ui, texts, select } = await drawTab($, w)
+  expect(optionValues(select)).toEqual(['demo', './x'])
+  expect(texts).toContain('module tracker tab tickets: select project: 8 options dropped (not safe as a command argument)')
+  expect(texts).toContain('QA and rollout')
+  await ui.select({ key: 'select-project', value: './x' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.runs.map(run => run.argv)).toEqual([
+    [`${ROOT}/bin/rows.sh`, '--project', 'demo'],
+    [`${ROOT}/bin/rows.sh`, '--project', './x'],
+  ])
+})
+
+test('a select value bound for MCP args keeps characters a command argument may not take', async ($, on) => {
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project: '{select:project}' } } },
+    select: [STRING_SELECT],
+  })
+  const w = world(on, files([tab]), { 'list-projects': text(ARGV_OPTIONS), 'list-tickets': text(TICKETS_TEXT) })
+  await start($, w)
+  const { ui, texts, select } = await drawTab($, w)
+  expect(optionValues(select)).toEqual(['demo', 'a&b', 'a|b', '50%', 'say"hi', 'x^y', 'k=v', '/c', './x'])
+  expect(texts.filter(line => line.includes('dropped'))).toEqual([])
+  await ui.unmount()
+})
+
+test("a select's options command resolves ./ against the module root too", async ($, on) => {
+  const select = { ...STRING_SELECT, options: { command: ['./bin/options.sh'], pattern: STRING_SELECT.options.pattern } }
+  const tab = ticketsTab({ source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project: '{select:project}' } } }, select: [select] })
+  const w = world(on, files([tab]), { 'list-tickets': text(TICKETS_TEXT) })
+  w.programs[`${ROOT}/bin/options.sh`] = { exitCode: 0, stdout: '- demo Demo' }
+  await start($, w)
+  const { ui, texts } = await drawTab($, w)
+  expect(w.runs.map(run => run.argv)).toEqual([[`${ROOT}/bin/options.sh`]])
+  expect(texts).toContain('QA and rollout')
+  await ui.unmount()
 })
 
 test('options that fail to load are the failure line and the rows are not read', async ($, on) => {
