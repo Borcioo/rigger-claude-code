@@ -19,7 +19,8 @@ export type Entry = {
 }
 
 // The app's own view of this session (`get_session self`): `sessionId` is the `local_…` id.
-export type Identity = { sessionId: string; link: string; title: string; cwd: string }
+// `isSideSession`: another session started this one and it was not moved to top level.
+export type Identity = { sessionId: string; link: string; title: string; cwd: string; isSideSession: boolean }
 
 // `checkedAt`: when the folder was last read, the clock the ages are drawn against.
 export type InboxView = { phase: 'idle' | 'ready'; items: Entry[]; checkedAt: number; note?: string }

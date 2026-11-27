@@ -154,6 +154,18 @@ export async function openPanes($: EngineInterface): Promise<Set<string> | undef
   }
 }
 
+// The `ui.close` hook: a pane the person closes with its close mark stays on, so the Tabs row and the menu
+// are drawn again and its row says it is closed. The pane still closes (`next`).
+export async function redrawOnPersonClose(
+  $: EngineInterface,
+  e: { origin: { kind: string } },
+  next: (e: never) => Promise<unknown>,
+) {
+  const result = await next(e as never)
+  if (e.origin.kind === 'person') $.ui.invalidate('ui.render')
+  return result
+}
+
 // A tab's row in the Tabs row and the right-click menu. A tab that is on but whose pane the person closed
 // with its close mark says so: a press opens it again.
 export const tabLabel = (tab: Tab, isOn: boolean, open: Set<string> | undefined) =>

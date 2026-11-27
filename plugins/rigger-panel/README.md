@@ -331,9 +331,11 @@ session reads the others'. `/inbox` opens the pane.
   next entry. `$.fs` cannot delete, so an entry is closed by `<session id>.closed`, which holds a time:
   every entry written before it is hidden, the session's next entry shows again.
 - **What closes it:** the next prompt that session receives from you (typed, from the desktop app,
-  from a phone or a click on the app's own buttons) or from another session (a message, a
-  coordinating session's delivery or hand-off; a task notification, a schedule, a channel or a plugin
-  does not), the next tool call after an approval entry or a turn that ends after it, and `Close` on
+  from a phone or a click on the app's own buttons) or, in a session another session started (the
+  app's `parentSessionId`, not moved to top level), from another session (a message, a coordinating
+  session's delivery or hand-off: in a top-level session those kinds also carry a worker's report,
+  which answers nothing it asked you; a task notification, a schedule, a channel or a plugin never
+  closes it), the next tool call after an approval entry or a turn that ends after it, and `Close` on
   the item. A session waiting in a permission dialog starts no new turn, so its approval entry stays.
 - **What is shown:** the other sessions' open entries younger than 7 days, oldest first, each with
   its title, folder, age, text, question, `Open` and `Close`; `Nothing waiting.` when there are none.

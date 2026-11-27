@@ -12,7 +12,7 @@ export const EMPTY_VIEW: InboxView = { phase: 'idle', items: [], checkedAt: 0 }
 // The same references as in writer.ts and view.tsx: the state scan reads an atom declared in the
 // file that uses it.
 const identity = atom({ plugin: 'rigger-panel', key: 'inboxIdentity' } as const, null as Identity | null, {
-  shape: 'inbox-identity-1',
+  shape: 'inbox-identity-2',
 })
 const view = atom({ plugin: 'rigger-panel', key: 'inboxView' } as const, EMPTY_VIEW, { shape: 'inbox-view-1' })
 // The last failed Open per session, with the entry time it failed for: view.tsx shows it only on

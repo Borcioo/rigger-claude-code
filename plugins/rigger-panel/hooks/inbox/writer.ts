@@ -12,7 +12,7 @@ const APP = 'ccd_session_mgmt'
 
 // Read once per session; null until the app has answered.
 const identity = atom({ plugin: 'rigger-panel', key: 'inboxIdentity' } as const, null as Identity | null, {
-  shape: 'inbox-identity-1',
+  shape: 'inbox-identity-2',
 })
 
 export async function inboxDir($: EngineInterface) {
@@ -74,7 +74,8 @@ async function lookUp($: EngineInterface): Promise<Identity | null> {
     const value = JSON.parse(text) as Record<string, unknown>
     const pick = (key: string) => (typeof value[key] === 'string' ? (value[key] as string) : '')
     if (!pick('sessionId').startsWith('local_')) throw new Error('get_session gave no local_ id')
-    const found: Identity = { sessionId: pick('sessionId'), link: pick('link'), title: pick('title'), cwd: pick('cwd') }
+    const isSideSession = pick('parentSessionId') !== '' && value.detached !== true
+    const found: Identity = { sessionId: pick('sessionId'), link: pick('link'), title: pick('title'), cwd: pick('cwd'), isSideSession }
     known = found
     await update($, identity, () => found)
     return found

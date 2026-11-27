@@ -43,7 +43,7 @@ import { EMPTY_ISSUES, askSession, detectStartTool, loadIssues, refreshIssues, s
 import { cutLine, emptyText, shortTitle } from './issues'
 import { registerInbox } from './inbox/view'
 import { NO_MODULE_TABS, chooseOption, loadModuleTab, reloadModuleTabs } from './module-tabs'
-import { TABS, loadTabs, openPanes, openTabs, recheckTabs, tabLabel, toggleTab } from './tabs'
+import { TABS, loadTabs, openPanes, openTabs, recheckTabs, redrawOnPersonClose, tabLabel, toggleTab } from './tabs'
 
 const PANE = 'rigger-panel'
 const ISSUES_PANE = 'rigger-issues'
@@ -486,13 +486,7 @@ export const register: Register = on => {
     )
   })
 
-  // A pane the person closes with its close mark stays on: the Tabs row and the menu are drawn again so its
-  // row says it is closed. The pane still closes (`next`).
-  on('ui.close', async ($, e, next) => {
-    const result = await next(e)
-    if (e.origin.kind === 'person') $.ui.invalidate('ui.render')
-    return result
-  })
+  on('ui.close', redrawOnPersonClose)
 
   // The transcript's right-click menu (raised on the desktop app only) gets a row per tab: a pane header has
   // no room for one, and a press switches the tab as the Tabs row does. The engine asks each plugin for its

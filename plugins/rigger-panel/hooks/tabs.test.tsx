@@ -2,6 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { redrawOnPersonClose } from './tabs'
+
 const PANE = {
   plugin: 'rigger-panel',
   component: 'Pane',
@@ -62,6 +64,11 @@ const world = (on: On, given: Partial<World> = {}) => {
     open.delete(e.id)
     return { value: undefined }
   })
+  const invalidated: string[] = []
+  on('ui.invalidate', (_, e) => {
+    invalidated.push(e.event)
+    return { value: undefined }
+  })
   on('ui.panes', () =>
     given.panesFail
       ? { deny: 'not served here' }
@@ -85,7 +92,7 @@ const world = (on: On, given: Partial<World> = {}) => {
     const text = state.files[norm(e.path)]
     return text === undefined ? { deny: 'missing' } : { value: text }
   })
-  return Object.assign(state, { opened, closed, open, stored: store, clock })
+  return Object.assign(state, { opened, closed, open, invalidated, stored: store, clock })
 }
 
 // A session start, and the reads it set going settled, so none outlives the test.
@@ -189,11 +196,14 @@ test('a tab whose pane the person closed is marked closed, and a press opens it 
   expect(await buttonText($, 'rigger-inbox')).toBe('[x] Inbox (closed)')
   expect(await menuText($, 'rigger-issues')).toBe('[x] Issues')
   w.opened.length = 0
+  w.invalidated.length = 0
   const ui = await $.ui.mount(MENU as never)
   await ui.press({ key: 'menu-tab-rigger-inbox' })
   await w.clock.settle()
   await ui.unmount()
   expect(w.opened).toEqual(['rigger-inbox'])
+  // The menu's answer is cached, so the reopen redraws it (nothing it reads from the state changed).
+  expect(w.invalidated).toEqual(['ui.render'])
   expect(w.closed).toEqual([])
   expect(w.stored['tabs:/repo']).toBeUndefined()
   expect(await menuText($, 'rigger-inbox')).toBe('[x] Inbox')
@@ -203,6 +213,25 @@ test('a tab whose pane the person closed is marked closed, and a press opens it 
   expect(w.opened).toEqual(['rigger-inbox', 'rigger-inbox'])
   expect(w.stored['tabs:/repo']).toBeUndefined()
 })
+
+// The test engine cannot raise `ui.close` with the person's origin, so the hook is called directly.
+for (const [kind, redraws] of [
+  ['person', true],
+  ['plugin', false],
+  ['unload', false],
+] as const) {
+  test(`a ${kind} close passes on and ${redraws ? 'redraws the rows' : 'redraws nothing'}`, async () => {
+    const calls: string[] = []
+    const $ = { ui: { invalidate: (event: string) => void calls.push(`invalidate ${event}`) } }
+    const next = async () => {
+      calls.push('next')
+      return 'closed'
+    }
+    const result = await redrawOnPersonClose($ as never, { origin: { kind } }, next)
+    expect(result).toBe('closed')
+    expect(calls).toEqual(redraws ? ['next', 'invalidate ui.render'] : ['next'])
+  })
+}
 
 // Without the engine's pane list every tab counts as open: the marks and presses work as before.
 test('when the open panes cannot be listed, a press switches the tab as before', async ($, on) => {
