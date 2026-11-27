@@ -141,7 +141,9 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   a select with `all` and no default, or with a default that names no option, starts on it. A
   `command` source with `all` takes the value as a positional item of its own, never as a flag's
   value (`--project {select:project}` would leave `--project` behind, and `--project={select:project}`
-  is never filled): `all` drops that item, and the program reads a missing argument as all. The choice is kept for the session (in state, not the store) and a
+  is never filled): `all` drops that item, and the program reads a missing argument as all. A tab
+  whose `{select:<id>}` item for a select with `all` comes right after an item starting with `-` is
+  skipped. The choice is kept for the session (in state, not the store) and a
   new pick reads the rows again. Options that fail to load, or none, show the failure line and the
   rows are not read.
 - `{select:<id>}`: an `args` value (top level) or an argv item that is exactly this gets the chosen
