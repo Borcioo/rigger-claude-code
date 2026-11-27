@@ -263,7 +263,8 @@ def turn_end(event, state, guard):
             return None, None
         coordinator = frontmatter(state).get("coordinator", "").strip().lower() == "true"
         return turn_guard.check(event, state, coordinator, os.environ, guard.config_root())
-    except Exception:
+    except Exception as error:   # fails open; the line lands in the debug log
+        sys.stderr.write("turn-guard: check failed, the turn is not held: %s\n" % " ".join(repr(error).split()))
         return None, None
 
 

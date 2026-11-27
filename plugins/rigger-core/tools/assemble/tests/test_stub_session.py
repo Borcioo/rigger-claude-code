@@ -751,7 +751,7 @@ class ShellwiseSessionTests(unittest.TestCase):
 
 @unittest.skipIf(os.environ.get("HARNESS_NO_CLAUDE") == "1", "HARNESS_NO_CLAUDE=1: claude -p not run")
 class TurnGuardSessionTests(unittest.TestCase):
-    """Task 5's turn guard (D89) in a real session: the stub starts `<python> run_tests.py` in the background and
+    """Task 5's turn guard (D89) in a real session: the stub starts `<python> long_job.py` (any command) in the background and
     then ends its turn while the script sleeps."""
     SLEEP = 9
 
@@ -763,11 +763,11 @@ class TurnGuardSessionTests(unittest.TestCase):
         (self.tmp / "CLAUDE.md").write_text(ANCESTOR_SENTINEL + "\n", encoding="utf-8")
         self.cwd = self.tmp / "cwd"
         self.cwd.mkdir()
-        (self.cwd / "run_tests.py").write_text("import time\ntime.sleep(%d)\nprint('tests done')\n" % self.SLEEP,
+        (self.cwd / "long_job.py").write_text("import time\ntime.sleep(%d)\nprint('tests done')\n" % self.SLEEP,
                                                encoding="utf-8")
 
     def test_a_background_gate_holds_the_turn(self):
-        use = bash_use("toolu_gate", '"%s" run_tests.py' % Path(sys.executable).as_posix(), run_in_background=True)
+        use = bash_use("toolu_gate", '"%s" long_job.py' % Path(sys.executable).as_posix(), run_in_background=True)
         # `claude -p` reports sdk-cli, which the guard never holds (its control); the desktop app's entrypoint is held.
         for entrypoint, held in (("claude-desktop", True), (None, False)):
             with self.subTest(entrypoint=entrypoint):
@@ -776,7 +776,7 @@ class TurnGuardSessionTests(unittest.TestCase):
                 requests, debug = scripted_session(self, self.tmp, label, ("rigger-core",), [use], self.cwd, extra)
                 self.assertIsNotNone(tool_result(requests, "toolu_gate"), "the background run did not start")
                 said = [line for body in requests for text in strings(body.get("messages")) for line in text.splitlines()
-                        if line.startswith("turn-guard: background run ") and line.endswith("Block 1 of 3.")]
+                        if line.startswith("turn-guard: background task ") and line.endswith("Block 1 of 2.")]
                 self.assertEqual(bool(said), held, "a turn-guard block reached the next request")
                 stops = plugin_hook_lines(debug, "Stop", "rigger-core")
                 self.assertTrue([line for line in stops if "side_session_guard.py" in line], "Stop handler runs")

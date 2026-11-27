@@ -5,6 +5,13 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Changed
+
+- rigger-core's turn guard holds the end of a turn while any background shell task or background subagent of the
+  session still runs, not only a gate or test command, and its block tells the session to wait inside the turn
+  and end it only with a result or a question. A `Monitor` and a task stopped with TaskStop are not held. At most
+  2 blocks per shell task (was 3), 1 per subagent and 2 per turn.
+
 ## [0.8.2] - 2026-11-26
 
 ### Added
