@@ -15,6 +15,7 @@ export const TABS: Tab[] = [
   { id: 'rigger-issues', title: 'Issues' },
   { id: 'rigger-plan', title: 'Plan' },
   { id: 'rigger-envs', title: 'Environments' },
+  { id: 'rigger-inbox', title: 'Inbox' },
 ]
 
 const RUN_MS = 5_000

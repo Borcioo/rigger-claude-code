@@ -1,7 +1,9 @@
 import { atom, read } from 'claude-code'
 import type { EngineInterface, On, PromptOrigin, ToolCallResult } from 'claude-code'
 
+import type { Tabs } from '../../types'
 import type { Entry, Identity, OpenFailure } from '../../types/inbox'
+import { TABS } from '../tabs'
 import { ICONS, ageText, bandText, entryFromWrapUp, entryOf } from './entries'
 import { EMPTY_VIEW, POLL_MS, closeEntry, openSession, refresh } from './reader'
 import { STATUS_PREFIX, WRAP_TOOLS, closeAt, identityOf, nextTurn, reasonOf, writeEntry } from './writer'
@@ -13,6 +15,10 @@ const openFailures = atom(
   {} as Record<string, OpenFailure>,
   { shape: 'inbox-open-failures-1' },
 )
+// The same reference as in tabs.ts: the band shows only while the Inbox tab is on for the project.
+const tabs = atom({ plugin: 'rigger-panel', key: 'tabs' } as const, { on: TABS.map(tab => tab.id) } as Tabs, {
+  shape: 'tabs-1',
+})
 
 // A matcher every value of a string field passes. A plugin holds one hook per event without a
 // matcher, and register.tsx holds that one for the events both files hook, so each inbox hook names
@@ -185,6 +191,7 @@ export function registerInbox(on: On) {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (!(await read($, tabs)).on.includes(PANE)) return next(e)
     const { items, checkedAt } = await read($, view)
     const text = bandText(items, checkedAt)
     if (text === undefined) return next(e)

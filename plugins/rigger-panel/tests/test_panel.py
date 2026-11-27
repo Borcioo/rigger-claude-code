@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
-SOURCES = sorted(path for suffix in ("*.ts", "*.tsx") for path in (PLUGIN / "hooks").glob(suffix))
+HOOKS = PLUGIN / "hooks"
+SOURCES = sorted(path for suffix in ("*.ts", "*.tsx") for path in HOOKS.rglob(suffix))
 MODULE = [path for path in SOURCES if not path.name.endswith((".test.ts", ".test.tsx"))]
 # `N pass` / `N fail` are the last totals `claude plugin test` prints.
 PASS_RE = re.compile(r"^\s*(\d+) pass\s*$", re.M)
@@ -58,11 +59,53 @@ MANIFEST_CALLS = {
 }
 
 
+# The inbox (README "Inbox") asks the desktop app who this session is, and hands a session link to the
+# system opener: these calls are allowed in these files, at exactly these spellings, once each. The
+# server, the tools and the opener argv they use are pinned by INBOX_PINS, so a changed constant or a new
+# tool is still a hit.
+INBOX_CALLS = {
+    "inbox/writer.ts": ("$.mcp.call(APP, tool, args)",),
+    "inbox/reader.ts": (
+        "$.process.run(['uname', '-s'], { timeoutMs: 5000 })",
+        "$.process.run(openCommand(await sysnameOf($), entry.link), { timeoutMs: 10_000 })",
+    ),
+}
+APP_TOOLS = {"get_session"}
+OPENER_RETURNS = {"return ['open', link]", "return ['cmd', '/c', 'start', '', link]", "return ['xdg-open', link]"}
+FILE_CALLS = {**MANIFEST_CALLS, **INBOX_CALLS}
+
+
+def inbox_pin_hits(name, text):
+    """The rules behind INBOX_CALLS: writer.ts calls only ccd_session_mgmt and only its APP_TOOLS, each by a
+    literal name; reader.ts's openCommand returns only the OPENER_RETURNS argv."""
+    hits = set()
+    text = text.replace("\r\n", "\n")
+    if name == "inbox/writer.ts":
+        if "const APP = 'ccd_session_mgmt'\n" not in text:
+            hits.add("app server")
+        calls = re.findall(r"\bcallApp\(", text)
+        tools = re.findall(r"\bcallApp\(\s*\$\s*,\s*'([A-Za-z0-9_]+)'", text)
+        defined = len(re.findall(r"\bfunction callApp\(", text))
+        if len(tools) != len(calls) - defined or not set(tools) <= APP_TOOLS:
+            hits.add("app tool")
+    if name == "inbox/reader.ts":
+        body = re.search(r"export function openCommand\([^)]*\)[^{]*\{(.*?)\n\}", text, re.S)
+        returns = re.findall(r"return\b[^\n]*", body.group(1)) if body else []
+        if not returns or any(line.strip() not in OPENER_RETURNS for line in returns):
+            hits.add("opener argv")
+    return hits
+
+
 def module_hits(name, text):
-    """write_hits for one module file, with that file's manifest-declared calls taken out."""
-    for spelling in MANIFEST_CALLS.get(name, ()):
+    """write_hits for one module file (its path under hooks/), with that file's allowed calls taken out."""
+    pins = inbox_pin_hits(name, text)
+    for spelling in FILE_CALLS.get(name, ()):
         text = text.replace(spelling, "", 1)
-    return write_hits(text)
+    return sorted(set(write_hits(text)) | pins)
+
+
+def rel(path):
+    return path.relative_to(HOOKS).as_posix()
 
 PLANTED = {
     "gh issue write": [
@@ -135,19 +178,28 @@ def write_hits(text):
 
 class PanelTests(unittest.TestCase):
     def test_source_files_found(self):
-        names = [path.name for path in SOURCES]
-        for name in ("register.tsx", "config-dir.ts", "issue-flow.ts", "issues.ts"):
+        names = [rel(path) for path in SOURCES]
+        for name in (
+            "register.tsx",
+            "config-dir.ts",
+            "issue-flow.ts",
+            "issues.ts",
+            "inbox/entries.ts",
+            "inbox/writer.ts",
+            "inbox/reader.ts",
+            "inbox/view.tsx",
+        ):
             self.assertIn(name, names)
 
     def test_no_github_write_in_the_module(self):
         for path in MODULE:
-            with self.subTest(file=path.name):
-                self.assertEqual(module_hits(path.name, path.read_text(encoding="utf-8")), [], path.name)
+            with self.subTest(file=rel(path)):
+                self.assertEqual(module_hits(rel(path), path.read_text(encoding="utf-8")), [], rel(path))
 
     def test_manifest_calls_appear_once_each_where_allowed(self):
         # The control for the allowance: each allowed spelling is really there, once.
-        for name, spellings in MANIFEST_CALLS.items():
-            text = (PLUGIN / "hooks" / name).read_text(encoding="utf-8")
+        for name, spellings in FILE_CALLS.items():
+            text = (HOOKS / name).read_text(encoding="utf-8")
             for spelling in spellings:
                 with self.subTest(file=name, spelling=spelling):
                     self.assertEqual(text.count(spelling), 1)
@@ -163,6 +215,33 @@ class PanelTests(unittest.TestCase):
         ]
         for name, text, rule in planted:
             with self.subTest(file=name, planted=text):
+                self.assertIn(rule, module_hits(name, text))
+
+    def test_inbox_calls_are_allowed_only_as_written(self):
+        writer = (HOOKS / "inbox" / "writer.ts").read_text(encoding="utf-8")
+        reader = (HOOKS / "inbox" / "reader.ts").read_text(encoding="utf-8")
+        mcp = INBOX_CALLS["inbox/writer.ts"][0]
+        uname, opener = INBOX_CALLS["inbox/reader.ts"]
+        # The real files pass (the allowed controls), and each planted line beside them is still a hit.
+        self.assertEqual(module_hits("inbox/writer.ts", writer), [])
+        self.assertEqual(module_hits("inbox/reader.ts", reader), [])
+        planted = [
+            ("inbox/writer.ts", writer + "\nawait callApp($, 'send_message', { text: 'x' })", "app tool"),
+            ("inbox/writer.ts", writer + "\nawait callApp($, tool, {})", "app tool"),
+            ("inbox/writer.ts", writer.replace("const APP = 'ccd_session_mgmt'", "const APP = 'github'"), "app server"),
+            ("inbox/writer.ts", writer + "\n$.mcp.call('ccd_session_mgmt', 'send_message', {})", "MCP server"),
+            ("inbox/writer.ts", writer + "\n" + mcp, "MCP server"),
+            ("inbox/reader.ts", reader + "\nawait $.process.run(['curl', '-X', 'POST', 'x'])", "other program"),
+            ("inbox/reader.ts", reader + "\n" + opener, "variable program"),
+            ("inbox/reader.ts", reader + "\n" + uname, "other program"),
+            ("inbox/reader.ts", reader.replace("return ['xdg-open', link]", "return ['sh', '-c', link]"), "opener argv"),
+            ("inbox/view.tsx", "await $.process.run(['open', link])", "other program"),
+            ("inbox/view.tsx", mcp, "MCP server"),
+            ("register.tsx", opener, "variable program"),
+            ("register.tsx", uname, "other program"),
+        ]
+        for name, text, rule in planted:
+            with self.subTest(file=name, rule=rule, planted=text[-60:]):
                 self.assertIn(rule, module_hits(name, text))
 
     def test_the_module_does_read_issues_with_gh(self):
@@ -187,8 +266,8 @@ class PanelTests(unittest.TestCase):
 
     def test_no_machine_path_in_the_module(self):
         for path in MODULE:
-            with self.subTest(file=path.name):
-                self.assertIsNone(MACHINE_PATH_RE.search(path.read_text(encoding="utf-8")), path.name)
+            with self.subTest(file=rel(path)):
+                self.assertIsNone(MACHINE_PATH_RE.search(path.read_text(encoding="utf-8")), rel(path))
 
     def test_claude_plugin_test(self):
         if os.environ.get("HARNESS_NO_CLAUDE") == "1":
@@ -208,7 +287,7 @@ class PanelTests(unittest.TestCase):
         output = proc.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
         self.assertEqual(proc.returncode, 0, output)
         passed = PASS_RE.findall(output)
-        self.assertTrue(passed and int(passed[-1]) >= 130, output)
+        self.assertTrue(passed and int(passed[-1]) >= 267, output)
         self.assertEqual(FAIL_RE.findall(output)[-1:], ["0"], output)
 
 

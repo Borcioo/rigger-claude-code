@@ -16,7 +16,7 @@ const PANE = {
   },
 } as const
 
-const ALL = ['rigger-panel', 'rigger-issues', 'rigger-plan', 'rigger-envs']
+const ALL = ['rigger-panel', 'rigger-issues', 'rigger-plan', 'rigger-envs', 'rigger-inbox']
 const CONFIG = '/cfg'
 const SESSION = 'sess-1'
 const SNAPSHOT = `${CONFIG}/rigger/state/${SESSION}.resolved.json`
@@ -117,10 +117,10 @@ test('switching a tab off closes its pane and stores it, and the next session op
 
   w.opened.length = 0
   await start($, w)
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs'])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs', 'rigger-inbox'])
   w.opened.length = 0
   await $.command.run({ command: 'harness', args: '' } as never)
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs'])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs', 'rigger-inbox'])
 
   // Switched on again: it opens and the store says so.
   await press($, 'rigger-issues')
@@ -135,7 +135,7 @@ test('a worktree of the same repository shares the choice, and a folder outside 
     store: { 'tabs:/repo': { on: [], off: ['rigger-plan'] } },
   })
   await start($, w, '/repo/.claude/worktrees/feature')
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-envs'])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-envs', 'rigger-inbox'])
 
   w.cwd = '/scratch/notes'
   w.opened.length = 0
@@ -158,20 +158,20 @@ test('a Windows git dir keys by its parent with forward slashes', async ($, on) 
     store: { [WIN_KEY]: { on: [], off: ['rigger-issues'] } },
   })
   await start($, w, WIN_CWD)
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs'])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs', 'rigger-inbox'])
 })
 
 test('panel.tabs_off in the session snapshot keeps a tab closed, and the project switching it on wins', async ($, on) => {
   const w = world(on, { files: { [SNAPSHOT]: snapshotWith({ tabs_off: ['rigger-issues', 'rigger-plan'] }) } })
   await start($, w)
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-envs'])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-envs', 'rigger-inbox'])
   expect(await buttonText($, 'rigger-plan')).toBe('[ ] Plan')
 
   await press($, 'rigger-plan')
   expect(w.stored['tabs:/repo']).toEqual({ on: ['rigger-plan'], off: [] })
   w.opened.length = 0
   await start($, w)
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs'])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-plan', 'rigger-envs', 'rigger-inbox'])
 })
 
 test('a missing, corrupt or wrongly shaped snapshot leaves every tab on', async ($, on) => {

@@ -160,8 +160,13 @@ test('/inbox registers with its description and opens the Inbox pane', async ($,
   expect(registered.filter(command => command.name === 'inbox')).toEqual([
     { name: 'inbox', description: 'Inbox: what every session waits on' },
   ])
-  await $.command.run({ command: 'inbox', args: '' } as never)
+  // The Inbox tab is on, so the start opens it once; /inbox opens it once more.
   expect(opened.filter(pane => pane.id === 'rigger-inbox')).toEqual([{ id: 'rigger-inbox', title: 'Inbox' }])
+  await $.command.run({ command: 'inbox', args: '' } as never)
+  expect(opened.filter(pane => pane.id === 'rigger-inbox')).toEqual([
+    { id: 'rigger-inbox', title: 'Inbox' },
+    { id: 'rigger-inbox', title: 'Inbox' },
+  ])
 })
 
 test('a file whose name is another session id than it holds is skipped', async ($, on) => {

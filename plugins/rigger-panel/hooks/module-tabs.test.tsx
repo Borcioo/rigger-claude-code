@@ -119,6 +119,8 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000 }, rateLimits: [] } }))
   on('tool.list', () => ({ value: [] }))
   on('mcp.call', (_, e) => {
+    // The inbox asks the desktop app for this session at start: refused here, and not the module's call.
+    if (e.server === 'ccd_session_mgmt' && e.tool === 'get_session') return { deny: 'no desktop app in this test' }
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     const answer = e.server === 'tracker' ? tools[e.tool] : undefined
     if (answer === undefined) return { deny: `no tool ${e.tool}` }
@@ -181,7 +183,7 @@ const files = (tabs: unknown, extra: Record<string, string> = {}) => ({
 test('a module tab opens with the others and draws each row with its key, detail and link', async ($, on) => {
   const w = world(on, files([ticketsTab()]), { 'list-tickets': text(TICKETS_TEXT) })
   await start($, w)
-  expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-plan', 'rigger-envs', TICKETS])
+  expect(w.opened).toEqual(['rigger-panel', 'rigger-issues', 'rigger-plan', 'rigger-envs', 'rigger-inbox', TICKETS])
   const { ui, texts, links } = await drawTab($, w)
   for (const line of ['TRK-22', 'QA and rollout', 'TRK-23', 'Post-release checks']) expect(texts).toContain(line)
   expect(texts.filter(line => line === 'Accepted')).toHaveLength(2)
@@ -429,7 +431,7 @@ test('no snapshot, an unreadable manifest, no panel key or panels.tabs not a lis
     const { texts } = await riggerLines($)
     expect({ what, opened: w.opened, lines: texts.filter(line => line.startsWith('module ')) }).toEqual({
       what,
-      opened: ['rigger-panel', 'rigger-issues', 'rigger-plan', 'rigger-envs'],
+      opened: ['rigger-panel', 'rigger-issues', 'rigger-plan', 'rigger-envs', 'rigger-inbox'],
       lines,
     })
   }

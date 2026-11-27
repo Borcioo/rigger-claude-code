@@ -1,7 +1,7 @@
 # rigger-panel
 
 Opt-in. A function-hook plugin for Claude Code (`hooks/register.tsx`, no shell hooks, no rules) that
-adds four panes beside the chat, plus any tab a Rigger module declares ([Module tabs](#module-tabs)).
+adds five panes beside the chat, plus any tab a Rigger module declares ([Module tabs](#module-tabs)).
 They open at session start; `/harness` opens them again and reads everything once more. Each pane but
 Rigger is a tab that can be switched off per project ([Tabs](#tabs)).
 
@@ -11,6 +11,7 @@ Rigger is a tab that can be switched off per project ([Tabs](#tabs)).
 | Issues | your open GitHub issues in this repository, each with a `Start` button |
 | Plan | the session's task list, how old it is, and when it may be out of date |
 | Environments | the project's `.claude/environments.json` as cards |
+| Inbox | what the other sessions on this machine wait on: a question, a result to check, an error or an approval |
 
 All text is English. Nothing in the plugin writes to GitHub; a module tab runs only what its own
 module's manifest declares.
@@ -35,7 +36,7 @@ The pane redraws every 30 seconds and after each turn. On a graphical surface th
 
 ## Tabs
 
-The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments), `[x]` when
+The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments, Inbox), `[x]` when
 it is on, `[ ]` when it is off. A press switches the tab for this project and opens or closes its pane
 at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
 
@@ -152,7 +153,11 @@ Each row shows `#N`, the title (cut at 60 characters) and the state.
   any program whose argument vector is not written out, any MCP tool named like a write and any MCP
   call to a server other than the session app, and each pattern is proven against planted lines. The
   one exception is the module tab's source: one MCP call and one program start in
-  `hooks/module-tabs.ts`, at one spelling each, allowed there and nowhere else. The tests also check
+  `hooks/module-tabs.ts`, at one spelling each, allowed there and nowhere else. The [inbox](#inbox) has
+  the only others: its `get_session` call to the desktop app's `ccd_session_mgmt` server (in
+  `hooks/inbox/writer.ts`; no other tool of that server) and the system opener (`open`,
+  `cmd /c start`, `xdg-open`) with `uname -s` (in `hooks/inbox/reader.ts`), each at one spelling,
+  with the server, the tool and the opener's argument vectors pinned. The tests also check
   every command the plugin starts against that list.
 - **Empty states** (one line each, a `Refresh` button, no error):
 
@@ -279,12 +284,55 @@ another folder than the one last read (a session moved into a worktree); there i
   after a Write or Edit of the file. Both read the cases in `tests/env-cases.ts`, so a change to
   `parseEnvironments` changes that file and `env_check.py` in the same commit.
 
+## Inbox
+
+The pane `rigger-inbox` (`hooks/inbox/`) lists what the other sessions on this machine wait on, so a
+session that stopped for you is not missed among many. Each session writes one entry for itself; every
+session reads the others'. `/inbox` opens the pane.
+
+- **What writes an entry** (main loop only, never a subagent):
+
+  | Kind | When |
+  |---|---|
+  | ❓ question | `wrap_up` (the built-in `WrapUp` or the desktop app's `mcp__ccd_turn__wrap_up`) with a question, or one marked blocked |
+  | ✅ result to check | `wrap_up` without either |
+  | ⏳ approval | a tool call that asks for permission: `waiting for approval: <tool>` |
+  | ⚠️ error | a turn that ends without `wrap_up` because it was aborted, failed or refused |
+
+  The built-in `WrapUp` result's own next-step box is used when there is one (the engine has masked
+  keys and tokens in it), else the call's input. Every text is cleaned (control and format characters
+  become spaces) and capped before it is written, and again when it is read.
+- **Where:** `<config dir>/rigger-panel/inbox/<session id>.json`, one file per session, replaced by its
+  next entry. `$.fs` cannot delete, so an entry is closed by `<session id>.closed`, which holds a time:
+  every entry written before it is hidden, the session's next entry shows again.
+- **What closes it:** a prompt you send in that session (typed, from the desktop app, from a phone or
+  a click on the app's own buttons; a message from another session, a task notification, a schedule
+  or a plugin does not), the next tool call after an approval entry or a turn that ends after it, and
+  `Close` on the item.
+- **What is shown:** the other sessions' open entries younger than 7 days, oldest first, each with
+  its title, folder, age, text, question, `Open` and `Close`; `Nothing waiting.` when there are none.
+  The folder is read again every 5 seconds. While anything waits, a band above the prompt says
+  `📥 N waiting · oldest: <title>, <age>` with an `Inbox` button.
+- **`Open`:** the desktop app draws a non-https link as plain text, so the entry's session link
+  (`claude://…`) is handed to the system opener: `open` on macOS, `cmd /c start "" <link>` on Windows,
+  `xdg-open` elsewhere (the system from `$.session.machine()`, else `OS`, else `uname -s`). The entry
+  file is written by another process and `cmd` re-parses its command line, so only the exact link of
+  the entry's own session (`claude://claude.ai/epitaxy/<session id>`) is opened; anything else shows
+  `not opened: the link is not a session link` and runs nothing.
+- **Without the desktop app:** the session's identity comes from the app (`get_session` on
+  `ccd_session_mgmt`, bounded at 5 seconds, asked again at most once per turn). Without it nothing is
+  written and nothing is said. With it, a write that fails shows
+  `rigger-panel inbox: entry not saved (<reason>)` on the status line.
+- **Tab off:** with the Inbox tab off for the project ([Tabs](#tabs)) the pane does not open at start
+  and the band is hidden. The session still writes its own entry, so the other sessions' inboxes keep
+  it, and `/inbox` still opens the pane.
+
 ## Tests
 
-`claude plugin test plugins/rigger-panel` runs `hooks/*.test.tsx`. `gh` and `git` are a stand-in
+`claude plugin test plugins/rigger-panel` runs every `*.test.ts` and `*.test.tsx` under `hooks/`. `gh` and `git` are a stand-in
 beneath the plugin that recognises each command by its whole argument vector, and the session app's
 `mcp.call` is a test hook, so no test reaches GitHub or starts a session. `tests/test_panel.py` runs
-that under the repository's test runner (`scripts/run_tests.py`; at least 130 passing), checks the
+that under the repository's test runner (`scripts/run_tests.py`; at least 267 passing), checks the
 source for machine paths, GitHub and git writes and programs other than `gh` and `git` (the module
-tab's source excepted, at its one spelling), and skips the
+tab's source and the inbox's calls excepted, each at its one spelling) in every file under `hooks/`, and skips the
 `claude` run with `--no-claude`.
