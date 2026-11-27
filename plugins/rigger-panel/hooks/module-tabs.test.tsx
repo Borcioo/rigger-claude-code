@@ -229,6 +229,16 @@ const SILENT: [string, Record<string, unknown>, string][] = [
   ['a command with only stderr', { source: { command: ['./bin/rows.sh'] } }, 'module tracker tab tickets: rows.sh: no token found'],
 ]
 
+test('an MCP result with only structuredContent is read as its indented JSON', async ($, on) => {
+  const tab = ticketsTab({ rows: { pattern: '^\\s*"title": "(?<title>[^"]+)"' } })
+  const answer = { content: [], isError: false, structuredContent: { items: [{ title: 'Structured row' }] } }
+  const w = world(on, files([tab]), { 'list-tickets': answer })
+  await start($, w)
+  const { ui, texts } = await drawTab($, w)
+  expect({ row: texts.includes('Structured row'), failed: texts.some(line => line.startsWith('module ')) }).toEqual({ row: true, failed: false })
+  await ui.unmount()
+})
+
 for (const [what, extra, line] of SILENT) {
   test(`${what} is the failure line, not the empty state`, async ($, on) => {
     const w = world(on, files([ticketsTab(extra)]), { 'list-tickets': { content: [{ type: 'image' }], isError: false } })
@@ -423,9 +433,8 @@ test('a read that answers right after the pick is written never takes the pick b
   let pickWritten = false
   let staleWrote = false
   // A test's hook on the pane state: right after the pick lands, the old read answers.
-  on('state.set', async (_, e, next) => {
+  on('state.set', { plugin: 'rigger-panel', key: 'modulePanes' }, async (_, e, next) => {
     const done = await next(e)
-    if (e.key !== 'modulePanes') return done
     type Held = { rows: { title: string }[]; selects: Record<string, { value: string }> }
     const pane = (e.value as { value: Record<string, Held | undefined> }).value[TICKETS]
     if (!pickWritten && pane?.selects.project?.value === '61') {
