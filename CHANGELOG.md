@@ -5,6 +5,11 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+### Added
+
+- rigger-panel: a module tab's select `default` also matches an option's `key` group, and an optional `all` label
+  adds a first option that leaves the select's argument out of the call.
+
 ## [0.9.0] - 2026-11-27
 
 ### Added
