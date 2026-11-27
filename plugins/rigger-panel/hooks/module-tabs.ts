@@ -153,6 +153,16 @@ const tabOf = (module: string, root: string, value: unknown, seen: Set<string>):
   const select = ((value.select ?? []) as unknown[]).map((item, index) => selectOf(item, index, ids))
   const unknown = placeholders(source).find(id => !ids.has(id))
   if (unknown !== undefined) return refuse(`source names {select:${unknown}}, which no select declares`)
+  // `all` drops the value's item, so a flag right before it would read the next item as its value.
+  if ('command' in source) {
+    const all = new Set(select.filter(rule => rule.all !== undefined).map(rule => rule.id))
+    source.command.forEach((item, index) => {
+      const id = item.match(PLACEHOLDER)?.[1]
+      const flag = source.command[index - 1]
+      if (id !== undefined && all.has(id) && flag?.startsWith('-'))
+        refuse(`source.command item {select:${id}} follows the flag ${flag}; a select with all takes a positional item`)
+    })
+  }
   return { pane, module, id: value.id, title: value.title, root, source, rows, select }
 }
 

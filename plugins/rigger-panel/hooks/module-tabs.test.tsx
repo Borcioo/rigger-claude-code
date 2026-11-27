@@ -455,8 +455,8 @@ test('picking the all option reads the rows again without the argument', async (
   expect(w.calls.filter(item => item.tool === 'list-tickets').map(item => item.args)).toEqual([{ project_id: 61 }, {}])
 })
 
-test('the all option drops a command argv item that is only the placeholder', async ($, on) => {
-  const tab = ticketsTab({ source: { command: ['./bin/rows.sh', '--project', '{select:project}'] }, select: [{ ...STRING_SELECT, all: 'All' }] })
+test('the all option drops a positional command argv item that is only the placeholder', async ($, on) => {
+  const tab = ticketsTab({ source: { command: ['./bin/rows.sh', '{select:project}', '--limit', '5'] }, select: [{ ...STRING_SELECT, all: 'All' }] })
   const w = world(on, files([tab]), { 'list-projects': text('- demo Demo') })
   w.programs[`${ROOT}/bin/rows.sh`] = { exitCode: 0, stdout: TICKETS_TEXT }
   await start($, w)
@@ -467,9 +467,23 @@ test('the all option drops a command argv item that is only the placeholder', as
   await w.clock.settle()
   await ui.unmount()
   expect(w.runs.map(run => run.argv)).toEqual([
-    [`${ROOT}/bin/rows.sh`, '--project'],
-    [`${ROOT}/bin/rows.sh`, '--project', 'demo'],
+    [`${ROOT}/bin/rows.sh`, '--limit', '5'],
+    [`${ROOT}/bin/rows.sh`, 'demo', '--limit', '5'],
   ])
+})
+
+// Dropping the value would leave its flag to read the next item (`--project --limit 5`).
+test('a command source where an all select fills the item right after a flag is skipped with its line', async ($, on) => {
+  const argv = ['./bin/rows.sh', '--project', '{select:project}', '--limit', '5']
+  const refused = ticketsTab({ source: { command: argv }, select: [{ ...STRING_SELECT, all: 'All' }] })
+  const kept = ticketsTab({ id: 'flagged', source: { command: argv }, select: [STRING_SELECT] })
+  const w = world(on, files([refused, kept]), { 'list-projects': text('- demo Demo') })
+  await start($, w)
+  const { texts } = await riggerLines($)
+  expect(texts.filter(line => line.includes(': skipped: '))).toEqual([
+    'module tracker tab tickets: skipped: source.command item {select:project} follows the flag --project; a select with all takes a positional item',
+  ])
+  expect(w.opened.filter(id => id.startsWith('m-'))).toEqual(['m-tracker-flagged'])
 })
 
 test('picking another option reads the rows again with its value', async ($, on) => {
