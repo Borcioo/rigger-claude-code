@@ -630,6 +630,10 @@ test('each invalid tab entry is skipped with its line in the Rigger pane, and th
   expect(skipped.map(line => line.replace(/(does not compile).*/u, '$1'))).toEqual(lines)
   expect(buttons).toContain('[x] Tickets')
   expect(w.opened.filter(id => id.startsWith('m-'))).toEqual([TICKETS])
+  // The right-click menu lists the module tab beside the built-in ones.
+  const menu = await $.ui.mount({ plugin: 'rigger-panel', surface: 'desktop', component: 'ContextMenu', props: {} } as never)
+  expect((await menu.find({ key: `menu-tab-${TICKETS}` }))?.text).toBe('[x] Tickets')
+  await menu.unmount()
 })
 
 test('no snapshot, an unreadable manifest, no panel key or panels.tabs not a list add no tab and break nothing', async ($, on) => {

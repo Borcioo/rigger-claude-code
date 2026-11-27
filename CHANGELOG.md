@@ -7,8 +7,8 @@ format. Releases are tagged `v<version>`.
 
 ### Changed
 
-- rigger-panel: an Inbox entry also closes when its session receives another session's message, and an entry
-  of a session archived in the desktop app is hidden.
+- rigger-panel: an Inbox entry of a side session also closes when it receives another session's message, and an
+  entry of a session archived in the desktop app is hidden.
 
 ### Added
 
