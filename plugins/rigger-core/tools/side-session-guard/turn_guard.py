@@ -36,6 +36,7 @@ SUBAGENT_CAP = 1        # blocks per subagent: nothing in the turn can wait on o
 TURN_CAP = 2            # blocks per turn (prompt_id), across its tasks
 POLL_BOUND = 4.0        # seconds one Stop waits for a shell task to end
 POLL_STEP = 0.25
+WAIT_STEPS = 120        # 5 s steps of the wait the block hands the model: 10 min
 DESCRIPTION_MAX = 60
 TAIL = 256              # bytes read from the end of an output file
 TRAILER = re.compile(r"\[(?:exited with code -?\d+|killed)\]")
@@ -148,11 +149,12 @@ def cap(kind):
     return SUBAGENT_CAP if kind == "subagent" else CAP
 
 
-def wait_command(path):
+def wait_command(path, steps=WAIT_STEPS):
     """A bounded foreground Bash command that returns when the output file gains its trailer: forward slashes
-    and double quotes, so Git Bash keeps a Windows path; a 5 s step, since the app refuses a long sleep."""
-    return ("timeout 600 sh -c 'until grep -qE \"^\\[(exited with code|killed)\" \"%s\"; do sleep 5; done'"
-            % path.replace("\\", "/"))
+    and double quotes, so Git Bash keeps a Windows path; 5 s steps, since the app refuses a long sleep; counted
+    in plain sh, since macOS has no `timeout`."""
+    return ("sh -c 'i=0; until grep -qE \"^\\[(exited with code|killed)\" \"%s\" || [ \"$i\" -ge %d ]; "
+            "do sleep 5; i=$((i+1)); done'" % (path.replace("\\", "/"), steps))
 
 
 def block_reason(task_id, kind, description, path, count):

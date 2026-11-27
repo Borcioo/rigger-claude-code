@@ -389,31 +389,38 @@ class CapTests(Base):
     def test_shell_reason_names_its_output_file_and_how_to_end_the_turn(self):
         path = self.output().replace("\\", "/")
         reason, _ = self.check([task()])
-        command = ("timeout 600 sh -c 'until grep -qE \"^\\[(exited with code|killed)\" \"%s\"; do sleep 5; done'"
-                   % path)
+        command = ("sh -c 'i=0; until grep -qE \"^\\[(exited with code|killed)\" \"%s\" || [ \"$i\" -ge 120 ]; "
+                   "do sleep 5; i=$((i+1)); done'" % path)
         self.assertEqual(reason, 'turn-guard: background task b58ki4brf ("gate run") is still running. Wait with one '
                          'bounded foreground Bash call: %s; then continue, and end the turn only with a result or a '
                          'question. If it is meant to outlive the turn (a server, a watcher), say so and end the turn. '
                          'Block 1 of 2.' % command)
-        # A command the app's Bash tool runs: no double backslash, no sleep over 5 s.
+        # A command the app's Bash tool runs on every platform: no double backslash, no sleep over 5 s, and no
+        # `timeout` (macOS has none: the command would exit 127 at once).
         self.assertNotIn("\\\\", reason)
         self.assertEqual(re.findall(r"\bsleep (\d+)", reason), ["5"])
+        self.assertNotIn("timeout", reason)
 
-    def test_the_wait_command_returns_on_each_trailer(self):
+    def run_wait(self, path, steps):
+        """Seconds the wait command took, run through sh from a script file with no pipes (3 steps: 15 s bound)."""
         sh = shutil.which("sh") or os.path.join(os.environ.get("ProgramFiles", ""), "Git", "usr", "bin", "sh.exe")
         self.assertTrue(os.path.isfile(sh), "sh not found")
+        script = self.write(os.path.join(self.root, "wait.sh"), turn_guard.wait_command(path, steps) + "\n")
+        started = time.monotonic()
+        subprocess.run([sh, script], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=60)
+        return time.monotonic() - started
+
+    def test_the_wait_command_returns_on_each_trailer(self):
         for trailer in ("partial\n\n[exited with code 3]\n", "\n[killed]\n"):
             with self.subTest(trailer=trailer):
-                path = self.output(text=trailer)
-                command = turn_guard.wait_command(path)
-                self.assertTrue(command.startswith("timeout 600 "), command)
-                # A 15 s bound and no pipes: a wait that never ends exits 124 instead of hanging the suite.
-                script = self.write(os.path.join(self.root, "wait.sh"), "timeout 15 " + command[len("timeout 600 "):] + "\n")
-                started = time.monotonic()
-                returncode = subprocess.run([sh, script], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.DEVNULL, timeout=60).returncode
-                self.assertEqual(returncode, 0, "the wait did not see the trailer")
-                self.assertLess(time.monotonic() - started, 10)
+                self.assertLess(self.run_wait(self.output(text=trailer), 3), 4, "the wait did not see the trailer")
+
+    def test_the_wait_command_ends_at_its_bound(self):
+        self.assertEqual(turn_guard.WAIT_STEPS, 120)   # 120 steps of 5 s: 10 min
+        elapsed = self.run_wait(self.output(text="still going\n"), 1)
+        self.assertGreaterEqual(elapsed, 4.5)
+        self.assertLess(elapsed, 15)
 
 
 class LogTests(Base):
