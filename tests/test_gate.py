@@ -1197,10 +1197,28 @@ class SnapshotTests(TreeRepoCase):
         self.assertEqual(len(self.worktrees()), 1)
         self.assertEqual(list(self.temp.iterdir()), [])
 
+    def stale_pass(self):
+        (self.out / "status.txt").write_text("TREE %s\n# gate passed, 1.0 s, tree %s\n" % (FAKE_TREE, FAKE_TREE))
+
+    def last_status_line(self):
+        return (self.out / "status.txt").read_text().splitlines()[-1]
+
     def test_a_ref_git_cannot_resolve_fails_before_any_worktree(self):
+        self.stale_pass()
         result = self.run_snapshot(ref="no-such-ref")
         self.assertEqual(result.get("code"), 1, result)
         self.assertIn("snapshot: cannot resolve no-such-ref", result["printed"])
+        self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
+        self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
+
+    def test_a_commit_without_a_gate_fails_and_leaves_no_worktree(self):
+        self.stale_pass()
+        git(self.repo, "rm", "-q", "scripts/gate.py")
+        git(self.repo, "commit", "-q", "-m", "no gate")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("has no scripts/gate.py", result["printed"])
+        self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
         self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
 
     def test_every_gate_option_reaches_the_snapshot(self):

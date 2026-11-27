@@ -95,7 +95,7 @@ one full gate runs on the machine at a time.
    two tests that carry the task's main risk. A side session runs the full gate on its branch
    before it reports; you run the full gate only once per merge point, never per branch: where
    the project has a gate lock, your run blocks every building session. Run it on a detached
-   snapshot of the pushed commit, never in a side session's worktree, where its edits change the
+   snapshot of the pushed commit (fetch first), never in a side session's worktree, where its edits change the
    tree mid-run: the project's snapshot option where it has one (`--snapshot <ref>`), else
    `git worktree add --detach <temp folder> <sha>`, removed afterwards, on a failure too. Answer questions; after a
    second failure on one step split the task or move it to a stronger model. A follow-up of a few

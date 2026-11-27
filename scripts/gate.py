@@ -55,7 +55,8 @@ The status line after TREE is the mode: `mode: full`, or for --changed-modules
               other options (paths made absolute, --out defaulting to this checkout's gate folder). Prints
               `# snapshot <sha> tree <tree> at <path>` first and, after the run, `# snapshot removed: …`
               (or `# snapshot not removed: …`); the worktree is removed on a failure or an interrupt too.
-              Exit: the snapshot gate's, or 1 when REF does not resolve. Not with --verify.
+              Exit: the snapshot gate's, or 1 when REF does not resolve or holds no scripts/gate.py
+              (the status then ends `# gate failed: snapshot`). Not with --verify.
 """
 
 import argparse
@@ -526,12 +527,12 @@ def mode_note(args, root):
     return "mode: changed-modules base %s merge-base %s, modules %s" % (args.base, merge_base, ", ".join(names) or "none")
 
 
-def fail_early(out, line):
+def fail_early(out, line, leg="changed list"):
     """A gate that cannot start writes its status too, so a stale status in `out` is never read as this run's."""
     status = Status(out / STATUS)
     try:
         status.tell(line)
-        status.tell("# gate failed: changed list")
+        status.tell("# gate failed: %s" % leg)
     finally:
         status.handle.close()
     return 1
@@ -583,6 +584,13 @@ def remove_snapshot(root, holder, tree):
     return "# snapshot removed: %s" % tree
 
 
+def snapshot_refused(out, line):
+    """A snapshot run that cannot start still writes its status, like fail_early."""
+    print(line, flush=True)
+    out.mkdir(parents=True, exist_ok=True)
+    return fail_early(out, line, leg="snapshot")
+
+
 def snapshot_gate(ref, args, root, out):
     """Gate commit `ref` in a detached worktree of `root`, so an edit in any checkout cannot change the
     gated tree mid-run; the worktree is removed afterwards, on a failure or an interrupt too."""
@@ -591,16 +599,16 @@ def snapshot_gate(ref, args, root, out):
                        ref + "^{commit}")[0].strip()
         tree = git_list(root, "snapshot: cannot read the tree of %s" % ref, "rev-parse", sha + "^{tree}")[0].strip()
     except (TreeError, IndexError) as error:
-        print(str(error) if isinstance(error, TreeError) else "snapshot: cannot resolve %s" % ref, flush=True)
-        return 1
+        return snapshot_refused(out, str(error) if isinstance(error, TreeError) else "snapshot: cannot resolve %s" % ref)
     holder = tempfile.mkdtemp(prefix="rigger-gate-")
     snapshot = Path(holder) / sha[:12]
     try:
         try:
             git_list(root, "snapshot: cannot create the worktree", "worktree", "add", "--detach", str(snapshot), sha)
         except TreeError as error:
-            print(str(error), flush=True)
-            return 1
+            return snapshot_refused(out, str(error))
+        if not (snapshot / "scripts" / "gate.py").is_file():
+            return snapshot_refused(out, "snapshot: %s has no scripts/gate.py" % sha)
         print("# snapshot %s tree %s at %s" % (sha, tree, snapshot), flush=True)
         return run_snapshot_child(snapshot, snapshot_argv(args, out))
     finally:
