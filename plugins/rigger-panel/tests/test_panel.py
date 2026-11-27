@@ -23,8 +23,8 @@ SEP = r"""['"`\s,]+"""
 # The panel only reads. Each pattern is one way to write: a gh issue subcommand that changes an
 # issue, any gh pr command, gh api with a method or a field, a git command other than
 # `git remote get-url` and `git rev-parse --path-format=absolute --git-common-dir`, a program other
-# than gh and git, an MCP tool named like a GitHub write, or an MCP call to any server but the
-# session app's.
+# than gh and git, a program whose argv is not written out, an MCP tool named like a GitHub write, or
+# an MCP call to any server but the session app's (module tabs excepted: MANIFEST_CALLS).
 Q = r"""['"`]"""
 WRITE_RES = {
     "gh issue write": re.compile(
@@ -45,7 +45,24 @@ WRITE_RES = {
         r"(comment|issue|pull[-_ ]?request|label|milestone|review|branch|file|release|repository)s?\b"
     ),
     "MCP server": re.compile(r"""\bmcp\.call\(\s*(?!SESSIONS\b|['"`]ccd_session['"`])"""),
+    "variable program": re.compile(r"process\.run\((?!\s*\[)"),
 }
+
+# A module tab's source comes from that module's manifest (README "Module tabs"): the one MCP call and
+# the one program start that run it are allowed in this file, at exactly these spellings, once each.
+MANIFEST_CALLS = {
+    "module-tabs.ts": (
+        "$.mcp.call(source.mcp.server, source.mcp.tool, source.mcp.args)",
+        "$.process.run(argv, { ...(cwd ? { cwd } : {}), timeoutMs: CALL_MS })",
+    ),
+}
+
+
+def module_hits(name, text):
+    """write_hits for one module file, with that file's manifest-declared calls taken out."""
+    for spelling in MANIFEST_CALLS.get(name, ()):
+        text = text.replace(spelling, "", 1)
+    return write_hits(text)
 
 PLANTED = {
     "gh issue write": [
@@ -92,6 +109,7 @@ PLANTED = {
         "await $.process.run([program, 'x'])",
     ],
     "MCP server": ["await $.mcp.call('github', 'list_issues', {})", "await $.mcp.call(GITHUB, 'get_issue', {})"],
+    "variable program": ["await $.process.run(argv, { cwd })", "$.process.run(\n    command,\n  )"],
 }
 
 # Reads that must stay allowed: the scan is no use if it refuses the panel's own commands.
@@ -124,7 +142,28 @@ class PanelTests(unittest.TestCase):
     def test_no_github_write_in_the_module(self):
         for path in MODULE:
             with self.subTest(file=path.name):
-                self.assertEqual(write_hits(path.read_text(encoding="utf-8")), [], path.name)
+                self.assertEqual(module_hits(path.name, path.read_text(encoding="utf-8")), [], path.name)
+
+    def test_manifest_calls_appear_once_each_where_allowed(self):
+        # The control for the allowance: each allowed spelling is really there, once.
+        for name, spellings in MANIFEST_CALLS.items():
+            text = (PLUGIN / "hooks" / name).read_text(encoding="utf-8")
+            for spelling in spellings:
+                with self.subTest(file=name, spelling=spelling):
+                    self.assertEqual(text.count(spelling), 1)
+
+    def test_manifest_calls_are_allowed_nowhere_else(self):
+        mcp, run = MANIFEST_CALLS["module-tabs.ts"]
+        planted = [
+            ("register.tsx", mcp, "MCP server"),
+            ("register.tsx", run, "variable program"),
+            ("module-tabs.ts", mcp + "\n" + mcp, "MCP server"),
+            ("module-tabs.ts", "$.mcp.call(other.server, source.mcp.tool, source.mcp.args)", "MCP server"),
+            ("module-tabs.ts", "$.process.run(command, { timeoutMs: CALL_MS })", "variable program"),
+        ]
+        for name, text, rule in planted:
+            with self.subTest(file=name, planted=text):
+                self.assertIn(rule, module_hits(name, text))
 
     def test_the_module_does_read_issues_with_gh(self):
         # The control for the scan above: the read it allows is really there.

@@ -94,6 +94,57 @@ export type TabChoice = { on: string[]; off: string[] }
 // The switchable tabs that are on for the session's project (`project`: the store key's folder).
 export type Tabs = { project?: string; on: string[] }
 
+// A JSON value as a module manifest holds it.
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
+
+// Where a module tab's text comes from: an MCP tool, or a program (argv, `./` against the module root).
+export type TabSource = { mcp: { server: string; tool: string; args: { [key: string]: Json } } } | { command: string[] }
+
+// The regex sources a tab's text is cut into rows with (`rows` in the manifest).
+export type RowRules = { pattern: string; detail?: string; url?: string; empty?: string }
+
+// A picker over values one source lists; its value fills `{select:<id>}` in the tab's source.
+export type SelectRule = {
+  id: string
+  label: string
+  type: 'string' | 'number'
+  source: TabSource
+  pattern: string
+  // A dot path into the session folder's `.claude/environments.json`.
+  default?: string
+}
+
+// A tab a module declared in `panel.tabs` of its rigger-module.json, checked. `pane`: `m-<module>-<id>`.
+export type ModuleTab = {
+  pane: string
+  module: string
+  id: string
+  title: string
+  root: string
+  source: TabSource
+  rows: RowRules
+  select: SelectRule[]
+}
+
+// The module tabs of this session, a line for each entry that was skipped, and `recheck`: the snapshot
+// was missing at session start, so the first turn reads it again.
+export type ModuleTabs = { tabs: ModuleTab[]; skipped: string[]; recheck: boolean }
+
+export type ModuleRow = { title: string; key?: string; detail?: string; url?: string }
+
+export type ModuleOption = { value: string; label: string }
+
+// One module tab's rows. ready with `empty`: the empty state; failed: `note` is the failure line.
+export type ModulePane = {
+  phase: 'loading' | 'ready' | 'failed'
+  rows: ModuleRow[]
+  empty?: boolean
+  capped?: boolean
+  note?: string
+  // Keyed by select id: the options read and the value chosen.
+  selects: { [id: string]: { options: ModuleOption[]; value: string } }
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'rigger-panel': {
@@ -103,6 +154,8 @@ declare module 'claude-code' {
       planAge: Shaped<PlanAge>
       envs: Shaped<Envs>
       tabs: Shaped<Tabs>
+      moduleTabs: Shaped<ModuleTabs>
+      modulePanes: Shaped<{ [pane: string]: ModulePane }>
     }
   }
 }
