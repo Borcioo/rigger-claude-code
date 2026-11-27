@@ -1233,6 +1233,46 @@ class SnapshotTests(TreeRepoCase):
                          os.path.normcase(os.path.realpath(self.temp / ("gate-" + sha[:12]))))
         self.assertEqual(sorted(p.name for p in self.temp.iterdir()), ["lane"])
 
+    def stale_lane(self):
+        """Another lane's worktree whose folder is away for now: git reads it as stale while it is gone."""
+        lane = self.base / "lane"
+        git(self.repo, "worktree", "add", "-q", "--detach", str(lane), "HEAD")
+        away = self.base / "lane-away"
+        lane.rename(away)
+        self.addCleanup(lambda: away.exists() and away.rename(lane))
+        return lane, away
+
+    def registered(self):
+        return [os.path.normcase(os.path.realpath(line[len("worktree "):])) for line in self.worktrees()]
+
+    def test_a_stale_registration_of_another_worktree_survives_the_run(self):
+        lane, away = self.stale_lane()
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 0, result)
+        away.rename(lane)
+        self.assertIn(os.path.normcase(os.path.realpath(lane)), self.registered())
+        self.assertEqual(git(lane, "rev-parse", "HEAD"), git(self.repo, "rev-parse", "HEAD"))
+
+    def test_a_snapshot_git_cannot_remove_is_unregistered_alone(self):
+        lane, away = self.stale_lane()
+        failed = subprocess.CompletedProcess([], 1, b"", b"remove refused")
+        with mock.patch.object(gate, "git_worktree_remove", return_value=failed):
+            result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 0, result)
+        self.assertIn("# snapshot removed: ", result["printed"])
+        away.rename(lane)
+        self.assertEqual(sorted(self.registered()), sorted(os.path.normcase(os.path.realpath(p)) for p in (self.repo, lane)))
+        self.assertEqual(list(self.temp.iterdir()), [])
+
+    def test_the_status_line_comes_first_then_the_snapshot_line(self):
+        for ref in ("HEAD", "no-such-ref"):
+            with self.subTest(ref=ref):
+                (self.out / "first.txt").unlink(missing_ok=True)
+                lines = self.run_snapshot(ref=ref)["printed"].splitlines()
+                self.assertEqual(lines[0], "# status %s" % (self.out / "status.txt"))
+                if ref == "HEAD":
+                    self.assertTrue(lines[1].startswith("# snapshot "), lines)
+
     def test_an_existing_snapshot_path_is_refused_and_left_alone(self):
         self.stale_pass()
         taken = self.temp / ("gate-" + git(self.repo, "rev-parse", "HEAD")[:12])
@@ -1257,13 +1297,15 @@ class SnapshotTests(TreeRepoCase):
         # A new option of the parser that the snapshot run does not forward fails here.
         dests = {action.dest for action in gate.build_parser()._actions if action.dest != "help"}
         self.assertEqual(dests - gate.SNAPSHOT_FORWARDED, {"snapshot", "verify", "into"})
-        result = self.run_snapshot(extra=["--denylist", "d.txt", "--distro", "Other", "--changed-modules", "--base", "dev"])
+        result = self.run_snapshot(extra=["--denylist", "d.txt", "--distro", "Other", "--changed-modules", "--base", "dev",
+                                          "--release"])
         self.assertEqual(result.get("code"), 0, result)
         argv = (self.out / "argv.txt").read_text().splitlines()
         self.assertEqual(argv[argv.index("--denylist") + 1], os.path.abspath("d.txt"))
         for pair in (["--distro", "Other"], ["--base", "dev"]):
             self.assertEqual(argv[argv.index(pair[0]):argv.index(pair[0]) + 2], pair)
         self.assertIn("--changed-modules", argv)
+        self.assertIn("--release", argv)
 
     def test_snapshot_cannot_go_with_verify(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):

@@ -99,7 +99,7 @@ one full gate runs on the machine at a time.
    the project has a gate lock, your run blocks every building session. Run it on a detached
    snapshot of the pushed commit (fetch first), never in a side session's worktree, where its edits change the
    tree mid-run: the project's snapshot option where it has one (`--snapshot <ref>`), else
-   `git worktree add --detach <temp folder> <sha>`, removed afterwards, on a failure too. Answer questions; after a
+   `git worktree add --detach <git-ignored folder inside the repository, not the OS temp folder> <sha>`, removed afterwards, on a failure too. Answer questions; after a
    second failure on one step split the task or move it to a stronger model. A follow-up of a few
    lines for an idle session's files may go to the integrating session as its own commit when no
    other writer is active on those files. After the evidence check, call

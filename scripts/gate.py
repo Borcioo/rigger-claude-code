@@ -569,18 +569,34 @@ def run_snapshot_child(tree, argv):
     ).returncode
 
 
-def remove_snapshot(root, tree):
-    """Remove the snapshot worktree and its folder; the line to print."""
-    done = subprocess.run(
+def git_worktree_remove(root, tree):
+    return subprocess.run(
         ["git", "worktree", "remove", "--force", str(tree)], cwd=str(root), env=no_git_env(),
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT,
     )
+
+
+def snapshot_admin_dir(tree):
+    """The snapshot's own registration folder (<git dir>/worktrees/<name>), read from its .git file; None if unreadable."""
+    try:
+        text = (Path(tree) / ".git").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir: "):
+        return None
+    admin = Path(text[len("gitdir: "):])
+    return admin if admin.parent.name == "worktrees" else None
+
+
+def remove_snapshot(root, tree, admin):
+    """Remove the snapshot worktree, its folder and its registration only; the line to print.
+
+    Never `git worktree prune`: it drops every stale registration in the repository, another lane's included."""
+    done = git_worktree_remove(root, tree)
     shutil.rmtree(tree, ignore_errors=True)
-    subprocess.run(
-        ["git", "worktree", "prune"], cwd=str(root), env=no_git_env(), stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
-    )
-    if os.path.exists(tree):
+    if admin is not None and admin.is_dir():
+        shutil.rmtree(admin, ignore_errors=True)  # still registered after the remove: unregister this path alone
+    if os.path.exists(tree) or (admin is not None and admin.exists()):
         detail = " ".join(done.stderr.decode("utf-8", "replace").split())
         return "# snapshot not removed: %s (git worktree remove exit %d: %s)" % (tree, done.returncode, detail)
     return "# snapshot removed: %s" % tree
@@ -617,6 +633,8 @@ def snapshot_refused(out, line):
 def snapshot_gate(ref, args, root, out):
     """Gate commit `ref` in a detached worktree of `root`, so an edit in any checkout cannot change the
     gated tree mid-run; the worktree is removed afterwards, on a failure or an interrupt too."""
+    out.mkdir(parents=True, exist_ok=True)
+    print("# status %s" % (out / STATUS), flush=True)
     try:
         sha = git_list(root, "snapshot: cannot resolve %s" % ref, "rev-parse", "--verify", "--end-of-options",
                        ref + "^{commit}")[0].strip()
@@ -628,13 +646,14 @@ def snapshot_gate(ref, args, root, out):
         git_list(root, "snapshot: cannot create the worktree", "worktree", "add", "--detach", str(snapshot), sha)
     except TreeError as error:
         return snapshot_refused(out, str(error))  # nothing of ours to remove: the path did not exist
+    admin = snapshot_admin_dir(snapshot)
     try:
         if not (snapshot / "scripts" / "gate.py").is_file():
             return snapshot_refused(out, "snapshot: %s has no scripts/gate.py" % sha)
         print("# snapshot %s tree %s at %s" % (sha, tree, snapshot), flush=True)
         return run_snapshot_child(snapshot, snapshot_argv(args, out))
     finally:
-        print(remove_snapshot(root, snapshot), flush=True)
+        print(remove_snapshot(root, snapshot, admin), flush=True)
 
 
 def build_parser():
