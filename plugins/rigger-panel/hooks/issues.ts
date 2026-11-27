@@ -99,7 +99,10 @@ export async function listAssignedIssues($: EngineInterface, repo: string | null
   if (target === null) {
     let remote: string | undefined
     try {
-      const origin = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: RUN_MS })
+      // The session folder, not the engine's: a session that moved (a worktree, another project)
+      // lists that folder's issues. Unknown yet, git runs where the engine runs it.
+      const cwd = await $.session.cwd().catch(() => undefined)
+      const origin = await $.process.run(['git', 'remote', 'get-url', 'origin'], { ...(cwd ? { cwd } : {}), timeoutMs: RUN_MS })
       remote = origin.exitCode === 0 ? origin.stdout : undefined
     } catch {
       remote = undefined

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Envs, PlanEvidence, PlanStep, Snapshot } from '../types'
+import type { Envs, ModulePane, PlanEvidence, PlanStep, Snapshot, Tabs } from '../types'
 import { configDir } from './config-dir'
 import { EMPTY_ENVS, loadEnvs, loadEnvsIfMoved, setEnvsCwd } from './env-flow'
 import {
@@ -42,17 +42,13 @@ import type { PlanCall } from './plan'
 import { EMPTY_ISSUES, askSession, detectStartTool, loadIssues, refreshIssues, startIssue } from './issue-flow'
 import { cutLine, emptyText, shortTitle } from './issues'
 import { registerInbox } from './inbox/view'
+import { NO_MODULE_TABS, chooseOption, loadModuleTab, reloadModuleTabs } from './module-tabs'
+import { TABS, loadTabs, openTabs, recheckTabs, toggleTab } from './tabs'
 
 const PANE = 'rigger-panel'
 const ISSUES_PANE = 'rigger-issues'
 const PLAN_PANE = 'rigger-plan'
 const ENVS_PANE = 'rigger-envs'
-const PANE_TITLES = [
-  [PANE, 'Rigger'],
-  [ISSUES_PANE, 'Issues'],
-  [PLAN_PANE, 'Plan'],
-  [ENVS_PANE, 'Environments'],
-] as const
 const REFRESH_MS = 30_000
 const EMPTY: Snapshot = { window: 0, agents: 0, updatedAt: 0 }
 
@@ -106,6 +102,23 @@ const markNudged = ($: EngineInterface) => update($, planAge, age => ({ ...age, 
 const envs = atom({ plugin: 'rigger-panel', key: 'envs' } as const, EMPTY_ENVS, {
   shape: 'envs-1',
 })
+
+// The same reference as in tabs.ts.
+const tabs = atom({ plugin: 'rigger-panel', key: 'tabs' } as const, { on: TABS.map(tab => tab.id) } as Tabs, {
+  shape: 'tabs-1',
+})
+
+// The same references as in module-tabs.ts.
+const moduleTabs = atom({ plugin: 'rigger-panel', key: 'moduleTabs' } as const, NO_MODULE_TABS, {
+  shape: 'module-tabs-1',
+})
+
+const modulePanes = atom({ plugin: 'rigger-panel', key: 'modulePanes' } as const, {} as { [pane: string]: ModulePane }, {
+  shape: 'module-panes-1',
+})
+
+// A module tab's pane id: `m-<module>-<id>`.
+const MODULE_PANE = /^m-/u
 
 const HARNESS_LABELS = ['Context', 'Session cost', 'Weekly limit', 'Agents in session', 'Rigger', 'Lessons in inbox', 'Compaction']
 
@@ -171,7 +184,10 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'harness', description: 'Show the Rigger panel' })
-    for (const [id, title] of PANE_TITLES) void $.ui.open({ id, title })
+    // Only the tabs that are on for this project open; the Rigger pane always does.
+    const { on: shown, found } = await loadTabs($, e.cwd)
+    await update($, moduleTabs, last => ({ ...last, recheck: !found }))
+    void openTabs($, shown)
     void refresh($)
     // GitHub and the environments file are read when the pane opens and on Refresh, never on this timer.
     void loadIssues($)
@@ -182,8 +198,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'harness' }, async $ => {
-    await Promise.all(PANE_TITLES.map(([id, title]) => $.ui.open({ id, title })))
-    await Promise.all([refresh($), loadIssues($), loadEnvs($), detectStartTool($)])
+    const opening = loadTabs($).then(loaded => Promise.all([openTabs($, loaded.on), reloadModuleTabs($, loaded.on)]))
+    await Promise.all([opening, refresh($), loadIssues($), loadEnvs($), detectStartTool($)])
 
     return { text: 'Rigger panel opened.' }
   })
@@ -192,6 +208,8 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       void detectStartTool($)
+      // Awaited: it runs once, and only when the snapshot was missing at session start.
+      await recheckTabs($).catch(() => undefined)
       await update($, planAge, age => ({ ...age, touched: false }))
     }
 
@@ -412,9 +430,12 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const elements = $.ui.resolve(e)
-    const { Box, Text } = elements
+    const { Box, Text, Button } = elements
     const Svg = svgOf(elements, e.surface)
     const now = await read($, snapshot)
+    const shown = await read($, tabs)
+    const modules = await read($, moduleTabs)
+    const listed = [...TABS, ...modules.tabs.map(tab => ({ id: tab.pane, title: tab.title }))]
     const width = labelWidth(HARNESS_LABELS)
     const line = (label: string, value: string) => textRow(elements, width, label, value)
     // The context figures and, under them, a bar of how full the window is.
@@ -441,6 +462,73 @@ export const register: Register = on => {
         {line('Rigger', now.version ?? '?')}
         {line('Lessons in inbox', now.lessons === undefined ? '?' : String(now.lessons))}
         {line('Compaction', now.guard ?? '?')}
+        <Box flexDirection="column" marginTop={BLOCK_GAP}>
+          <Text bold>Tabs</Text>
+          <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
+            {listed.map(tab => (
+              <Button key={`tab-${tab.id}`} onPress={() => void toggleTab($, tab.id)}>
+                {`${shown.on.includes(tab.id) ? '[x]' : '[ ]'} ${tab.title}`}
+              </Button>
+            ))}
+          </Box>
+          {modules.skipped.map(line => (
+            <Text dimColor>{line}</Text>
+          ))}
+        </Box>
+      </Box>
+    )
+  })
+
+  // Every module tab is drawn here: its rows, a select per declared picker, and Refresh.
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
+    if (!MODULE_PANE.test(e.requestId)) return next(e)
+    const tab = (await read($, moduleTabs)).tabs.find(item => item.pane === e.requestId)
+    if (tab === undefined) return next(e)
+    const { Box, Text, Button, Link, Select } = $.ui.resolve(e)
+    const pane = tab.pane
+    const now = (await read($, modulePanes))[pane]
+    // Drawing is the event for a pane being shown: a tab not read yet is read now.
+    if (now === undefined) void loadModuleTab($, pane)
+    const ready = now?.phase === 'ready' ? now : undefined
+
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={GAP}>
+          <Box flexShrink={1}>
+            <Text bold>{tab.title}</Text>
+          </Box>
+          <Button key="refresh" onPress={() => void loadModuleTab($, pane)}>
+            Refresh
+          </Button>
+        </Box>
+        {tab.select.map(rule => {
+          const held = now?.selects[rule.id]
+          return held === undefined || held.options.length === 0 ? undefined : (
+            <Select
+              key={`select-${rule.id}`}
+              label={rule.label}
+              options={held.options}
+              value={held.value}
+              onSelect={value => void chooseOption($, pane, rule.id, value)}
+            />
+          )
+        })}
+        {(now === undefined || now.phase === 'loading') && <Text dimColor>Loading…</Text>}
+        {now?.phase === 'failed' && <Text color="red">{now.note ?? 'unknown reason'}</Text>}
+        {ready?.empty && <Text dimColor>No items.</Text>}
+        {(ready?.rows ?? []).map(item => (
+          <Box flexDirection="column" marginTop={BLOCK_GAP}>
+            <Box flexDirection="row" columnGap={GAP}>
+              {item.key && <Text bold>{item.key}</Text>}
+              <Box flexShrink={1}>
+                <Text>{item.title}</Text>
+              </Box>
+            </Box>
+            {item.detail && <Text dimColor>{item.detail}</Text>}
+            {item.url && <Link href={item.url} label={item.url} />}
+          </Box>
+        ))}
+        {ready?.capped && <Text dimColor>The first 50 are shown.</Text>}
       </Box>
     )
   })

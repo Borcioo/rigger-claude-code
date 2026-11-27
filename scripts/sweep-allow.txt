@@ -54,6 +54,9 @@ plugins/rigger-panel/hooks/register.test.tsx	['Windows home', { USERPROFILE: 'C:
 plugins/rigger-panel/hooks/register.test.tsx	['POSIX variable', { CLAUDE_CONFIG_DIR: '/Users/boss/.claude' }, '/Users/boss/.claude'],
 plugins/rigger-panel/hooks/register.test.tsx	['POSIX variable, trailing slash', { CLAUDE_CONFIG_DIR: '/Users/boss/.claude/' }, '/Users/boss/.claude'],
 plugins/rigger-panel/hooks/register.test.tsx	['POSIX home', { HOME: '/home/boss' }, '/home/boss/.claude'],
+plugins/rigger-panel/hooks/tabs.test.tsx	const WIN_CWD = 'C:\\work\\repo\\sub'
+plugins/rigger-panel/hooks/tabs.test.tsx	const WIN_GIT_DIR = 'C:/work/repo/.git/'
+plugins/rigger-panel/hooks/tabs.test.tsx	const WIN_KEY = 'tabs:C:/work/repo'
 plugins/rigger-panel/tests/test_panel.py	MACHINE_PATH_RE = re.compile(r"""['"`]([A-Za-z]:[\\/]|/Users/|/home/)""")
 # The SVG namespace, which an SVG drawn as an image needs.
 plugins/rigger-panel/hooks/plan.ts	xmlns="http://www.w3.org/2000/svg"

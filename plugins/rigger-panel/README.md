@@ -1,8 +1,9 @@
 # rigger-panel
 
 Opt-in. A function-hook plugin for Claude Code (`hooks/register.tsx`, no shell hooks, no rules) that
-adds four panes beside the chat. They open at session start; `/harness` opens them again and reads
-everything once more.
+adds four panes beside the chat, plus any tab a Rigger module declares ([Module tabs](#module-tabs)).
+They open at session start; `/harness` opens them again and reads everything once more. Each pane but
+Rigger is a tab that can be switched off per project ([Tabs](#tabs)).
 
 | Pane | Shows |
 |---|---|
@@ -11,7 +12,8 @@ everything once more.
 | Plan | the session's task list, how old it is, and when it may be out of date |
 | Environments | the project's `.claude/environments.json` as cards |
 
-All text is English. Nothing in the plugin writes to GitHub.
+All text is English. Nothing in the plugin writes to GitHub; a module tab runs only what its own
+module's manifest declares.
 
 ## Rigger
 
@@ -31,6 +33,103 @@ plugin cannot get, or a version that is not a commit hash, draws as `?`.
 The pane redraws every 30 seconds and after each turn. On a graphical surface the context bar is an
 `Svg`; on the terminal it is text.
 
+## Tabs
+
+The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments), `[x]` when
+it is on, `[ ]` when it is off. A press switches the tab for this project and opens or closes its pane
+at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
+
+- **Where the choice is kept:** the plugin's own store (`$.store`, in the Claude Code config dir,
+  outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
+  (pane ids such as `rigger-issues`) switched on and off there.
+- **Project:** the parent folder of `git rev-parse --path-format=absolute --git-common-dir` run in the
+  session folder, so every worktree of a repository shares the main checkout's choice; outside git,
+  the session folder itself.
+- **Default:** every tab is on, unless its id is in the config key `panel.tabs_off` (a list of tab ids;
+  levels 2 and 3, a company module or the personal `rigger/config.json`), read from rigger-core's
+  snapshot of the session (`<config dir>/rigger/state/<session id>.resolved.json`). A tab the project
+  switched on stays on; one it switched off stays off. A missing or unreadable snapshot means no
+  default off list.
+
+  ```json
+  { "schema": 1, "panel": { "tabs_off": ["rigger-envs"] } }
+  ```
+
+## Module tabs
+
+A Rigger module (any plugin with a `rigger-module.json`) adds a tab by declaring it under `panel.tabs`
+in that manifest. The panel knows no tool behind it: it calls the MCP tool or runs the command the tab
+names, cuts the text into rows with the module's regexes and draws a plain list with a `Refresh`
+button. The modules are the ones rigger-core's snapshot of the session lists
+(`<config dir>/rigger/state/<session id>.resolved.json`, `modules: [{ name, root }]`); each manifest is
+read from `<root>/rigger-module.json`. No snapshot, an unreadable manifest or no `panel` key adds no
+tab. The tab's pane id is `m-<module>-<id>`; [Tabs](#tabs), `panel.tabs_off` and the per-project store
+treat it like a built-in tab. rigger-core's SessionStart hooks may write the snapshot after the panel
+starts: when it was missing then, the first main-loop turn reads it once more, opens a tab that is now
+on and closes one that is now off.
+
+```json
+"panel": { "tabs": [ {
+  "id": "tickets",
+  "title": "Tickets",
+  "source": { "mcp": { "server": "tracker", "tool": "list-tickets",
+                       "args": { "assigned_to_me": true, "limit": 50, "project_id": "{select:project}" } } },
+  "rows": {
+    "pattern": "^- (?<key>[A-Z0-9]+-\\d+): (?<title>.+)$",
+    "detail": "^\\s+Status: (?<detail>[^|]+?)\\s*\\|",
+    "url": "https://example.com/tickets/{key}",
+    "empty": "^Tickets \\(0\\)"
+  },
+  "select": [ {
+    "id": "project", "label": "Project", "type": "number",
+    "options": { "mcp": { "server": "tracker", "tool": "list-projects", "args": {} },
+                 "pattern": "^- \\[(?<key>[A-Z0-9]+)\\] (?<label>.+) \\(ID: (?<value>\\d+)" },
+    "default": "tracker.project_id"
+  } ]
+} ] }
+```
+
+Every field is checked and a wrong type refused. An invalid entry is skipped, and the Rigger pane shows
+one line under Tabs: `module <m> tab <id>: skipped: <reason>` (`#<n>`, its place in the list, when the
+id itself is invalid; `*` when `panel.tabs` is not a list).
+
+- `id`: `^[A-Za-z0-9_-]{1,32}$`, unique within the module. The pane id `m-<module>-<id>` must match
+  `^[A-Za-z0-9_-]{1,64}$` (the shape `panel.tabs_off` takes) and must not be another module's.
+- `title`: a string of 1-40 characters.
+- `source`: exactly one of `mcp` (`{ server, tool, args? }`, `args` an object) or `command` (an argument
+  vector of 1-32 strings; an item starting `./` resolves against the module root). The command runs in
+  the session folder. The text is the MCP result's text blocks joined with `\n` (with no text block but
+  `structuredContent`, that as indented JSON), or the command's stdout. An error result, a non-zero
+  exit or a call that fails shows the failure line `module <m> tab <id>: <first line of the error>`
+  (cut at 200 characters). Each call is bounded at 20 s.
+- `rows.pattern` (required): a JS regex compiled with flag `u`, matched against each line; a match
+  starts a row. Named groups: `title` (required), `key`, `url`, `detail`. `rows.detail`: a later line
+  that starts no row but matches it sets the row's `detail` from its `detail` group, when the row has
+  none yet. `rows.url`: a template where `{<group>}` is that group's value, percent-encoded; every group
+  it names must be a group of `rows.pattern`. Without `rows.url`, a `url` group is the link. A link that
+  does not start `https://` is dropped. `rows.empty`: a regex; any line matching it shows the empty
+  state. A regex that does not compile skips the tab.
+- **Fail closed:** blank text or a `rows.empty` match shows `No items.`. Text with something in it, no
+  row and no `rows.empty` match shows exactly `module <m> tab <id>: output did not match its pattern`,
+  never the empty state.
+- **Bounds, before any regex runs:** the text is cut at 256 Ki characters, lines over 2000 characters
+  are skipped, at most 50 rows are kept (then `The first 50 are shown.`), and a regex source over 500
+  characters is refused.
+- `select` (at most 3): `id` like a tab id, `label` 1-40 characters, `type` `"string"` (the default) or
+  `"number"`. `options` is a source (`mcp` or `command`, with no `{select:…}` in it) plus `pattern`
+  with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200
+  options, a repeated value kept once, a value that starts with `-` or holds a control character
+  dropped (it would reach a command's argv); a number select whose value is not a number fails. `default`: a
+  dot path into the session folder's `.claude/environments.json`; the option whose value equals that
+  value as a string is chosen first. A missing file, a missing key, invalid JSON or a value that is no
+  option picks the first option. The choice is kept for the session (in state, not the store) and a
+  new pick reads the rows again. Options that fail to load, or none, show the failure line and the
+  rows are not read.
+- `{select:<id>}`: an `args` value (top level) or an argv item that is exactly this gets the chosen
+  value, a number for a number select. A placeholder naming no declared select skips the tab.
+- Each row shows the key (when there is one), the title, the detail (dim) and a link. A tab is read
+  when its pane is first drawn, on `Refresh`, on a new pick, and again by `/harness` while it is on.
+
 ## Issues
 
 The open issues assigned to you (`--assignee @me`) in the GitHub repository of the session folder's
@@ -45,12 +144,16 @@ shell):
 
 Each row shows `#N`, the title (cut at 60 characters) and the state.
 
-- **Read-only:** the plugin runs only the four commands above. `tests/test_panel.py` fails on any
-  `gh issue create|edit|close|reopen|comment|delete|…`, any `gh pr`, any `gh api` with `-X`,
-  `--method`, `-f`, `-F`, `--field`, `--raw-field` or `--input`, any `git` command but
-  `git remote get-url`, any other program, any MCP tool named like a write and
-  any MCP call to a server other than the session app, and each pattern is proven against planted
-  lines. The tests also check every command the plugin starts against that list.
+- **Read-only:** of its own, the plugin runs only the four commands above, and `git rev-parse` for
+  [Tabs](#tabs); a [module tab](#module-tabs) runs the source its module declares. `tests/test_panel.py`
+  fails on any `gh issue create|edit|close|reopen|comment|delete|…`, any `gh pr`, any `gh api` with
+  `-X`, `--method`, `-f`, `-F`, `--field`, `--raw-field` or `--input`, any `git` command but
+  `git remote get-url` and `git rev-parse --path-format=absolute --git-common-dir`, any other program,
+  any program whose argument vector is not written out, any MCP tool named like a write and any MCP
+  call to a server other than the session app, and each pattern is proven against planted lines. The
+  one exception is the module tab's source: one MCP call and one program start in
+  `hooks/module-tabs.ts`, at one spelling each, allowed there and nowhere else. The tests also check
+  every command the plugin starts against that list.
 - **Empty states** (one line each, a `Refresh` button, no error):
 
   | Situation | Line |
@@ -182,5 +285,6 @@ another folder than the one last read (a session moved into a worktree); there i
 beneath the plugin that recognises each command by its whole argument vector, and the session app's
 `mcp.call` is a test hook, so no test reaches GitHub or starts a session. `tests/test_panel.py` runs
 that under the repository's test runner (`scripts/run_tests.py`; at least 130 passing), checks the
-source for machine paths, GitHub and git writes and programs other than `gh` and `git`, and skips the
+source for machine paths, GitHub and git writes and programs other than `gh` and `git` (the module
+tab's source excepted, at its one spelling), and skips the
 `claude` run with `--no-claude`.
