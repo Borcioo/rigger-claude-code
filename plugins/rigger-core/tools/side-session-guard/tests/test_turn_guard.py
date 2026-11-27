@@ -97,7 +97,8 @@ class Base(unittest.TestCase):
 
     def event(self, tasks, **extra):
         event = {"hook_event_name": "Stop", "session_id": SID, "transcript_path": self.transcript,
-                 "cwd": self.project, "stop_hook_active": False, "background_tasks": tasks, "session_crons": []}
+                 "cwd": self.project, "stop_hook_active": False, "background_tasks": tasks, "session_crons": [],
+                 "prompt_id": "prompt-1"}
         event.update(extra)
         return event
 
@@ -124,40 +125,39 @@ class FilterTests(Base):
         self.assertIn('"phase gate"', reason)
         self.assertIsNone(note)
 
-    def test_gate_and_test_commands_are_held(self):
-        commands = [GATE, "python scripts/run_tests.py --fix-round", "pytest -q tests", "python -m pytest",
-                    "python3 -m unittest discover -s tests", "npm test", "npm run test -- --watch=false",
-                    "npx vitest run", "npx jest --ci", "vendor/bin/phpunit", "npx playwright test",
-                    "go test ./...", "cargo test --all", "python safe_edit.py --run x"]
-        for command in commands:
+    def test_any_running_shell_command_is_held(self):
+        for command in (GATE, "npm run dev", "sleep 30", "python delegate.py", "", "cat jest.config.js"):
             with self.subTest(command=command):
                 self.output()
                 self.assertHeld(self.check([task(command=command)]))
                 os.remove(self.counts)
-
-    def test_non_gate_commands_are_not_held(self):
-        self.output()
-        for command in ("npm run dev", "python -m http.server 8000", "sleep 30", "python delegate.py",
-                        "npm run testing", "php artisan serve", "cat jest.config.js"):
-            with self.subTest(command=command):
-                self.assertAllowed(self.check([task(command=command)]))
-        self.output("bq2")
-        self.assertHeld(self.check([task(command="npm run dev"), task("bq2", GATE)]), "bq2")
-
-    def test_command_match_is_linear(self):
-        """The command comes from the model: 40 repeats of each token, then a long line, under a time bound."""
-        started = time.monotonic()
-        for token in ("npm ", "run ", "-m ", "go ", "cargo ", "gate.", "jest-", "\t", "safe_edit"):
-            for text in (token * 40, token * 40 + "x", (token * 2000)[:100000]):
-                turn_guard.GATE_COMMAND.search(text)
-        self.assertLess(time.monotonic() - started, 1.0)
-
-    def test_subagent_entries_are_ignored(self):
-        self.output()
-        self.output("a21a4cf9bbd611542")
-        self.assertAllowed(self.check([task("a21a4cf9bbd611542", kind="subagent")]))
         self.assertAllowed(self.check([task(status="completed")]))
-        self.assertHeld(self.check([task()]))
+
+    def test_monitor_and_unknown_types_are_not_held(self):
+        """A Monitor is a watcher that outlives turns by design (events, expiry, re-arm): never held."""
+        self.output()
+        for kind in ("monitor", "teammate", None):
+            with self.subTest(kind=kind):
+                self.assertAllowed(self.check([task(kind=kind, command="sleep 15; echo ready")]))
+        self.output("bq2")
+        self.assertHeld(self.check([task(kind="monitor"), task("bq2")]), "bq2")
+
+    def test_running_subagent_blocks_without_a_poll(self):
+        """A subagent's output file never gets a trailer, so it is held at once, file or not."""
+        clock = Clock()
+        reason, note = self.check([task("a21a4cf9bbd611542", kind="subagent", description="bg review", command=None)],
+                                  clock=clock)
+        self.assertHeld((reason, note), "a21a4cf9bbd611542")
+        self.assertEqual(clock.now, 0.0)
+        self.assertIn('"bg review"', reason)
+        self.assertIn("completion notice", reason)
+        self.assertAllowed(self.check([task("a21a4cf9bbd611542", kind="subagent", status="completed")]))
+
+    def test_a_subagent_skips_the_poll_of_a_shell_task_too(self):
+        self.output()
+        clock = Clock()
+        self.assertHeld(self.check([task(), task("a21a4cf9bbd611542", kind="subagent")], clock=clock))
+        self.assertLess(clock.now, turn_guard.POLL_STEP + 0.01)
 
     def test_coordinator_session_is_not_held(self):
         self.output()
@@ -223,6 +223,7 @@ class FilterTests(Base):
                     self.assertEqual(turn_guard.output_file(SID, "b58ki4brf", dict(self.environ, **environ)), path)
                     self.assertHeld(self.check([task()], environ=environ))
                 shutil.rmtree(os.path.join(root, folder))
+                os.remove(self.counts)   # each layout starts below the cap
         with uid_as(1000):
             self.write(os.path.join(self.temp, "claude-1001", "k", SID, "tasks", "b58ki4brf.output"), "")
             self.assertAllowed(self.check([task()]))
@@ -264,36 +265,57 @@ class PollTests(Base):
 
 
 class CapTests(Base):
-    def test_block_names_the_task_and_stops_after_three(self):
+    def test_block_names_the_task_and_stops_after_two(self):
         self.output()
         self.output("bq2")
-        for count, active in ((1, False), (2, True), (3, True)):
-            reason, note = self.check([task()], stop_hook_active=active)
+        for count, (active, prompt) in enumerate(((False, "prompt-1"), (False, "prompt-2")), 1):
+            reason, note = self.check([task()], stop_hook_active=active, prompt_id=prompt)
             self.assertHeld((reason, note))
-            self.assertIn("%d of 3" % count, reason)
+            self.assertIn("%d of 2" % count, reason)
         self.assertFalse(os.path.exists(os.path.join(self.state_dir, SID + ".side-guard.json")))
         with open(self.counts, "rb") as fh:
-            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 3})
-        reason, note = self.check([task()], stop_hook_active=True)
+            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 2})
+        reason, note = self.check([task()], stop_hook_active=False, prompt_id="prompt-3")
         self.assertIsNone(reason)
         self.assertTrue(note.startswith(turn_guard.PREFIX + " "), note)
         self.assertIn("b58ki4brf", note)
         self.assertNotIn("\n", note)
-        self.assertEqual(self.check([task()], stop_hook_active=True), (None, None))
-        self.assertHeld(self.check([task(), task("bq2")], stop_hook_active=True), "bq2")
+        self.assertEqual(self.check([task()], prompt_id="prompt-4"), (None, None))
+        self.assertHeld(self.check([task(), task("bq2")], prompt_id="prompt-5"), "bq2")
+
+    def test_a_turn_holds_at_most_twice_across_its_tasks(self):
+        self.output()
+        self.output("bq2")
+        self.assertHeld(self.check([task(), task("bq2")]))
+        self.assertHeld(self.check([task("bq2")], stop_hook_active=True), "bq2")   # the first one ended
+        reason, note = self.check([task("bq2")], stop_hook_active=True)
+        self.assertIsNone(reason)
+        self.assertTrue(note.startswith(turn_guard.PREFIX + " ") and "2 holds this turn" in note, note)
+        self.assertIn("bq2", note)
+        self.assertNotIn("\n", note)
+        with open(self.counts, "rb") as fh:
+            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 1, "bq2": 1})
+        self.assertHeld(self.check([task("bq2")], prompt_id="prompt-2"), "bq2")
+
+    def test_without_a_prompt_id_a_stop_chain_holds_once(self):
+        self.output()
+        event_kw = {"prompt_id": None}
+        self.assertHeld(self.check([task()], stop_hook_active=False, **event_kw))
+        self.assertAllowed(self.check([task()], stop_hook_active=True, **event_kw))
+        self.assertHeld(self.check([task()], stop_hook_active=False, **event_kw))
 
     def test_a_capped_run_keeps_its_note_when_another_run_blocks(self):
         """Run A reaches its cap in the same Stop where run B holds: A's one note comes with B's block."""
         self.output()
         self.output("bq2")
-        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 3}}))
+        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 2}}))
         reason, note = self.check([task(), task("bq2")], stop_hook_active=True)
         self.assertHeld((reason, note), "bq2")
         self.assertIsNotNone(note, "expected run A's note with the block")
         self.assertTrue(note.startswith(turn_guard.PREFIX + " ") and "b58ki4brf" in note, note)
-        self.assertIn("still runs after 3 holds", note)
+        self.assertIn("still runs after 2 holds", note)
         with open(self.counts, "rb") as fh:
-            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 4, "bq2": 1})
+            self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 3, "bq2": 1})
 
     def test_a_config_without_a_state_folder_holds_and_counts(self):
         self.output()
@@ -301,7 +323,7 @@ class CapTests(Base):
         for count, active in ((1, False), (2, True)):
             reason, note = self.check([task()], stop_hook_active=active)
             self.assertHeld((reason, note))
-            self.assertIn("%d of 3" % count, reason)
+            self.assertIn("%d of 2" % count, reason)
         with open(self.counts, "rb") as fh:
             self.assertEqual(json.loads(fh.read())["blocks"], {"b58ki4brf": 2})
 
@@ -351,6 +373,29 @@ class CapTests(Base):
         self.assertIn('"line one line two ', reason)
         self.assertNotIn("x" * 61, reason)
         self.assertIn("wait", reason)
+
+    def test_shell_reason_names_its_output_file_and_how_to_end_the_turn(self):
+        path = self.output()
+        reason, _ = self.check([task()])
+        self.assertIn(path, reason)
+        self.assertIn("[exited with code N]", reason)
+        self.assertIn("bounded foreground wait", reason)
+        self.assertIn("only with a result or a question", reason)
+        self.assertIn("server", reason)
+
+
+class LogTests(Base):
+    def test_an_error_inside_the_check_allows_and_writes_one_stderr_line(self):
+        import io
+        import side_session_guard
+        sys.path.insert(0, os.path.join(os.path.dirname(TOOL), "context-guard"))
+        import context_guard
+        stderr = io.StringIO()
+        with mock.patch.object(turn_guard, "running_tasks", side_effect=RuntimeError("boom")), \
+                mock.patch.object(sys, "stderr", stderr):
+            self.assertEqual(side_session_guard.turn_end(self.event([task()]), self.state, context_guard), (None, None))
+        self.assertEqual(stderr.getvalue().count("\n"), 1)
+        self.assertTrue(stderr.getvalue().startswith(turn_guard.PREFIX + " ") and "boom" in stderr.getvalue())
 
 
 class ConfigTests(Base):
@@ -429,7 +474,7 @@ class WiringTests(Base):
 
     def test_the_released_hold_prints_one_line(self):
         self.output()
-        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 3}}))
+        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 2}}))
         data = self.run_hook(self.event([task()], stop_hook_active=True))
         self.assertEqual(sorted(data), ["systemMessage"])
         self.assertTrue(data["systemMessage"].startswith(turn_guard.PREFIX + " ") and "b58ki4brf" in data["systemMessage"])
@@ -438,7 +483,7 @@ class WiringTests(Base):
     def test_the_hook_prints_a_capped_runs_note_with_another_runs_block(self):
         self.output()
         self.output("bq2")
-        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 3}}))
+        self.write(self.counts, json.dumps({"format": 1, "blocks": {"b58ki4brf": 2}}))
         data = self.run_hook(self.event([task(), task("bq2")], stop_hook_active=True))
         self.assertEqual(sorted(data), ["decision", "reason", "systemMessage"])
         self.assertEqual(data["decision"], "block")
@@ -450,7 +495,7 @@ class WiringTests(Base):
         shutil.rmtree(self.state_dir)
         data = self.run_hook(self.event([task()]))
         self.assertEqual(data.get("decision"), "block")
-        self.assertTrue(data["reason"].startswith(turn_guard.PREFIX + " ") and "Block 1 of 3" in data["reason"])
+        self.assertTrue(data["reason"].startswith(turn_guard.PREFIX + " ") and "Block 1 of 2" in data["reason"])
         self.assertTrue(os.path.isfile(self.counts))
 
     def test_an_unwritable_count_holds_then_prints_one_line(self):
