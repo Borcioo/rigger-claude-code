@@ -138,7 +138,10 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   it. A missing file, a missing key, invalid JSON or a value that is no option's value or key picks the
   first option. `all` (optional, 1-40 characters) adds a first option with that label: while it is
   chosen, every `args` entry and argv item that is exactly `{select:<id>}` is left out of the call, so
-  a select with `all` and no default, or with a default that names no option, starts on it. The choice is kept for the session (in state, not the store) and a
+  a select with `all` and no default, or with a default that names no option, starts on it. A
+  `command` source with `all` takes the value as a positional item of its own, never as a flag's
+  value (`--project {select:project}` would leave `--project` behind, and `--project={select:project}`
+  is never filled): `all` drops that item, and the program reads a missing argument as all. The choice is kept for the session (in state, not the store) and a
   new pick reads the rows again. Options that fail to load, or none, show the failure line and the
   rows are not read.
 - `{select:<id>}`: an `args` value (top level) or an argv item that is exactly this gets the chosen
