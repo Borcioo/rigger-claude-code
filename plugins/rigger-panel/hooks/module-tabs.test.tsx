@@ -88,7 +88,7 @@ type Run = { argv: string[]; cwd?: string }
 const text = (body: string, isError = false): McpAnswer => ({ content: [{ type: 'text', text: body }], isError })
 
 // The world beneath the plugin: files, an MCP server answering by tool, programs answering by argv.
-const world = (on: On, files: Record<string, string>, tools: Record<string, McpAnswer | ((args: Record<string, unknown>) => McpAnswer)>) => {
+const world = (on: On, files: Record<string, string>, tools: Record<string, McpAnswer | ((args: Record<string, unknown>) => McpAnswer | Promise<McpAnswer>)>) => {
   const state = { files, cwd: '/repo' }
   const calls: Call[] = []
   const runs: Run[] = []
@@ -118,11 +118,11 @@ const world = (on: On, files: Record<string, string>, tools: Record<string, McpA
   on('session.id', () => ({ value: SESSION }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000 }, rateLimits: [] } }))
   on('tool.list', () => ({ value: [] }))
-  on('mcp.call', (_, e) => {
+  on('mcp.call', async (_, e) => {
     calls.push({ server: e.server, tool: e.tool, args: e.args })
     const answer = e.server === 'tracker' ? tools[e.tool] : undefined
     if (answer === undefined) return { deny: `no tool ${e.tool}` }
-    return { value: typeof answer === 'function' ? answer(e.args) : answer }
+    return { value: typeof answer === 'function' ? await answer(e.args) : answer }
   })
   on('process.run', (_, e) => {
     const argv = [...e.argv]
@@ -290,6 +290,40 @@ test('picking another option reads the rows again with its value', async ($, on)
   expect(w.calls.filter(item => item.tool === 'list-tickets').map(item => item.args)).toEqual([{ project_id: 2 }, { project_id: 61 }])
   const again = await drawTab($, w)
   expect(again.select?.props?.value).toBe('61')
+  await again.ui.unmount()
+})
+
+// The read for the old value answers last; the pick made while it ran still wins.
+test('a pick made while the tab is loading wins over that load', async ($, on) => {
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
+    select: [PROJECT_SELECT],
+  })
+  let release = () => {}
+  const slow = new Promise<McpAnswer>(resolve => {
+    release = () => resolve(text(TICKETS_TEXT))
+  })
+  const picked = text('Tickets (1):\n\n- TRK-61: Picked project work\n')
+  let reads = 0
+  const w = world(on, files([tab]), {
+    'list-projects': text(PROJECTS_TEXT),
+    'list-tickets': args => (args.project_id === 61 ? picked : ++reads === 1 ? text(TICKETS_TEXT) : slow),
+  })
+  await start($, w)
+  const first = await drawTab($, w)
+  await first.ui.press({ key: 'refresh' })
+  for (let i = 0; i < 200 && reads < 2; i++) await Promise.resolve()
+  expect(reads).toBe(2)
+  await first.ui.unmount()
+  const ui = await $.ui.mount({ ...paneOf(TICKETS, 'Tickets'), surface: 'desktop' })
+  await ui.select({ key: 'select-project', value: '61' })
+  release()
+  await w.clock.settle()
+  await ui.unmount()
+  const again = await drawTab($, w)
+  expect(again.select?.props?.value).toBe('61')
+  expect(again.texts).toContain('Picked project work')
+  expect(again.texts).not.toContain('QA and rollout')
   await again.ui.unmount()
 })
 
