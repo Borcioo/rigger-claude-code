@@ -128,6 +128,47 @@ test('switching a tab off closes its pane and stores it, and the next session op
   expect(w.stored['tabs:/repo']).toEqual({ on: ['rigger-issues'], off: [] })
 })
 
+const MENU = { plugin: 'rigger-panel', surface: 'desktop', component: 'ContextMenu', props: {} } as const
+
+// The transcript's right-click menu lists every switchable tab, and a press switches it like the Tabs row.
+test('the right-click menu has a row per tab that switches it, beside the rows beneath it', async ($, on) => {
+  const w = world(on)
+  // A row the engine or another plugin draws beneath this one.
+  on('ui.render', ($$, e) => {
+    const { Button } = $$.ui.resolve(e)
+    return (
+      <Button key="other-row" onPress={() => undefined}>
+        Copy
+      </Button>
+    )
+  })
+  await start($, w)
+  await press($, 'rigger-inbox')
+  const ui = await $.ui.mount(MENU as never)
+  const rows = await ui.findAll({ type: 'Button' })
+  // The engine places the rows beneath; only which rows there are is this plugin's.
+  expect(rows.map(row => row.text).sort()).toEqual(['Copy', '[ ] Inbox', '[x] Environments', '[x] Issues', '[x] Plan'])
+  await ui.press({ key: 'menu-tab-rigger-issues' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.closed).toEqual(['rigger-inbox', 'rigger-issues'])
+  expect(w.stored['tabs:/repo']).toEqual({ on: [], off: ['rigger-inbox', 'rigger-issues'] })
+  const again = await $.ui.mount(MENU as never)
+  await again.press({ key: 'menu-tab-rigger-inbox' })
+  await w.clock.settle()
+  await again.unmount()
+  expect(w.opened.at(-1)).toBe('rigger-inbox')
+  expect(await buttonText($, 'rigger-issues')).toBe('[ ] Issues')
+})
+
+test('another surface draws no tab rows in the menu', async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  const ui = await $.ui.mount({ ...MENU, surface: 'terminal' } as never)
+  expect(await ui.find({ key: 'menu-tab-rigger-issues' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a worktree of the same repository shares the choice, and a folder outside git keys by itself', async ($, on) => {
   const w = world(on, {
     cwd: '/repo/.claude/worktrees/feature',

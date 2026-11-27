@@ -179,6 +179,12 @@ const refresh = async ($: EngineInterface) => {
   }))
 }
 
+// The tabs the person can switch, as the Tabs row and the right-click menu list them.
+const switchable = (modules: { tabs: { pane: string; title: string }[] }) => [
+  ...TABS,
+  ...modules.tabs.map(tab => ({ id: tab.pane, title: tab.title })),
+]
+
 export const register: Register = on => {
   registerInbox(on)
 
@@ -435,7 +441,7 @@ export const register: Register = on => {
     const now = await read($, snapshot)
     const shown = await read($, tabs)
     const modules = await read($, moduleTabs)
-    const listed = [...TABS, ...modules.tabs.map(tab => ({ id: tab.pane, title: tab.title }))]
+    const listed = switchable(modules)
     const width = labelWidth(HARNESS_LABELS)
     const line = (label: string, value: string) => textRow(elements, width, label, value)
     // The context figures and, under them, a bar of how full the window is.
@@ -475,6 +481,26 @@ export const register: Register = on => {
             <Text dimColor>{line}</Text>
           ))}
         </Box>
+      </Box>
+    )
+  })
+
+  // The transcript's right-click menu (the desktop app's only) gets a row per tab after the rows beneath it:
+  // a pane header has no room for one, and a press switches the tab as the Tabs row does.
+  on('ui.render', { component: 'ContextMenu' }, async ($, e, next) => {
+    const beneath = await next(e)
+    if (e.surface !== 'desktop') return beneath
+    const { Box, Button } = $.ui.resolve(e)
+    const shown = await read($, tabs)
+    const listed = switchable(await read($, moduleTabs))
+    return (
+      <Box flexDirection="column">
+        {beneath}
+        {listed.map(tab => (
+          <Button key={`menu-tab-${tab.id}`} onPress={() => void toggleTab($, tab.id)}>
+            {`${shown.on.includes(tab.id) ? '[x]' : '[ ]'} ${tab.title}`}
+          </Button>
+        ))}
       </Box>
     )
   })

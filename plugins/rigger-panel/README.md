@@ -39,6 +39,9 @@ The pane redraws every 30 seconds and after each turn. On a graphical surface th
 The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments, Inbox), `[x]` when
 it is on, `[ ]` when it is off. A press switches the tab for this project and opens or closes its pane
 at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
+In the desktop app the transcript's right-click menu holds the same rows (`[x] Issues`, `[ ] Inbox`, ...),
+after the menu's other rows, and a press there does the same. Closing a pane with its close mark only
+hides it: the tab stays on, and `/harness` opens it again.
 
 - **Where the choice is kept:** the plugin's own store (`$.store`, in the Claude Code config dir,
   outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
