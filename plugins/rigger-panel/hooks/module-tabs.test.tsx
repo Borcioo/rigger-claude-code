@@ -237,6 +237,11 @@ for (const [what, extra, line] of SILENT) {
   })
 }
 
+test('rows beside a line that matches the empty pattern are drawn, not the empty state', () => {
+  const cut = cutRows(`Tickets (0) closed, open below:\n${TICKETS_TEXT}`, ROWS)
+  expect(cut.kind === 'rows' ? cut.rows.map(row => row.key) : cut.kind).toEqual(['TRK-22', 'TRK-23'])
+})
+
 test('an error result is the failure line with the first line of its text', async ($, on) => {
   const w = world(on, files([ticketsTab()]), { 'list-tickets': text('\nUnauthorized: token expired\nretry later', true) })
   await start($, w)

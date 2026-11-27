@@ -110,9 +110,9 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   that starts no row but matches it sets the row's `detail` from its `detail` group, when the row has
   none yet. `rows.url`: a template where `{<group>}` is that group's value, percent-encoded; every group
   it names must be a group of `rows.pattern`. Without `rows.url`, a `url` group is the link. A link that
-  does not start `https://` is dropped. `rows.empty`: a regex; any line matching it shows the empty
-  state. A regex that does not compile skips the tab.
-- **Fail closed:** blank text or a `rows.empty` match shows `No items.`. Text with something in it, no
+  does not start `https://` is dropped. `rows.empty`: a regex; when no line starts a row, any line
+  matching it shows the empty state (with rows, it is ignored). A regex that does not compile skips the tab.
+- **Fail closed:** blank text, or no row and a `rows.empty` match, shows `No items.`. Text with something in it, no
   row and no `rows.empty` match shows exactly `module <m> tab <id>: output did not match its pattern`,
   never the empty state.
 - **Bounds, before any regex runs:** the text is cut at 256 Ki characters, lines over 2000 characters

@@ -234,8 +234,6 @@ export function cutRows(text: string, rules: RowRules, sourceCut = false): Cut {
   if (text.slice(0, TEXT_MAX).trim() === '') return { kind: 'empty' }
   const { lines, cut } = linesOf(text)
   const truncated = cut || sourceCut
-  const empty = rules.empty === undefined ? undefined : new RegExp(rules.empty, 'u')
-  if (empty && lines.some(line => empty.test(line))) return { kind: 'empty' }
   const pattern = new RegExp(rules.pattern, 'u')
   const detail = rules.detail === undefined ? undefined : new RegExp(rules.detail, 'u')
   const rows: ModuleRow[] = []
@@ -258,7 +256,10 @@ export function cutRows(text: string, rules: RowRules, sourceCut = false): Cut {
       if (value) current.detail = value
     }
   }
-  return rows.length === 0 ? { kind: 'unmatched' } : { kind: 'rows', rows, capped: false, truncated }
+  if (rows.length > 0) return { kind: 'rows', rows, capped: false, truncated }
+  // The empty pattern counts only when no row was cut: a header that matches it never hides rows.
+  const empty = rules.empty === undefined ? undefined : new RegExp(rules.empty, 'u')
+  return empty && lines.some(line => empty.test(line)) ? { kind: 'empty' } : { kind: 'unmatched' }
 }
 
 const UNSAFE_VALUE = /^-|\p{Cc}/u
