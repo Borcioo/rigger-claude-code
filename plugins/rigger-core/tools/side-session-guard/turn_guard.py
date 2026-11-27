@@ -144,7 +144,8 @@ def one_line(text):
 
 
 def block_reason(task_id, kind, description, path, count):
-    until = ("until its completion notice arrives" if kind == "subagent"
+    until = ("a shell loop under `timeout` of a few minutes; its completion notice arrives after that call, "
+             "and you repeat while it runs" if kind == "subagent"
              else "until %s ends with an [exited with code N] line" % path)
     return ('%s background task %s ("%s") is still running. Wait for it inside this turn with one bounded '
             'foreground wait (%s), then continue; end the turn only with a result or a question. If it is '

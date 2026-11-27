@@ -151,6 +151,8 @@ class FilterTests(Base):
         self.assertEqual(clock.now, 0.0)
         self.assertIn('"bg review"', reason)
         self.assertIn("completion notice", reason)
+        self.assertIn("under `timeout`", reason)
+        self.assertIn("repeat while it runs", reason)
         self.assertAllowed(self.check([task("a21a4cf9bbd611542", kind="subagent", status="completed")]))
 
     def test_a_subagent_skips_the_poll_of_a_shell_task_too(self):
