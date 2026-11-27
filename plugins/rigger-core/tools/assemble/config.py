@@ -4,7 +4,8 @@
 (levels 1-4; review_scope reads level 4 itself, at the reviewed diff's base), `lessons` (levels 2-3, read
 by rigger-lessons' lint), `turn_guard` (levels 2-4, read by the Stop hook's turn_guard.py), `load` (levels
 1-4, read by mem_check.py), `shell_guard` (level 3, read by rigger-shellwise's installer), `test_evidence`
-(levels 2-3, read by rigger-testing's Stop shadow) and `drift_lint` (levels 2-3, read by drift-lint) apply.
+(levels 2-3, read by rigger-testing's Stop shadow), `drift_lint` (levels 2-3, read by drift-lint) and `panel`
+(levels 2-3, read by rigger-panel from the snapshot) apply.
 Every other key set above level 1 is checked for its type and level, then recorded in
 `Resolved.inactive` without effect (D11, D32). `effective["slots"]` is the plain merge, before the
 trust filter: only `slots.resolve_slots`, which reads `Resolved.levels`, may decide what fills a
@@ -40,11 +41,12 @@ KEYS = {
     "load": (dict, ALL_LEVELS),
     "test_evidence": (dict, frozenset((2, 3))),
     "drift_lint": (dict, frozenset((2, 3))),
+    "panel": (dict, frozenset((2, 3))),
 }  # type: Dict[str, Tuple[type, FrozenSet[int]]]
 
 # Keys with an effect when set above level 1; the others are recorded only (D11, D32).
 ACTIVE_ABOVE_L1 = frozenset(("schema", "triggers", "expects", "slots", "trust", "review", "lessons", "turn_guard",
-                             "load", "shell_guard", "test_evidence", "drift_lint"))
+                             "load", "shell_guard", "test_evidence", "drift_lint", "panel"))
 LOAD_MIN_FREE_GB = (0, 1024)  # load.min_free_gb, a number (D80)
 LOAD_HEAVY_AGENTS = (1, 8)  # load.max_heavy_agents, a whole number (D80)
 REVIEW_PATHS_MAX = 50  # review.paths entries per config level (D61)
@@ -56,6 +58,7 @@ PHRASE_TEXT_MAX = 60
 DRIFT_LISTS = ("remote_commands", "project_bins")  # drift_lint lists of command names (D95)
 DRIFT_NAMES_MAX = 50  # entries per list per config level
 DRIFT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")  # one command name, matched whole
+TAB_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")  # one rigger-panel tab id (a pane id), matched whole
 DEFAULTS_FILE = "rigger-defaults.json"
 BEFORE_MAX = manifest.BEFORE_MAX
 LOAD_MAX = manifest.LOAD_MAX
@@ -374,6 +377,30 @@ def _drift_lint(value: dict, where: str) -> Tuple[dict, List[str]]:
     return clean, notices
 
 
+def _panel(value: dict, where: str) -> Tuple[dict, List[str]]:
+    """panel.tabs_off: the rigger-panel tab ids that start off, read by rigger-panel from the snapshot; a bad list
+    or entry is dropped, so the tab stays on."""
+    clean = {}
+    notices = []
+    for key, ids in value.items():
+        if key != "tabs_off":
+            notices.append("rigger: config %s panel key %s unknown; ignored" % (where, _shown(key)))
+        elif ids is None:
+            clean[key] = None
+        elif not isinstance(ids, list):
+            notices.append("rigger: config %s panel.tabs_off must be a list of tab ids; ignored" % where)
+        else:
+            kept = []
+            for item in ids:
+                if isinstance(item, str) and TAB_ID.fullmatch(item):
+                    kept.append(item)
+                else:
+                    notices.append("rigger: config %s panel.tabs_off entry %s ignored: must be a tab id of 1 to 64 "
+                                   "characters (letters, digits, _ -)" % (where, _shown(repr(item))))
+            clean[key] = kept
+    return clean, notices
+
+
 def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]:
     """The keys of one level's data that its level allows, each of the right shape, and a notice per drop."""
     clean = {}
@@ -430,6 +457,9 @@ def validate_level(data: dict, level: int, where: str) -> Tuple[dict, List[str]]
             notices.extend(found)
         if key == "drift_lint":
             value, found = _drift_lint(value, where)
+            notices.extend(found)
+        if key == "panel":
+            value, found = _panel(value, where)
             notices.extend(found)
         clean[key] = value
     return clean, notices

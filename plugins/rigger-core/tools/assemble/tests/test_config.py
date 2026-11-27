@@ -630,6 +630,50 @@ class DriftLintListsTests(unittest.TestCase):
         self.assertEqual((clean, notices), ({}, ["rigger: config w key drift_lint must be an object; ignored"]))
 
 
+class PanelTabsTests(unittest.TestCase):
+    """panel.tabs_off (levels 2-3): the rigger-panel tabs that start off; a bad entry is dropped with a notice."""
+
+    BLOCK = {"tabs_off": ["rigger-issues", "rigger_plan-2"]}
+
+    def test_list_applies_at_levels_two_and_three(self):
+        got = resolve(l3={"schema": 1, "panel": self.BLOCK})
+        self.assertEqual((got.effective.get("panel"), got.notices, got.inactive), (self.BLOCK, [], {}))
+        self.assertEqual(got.sources[("panel", "tabs_off")], "L3:" + PATHS[3])
+        got = resolve(l2=[("acme", {"panel": {"tabs_off": ["rigger-envs"]}})])
+        self.assertEqual((got.effective.get("panel"), got.notices, got.inactive),
+                         ({"tabs_off": ["rigger-envs"]}, [], {}))
+
+    def test_other_levels_drop_it_with_a_notice(self):
+        for level in (1, 4):
+            with self.subTest(level=level):
+                clean, notices = config.validate_level({"schema": 1, "panel": self.BLOCK}, level, "w")
+                self.assertEqual(clean, {"schema": 1})
+                self.assertEqual(notices, ["rigger: config w key panel not allowed at level %d; ignored" % level])
+        self.assertNotIn("panel", resolve(l4={"schema": 1, "panel": self.BLOCK}).effective)
+
+    def test_bad_shapes_are_dropped_with_a_notice(self):
+        where = PATHS[3]
+        name = "must be a tab id of 1 to 64 characters (letters, digits, _ -)"
+        rows = (
+            ("unknown key", {"tabs_on": ["x"], "tabs_off": ["ok"]}, {"tabs_off": ["ok"]},
+             ["rigger: config %s panel key tabs_on unknown; ignored" % where]),
+            ("a list that is an object", {"tabs_off": {"rigger-issues": True}}, {},
+             ["rigger: config %s panel.tabs_off must be a list of tab ids; ignored" % where]),
+            ("a list that is a string", {"tabs_off": "rigger-issues"}, {},
+             ["rigger: config %s panel.tabs_off must be a list of tab ids; ignored" % where]),
+            ("bad entries", {"tabs_off": [7, None, "", "two words", "a.b", "x\n", "x" * 65, "x" * 64, "ok"]},
+             {"tabs_off": ["x" * 64, "ok"]},
+             ["rigger: config %s panel.tabs_off entry %s ignored: %s" % (where, shown, name)
+              for shown in ("7", "None", "''", "'two words'", "'a.b'", "'x\\n'", repr("x" * 65))]),
+        )
+        for what, block, kept, expected in rows:
+            with self.subTest(what):
+                got = resolve(l3={"schema": 1, "panel": block})
+                self.assertEqual((got.notices, got.effective.get("panel")), (expected, kept))
+        clean, notices = config.validate_level({"panel": ["rigger-issues"]}, 3, "w")
+        self.assertEqual((clean, notices), ({}, ["rigger: config w key panel must be an object; ignored"]))
+
+
 class ShellGuardTests(unittest.TestCase):
     """D76: shell_guard.shellwise_path takes effect at level 3 only; every other level drops it with a notice."""
 
