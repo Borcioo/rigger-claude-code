@@ -5,6 +5,8 @@ format. Releases are tagged `v<version>`.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-27
+
 ### Added
 
 - rigger-panel: a module tab's select `default` also matches an option's `key` group, and an optional `all` label
