@@ -327,6 +327,57 @@ test('a pick made while the tab is loading wins over that load', async ($, on) =
   await again.ui.unmount()
 })
 
+// The read for the old value answers the moment the pick is written, before the new read starts.
+test('a read that answers right after the pick is written never takes the pick back', async ($, on) => {
+  const tab = ticketsTab({
+    source: { mcp: { server: 'tracker', tool: 'list-tickets', args: { project_id: '{select:project}' } } },
+    select: [PROJECT_SELECT],
+  })
+  let release = () => {}
+  const slow = new Promise<McpAnswer>(resolve => {
+    release = () => resolve(text(TICKETS_TEXT))
+  })
+  const picked = text('Tickets (1):\n\n- TRK-61: Picked project work\n')
+  let reads = 0
+  const w = world(on, files([tab]), {
+    'list-projects': text(PROJECTS_TEXT),
+    'list-tickets': args => (args.project_id === 61 ? picked : ++reads === 1 ? text(TICKETS_TEXT) : slow),
+  })
+  let pickWritten = false
+  let staleWrote = false
+  // A test's hook on the pane state: right after the pick lands, the old read answers.
+  on('state.set', async (_, e, next) => {
+    const done = await next(e)
+    if (e.key !== 'modulePanes') return done
+    type Held = { rows: { title: string }[]; selects: Record<string, { value: string }> }
+    const pane = (e.value as { value: Record<string, Held | undefined> }).value[TICKETS]
+    if (!pickWritten && pane?.selects.project?.value === '61') {
+      pickWritten = true
+      release()
+      for (let i = 0; i < 200 && !staleWrote; i++) await Promise.resolve()
+    } else if (pickWritten && pane?.rows.some(row => row.title === 'QA and rollout')) staleWrote = true
+    return done
+  })
+  await start($, w)
+  const first = await drawTab($, w)
+  await first.ui.press({ key: 'refresh' })
+  for (let i = 0; i < 200 && reads < 2; i++) await Promise.resolve()
+  expect(reads).toBe(2)
+  await first.ui.unmount()
+  const ui = await $.ui.mount({ ...paneOf(TICKETS, 'Tickets'), surface: 'desktop' })
+  await ui.select({ key: 'select-project', value: '61' })
+  await w.clock.settle()
+  await ui.unmount()
+  const again = await drawTab($, w)
+  expect({ pickWritten, staleWrote, value: again.select?.props?.value, picked: again.texts.includes('Picked project work') }).toEqual({
+    pickWritten: true,
+    staleWrote: false,
+    value: '61',
+    picked: true,
+  })
+  await again.ui.unmount()
+})
+
 // A chosen value reaches command argv: one read as an option there, or with a control character, is no option.
 test('an option value that starts with a dash or holds a control character is dropped', () => {
   const rule = { id: 'project', label: 'Project', type: 'string', pattern: '^- (?<value>\\S+) (?<label>.+)$' } as never

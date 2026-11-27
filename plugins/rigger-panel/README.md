@@ -116,8 +116,9 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
   are skipped, at most 50 rows are kept (then `The first 50 are shown.`), and a regex source over 500
   characters is refused. The patterns run with no time bound (the manifest is the installed plugin's
   own code), so keep them linear: no nested repetition such as `(a+)+`.
-- **A pick wins:** each read of a tab takes the next number and only the latest one writes, so a pick
-  made while a read for the old choice runs is never overwritten by it.
+- **A pick wins:** each read of a tab takes the next number and only the latest one writes; a pick
+  takes its number before it is stored, so a read for the old choice that is still running, or that
+  answers while the pick is being stored, never overwrites it.
 - `select` (at most 3): `id` like a tab id, `label` 1-40 characters, `type` `"string"` (the default) or
   `"number"`. `options` is a source (`mcp` or `command`, with no `{select:…}` in it) plus `pattern`
   with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200

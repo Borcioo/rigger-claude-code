@@ -359,13 +359,18 @@ const running = new Map<string, number>()
 // already running. Rows are cleared first, so a failed read never leaves the previous list standing.
 export async function loadModuleTab($: EngineInterface, pane: string) {
   if (running.has(pane)) return
-  await startLoad($, pane)
+  await startLoad($, pane, claimLoad(pane))
 }
 
-async function startLoad($: EngineInterface, pane: string) {
+// Takes the next number before any await, so a load still running can no longer write.
+const claimLoad = (pane: string) => {
   const mine = (latest.get(pane) ?? 0) + 1
   latest.set(pane, mine)
   running.set(pane, mine)
+  return mine
+}
+
+async function startLoad($: EngineInterface, pane: string, mine: number) {
   const current = () => latest.get(pane) === mine
   const write = async (change: (last: ModulePane | undefined) => ModulePane) => {
     if (current()) await setPane($, pane, change)
@@ -413,12 +418,18 @@ async function startLoad($: EngineInterface, pane: string) {
 // A pick in a select: kept for the session, then the tab is read again with it, overtaking a read
 // still running for the old choice.
 export async function chooseOption($: EngineInterface, pane: string, id: string, value: string) {
-  await setPane($, pane, last => {
-    const held = last?.selects[id]
-    const base = last ?? { phase: 'loading', rows: [], selects: {} }
-    return held === undefined ? base : { ...base, selects: { ...base.selects, [id]: { ...held, value } } }
-  })
-  await startLoad($, pane)
+  const mine = claimLoad(pane)
+  try {
+    await setPane($, pane, last => {
+      const held = last?.selects[id]
+      const base = last ?? { phase: 'loading', rows: [], selects: {} }
+      return held === undefined ? base : { ...base, selects: { ...base.selects, [id]: { ...held, value } } }
+    })
+  } catch (error) {
+    if (running.get(pane) === mine) running.delete(pane)
+    throw error
+  }
+  await startLoad($, pane, mine)
 }
 
 // /harness reads every module tab that is open again.
