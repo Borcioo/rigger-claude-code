@@ -7,7 +7,7 @@ format. Releases are tagged `v<version>`.
 
 ### Added
 
-- gate: `scripts/gate.py --snapshot <ref>` gates a commit in a detached temporary worktree with that commit's own
+- gate: `scripts/gate.py --snapshot <ref>` gates a commit in a detached worktree under `.claude/worktrees/` with that commit's own
   gate, so a side session still editing its worktree cannot fail the run with `tree changed during the gate`;
   the worktree is removed afterwards, on a failure too. `/rigger-core:coordinate` runs its merge-point gate on
   such a snapshot.

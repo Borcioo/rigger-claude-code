@@ -1133,16 +1133,14 @@ class SnapshotTests(TreeRepoCase):
         super().setUp()
         self.write("scripts/gate.py", SNAPSHOT_STUB)
         self.write("code.txt", "0\n")
+        self.write(".gitignore", "ignored/\n__pycache__/\n.claude/worktrees/\n")
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-q", "-m", "stub gate")
         self.out = self.base / "out"
         self.out.mkdir()
-        self.temp = self.base / "temp"
-        self.temp.mkdir()
-        real = tempfile.mkdtemp
-        patcher = mock.patch.object(gate.tempfile, "mkdtemp", lambda **kw: real(dir=str(self.temp), **kw))
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # Where the snapshots go, beside the lane worktrees: empty once every run has ended.
+        self.temp = self.repo / ".claude" / "worktrees"
+        self.temp.mkdir(parents=True)
 
     def worktrees(self):
         return [line for line in git(self.repo, "worktree", "list", "--porcelain").splitlines() if line.startswith("worktree ")]
@@ -1219,6 +1217,40 @@ class SnapshotTests(TreeRepoCase):
         self.assertEqual(result.get("code"), 1, result)
         self.assertIn("has no scripts/gate.py", result["printed"])
         self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
+        self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
+
+    def test_the_snapshot_goes_beside_the_lane_worktrees_of_the_main_checkout(self):
+        lane = self.temp / "lane"
+        git(self.repo, "worktree", "add", "-q", "--detach", str(lane), "HEAD")
+        self.addCleanup(git, self.repo, "worktree", "remove", "--force", str(lane))
+        sha = git(self.repo, "rev-parse", "HEAD")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            (self.out / "go").write_text("x")
+            code = gate.main(["--snapshot", "HEAD", "--out", str(self.out)], root=lane)
+        self.assertEqual(code, 0, printed.getvalue())
+        ran_in = Path((self.out / "cwd.txt").read_text())
+        self.assertEqual(os.path.normcase(os.path.realpath(ran_in)),
+                         os.path.normcase(os.path.realpath(self.temp / ("gate-" + sha[:12]))))
+        self.assertEqual(sorted(p.name for p in self.temp.iterdir()), ["lane"])
+
+    def test_an_existing_snapshot_path_is_refused_and_left_alone(self):
+        self.stale_pass()
+        taken = self.temp / ("gate-" + git(self.repo, "rev-parse", "HEAD")[:12])
+        taken.mkdir()
+        (taken / "keep.txt").write_text("another run")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("already exists; remove it or let its run finish", result["printed"])
+        self.assertEqual(self.last_status_line(), "# gate failed: snapshot")
+        self.assertEqual((taken / "keep.txt").read_text(), "another run")
+        self.assertEqual(len(self.worktrees()), 1)
+
+    def test_a_snapshot_path_git_does_not_ignore_is_refused(self):
+        self.write(".gitignore", "ignored/\n")
+        git(self.repo, "commit", "-q", "-am", "worktrees not ignored")
+        result = self.run_snapshot()
+        self.assertEqual(result.get("code"), 1, result)
+        self.assertIn("is not ignored by git", result["printed"])
         self.assertEqual((len(self.worktrees()), list(self.temp.iterdir())), (1, []))
 
     def test_every_gate_option_reaches_the_snapshot(self):

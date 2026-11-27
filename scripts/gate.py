@@ -50,13 +50,15 @@ The status line after TREE is the mode: `mode: full`, or for --changed-modules
               base that is not the merge base of --into (default main) and HEAD.
 --into        with --verify only: the branch the change merges into.
 --snapshot    gate commit REF (fetch first for a pushed branch: `origin/<branch>`) in a detached
-              worktree under the OS temp folder, so an edit in any checkout, a side session's included,
-              cannot change the gated tree mid-run. The commit's own scripts/gate.py runs there with the
+              worktree at <main checkout>/.claude/worktrees/gate-<short sha> (never the OS temp folder,
+              which some legs read as outside every repository), so an edit in any checkout, a side
+              session's included, cannot change the gated tree mid-run. That path must be ignored by git
+              and must not exist yet. The commit's own scripts/gate.py runs there with the
               other options (paths made absolute, --out defaulting to this checkout's gate folder). Prints
               `# snapshot <sha> tree <tree> at <path>` first and, after the run, `# snapshot removed: …`
               (or `# snapshot not removed: …`); the worktree is removed on a failure or an interrupt too.
-              Exit: the snapshot gate's, or 1 when REF does not resolve or holds no scripts/gate.py
-              (the status then ends `# gate failed: snapshot`). Not with --verify.
+              Exit: the snapshot gate's, or 1 when REF does not resolve or holds no scripts/gate.py, or
+              the path exists or is not ignored (the status then ends `# gate failed: snapshot`). Not with --verify.
 """
 
 import argparse
@@ -567,26 +569,47 @@ def run_snapshot_child(tree, argv):
     ).returncode
 
 
-def remove_snapshot(root, holder, tree):
-    """Remove the snapshot worktree and its temp folder; the line to print."""
+def remove_snapshot(root, tree):
+    """Remove the snapshot worktree and its folder; the line to print."""
     done = subprocess.run(
         ["git", "worktree", "remove", "--force", str(tree)], cwd=str(root), env=no_git_env(),
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT,
     )
-    shutil.rmtree(holder, ignore_errors=True)
+    shutil.rmtree(tree, ignore_errors=True)
     subprocess.run(
         ["git", "worktree", "prune"], cwd=str(root), env=no_git_env(), stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
     )
-    if os.path.exists(holder):
+    if os.path.exists(tree):
         detail = " ".join(done.stderr.decode("utf-8", "replace").split())
-        return "# snapshot not removed: %s (git worktree remove exit %d: %s)" % (holder, done.returncode, detail)
+        return "# snapshot not removed: %s (git worktree remove exit %d: %s)" % (tree, done.returncode, detail)
     return "# snapshot removed: %s" % tree
 
 
+def snapshot_path(root, sha):
+    """<main checkout>/.claude/worktrees/gate-<short sha>, beside the lane worktrees; TreeError when it cannot be used.
+
+    Not under the OS temp folder, which some legs read as outside every repository. The folder must be ignored, or
+    an untracked snapshot inside the main checkout would change that checkout's own tree id."""
+    common = Path(git_list(root, "snapshot: cannot find the main checkout", "rev-parse", "--path-format=absolute",
+                           "--git-common-dir")[0].strip())
+    if common.name != ".git":
+        raise TreeError("snapshot: no main checkout above the git dir %s" % common)
+    path = common.parent / ".claude" / "worktrees" / ("gate-" + sha[:12])
+    if os.path.lexists(path):
+        raise TreeError("snapshot: %s already exists; remove it or let its run finish" % path)
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", str(path)], cwd=str(common.parent), env=no_git_env(),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
+    )
+    if ignored.returncode != 0:
+        raise TreeError("snapshot: %s is not ignored by git; add .claude/worktrees/ to .gitignore or .git/info/exclude"
+                        % path)
+    return path
+
+
 def snapshot_refused(out, line):
-    """A snapshot run that cannot start still writes its status, like fail_early."""
-    print(line, flush=True)
+    """A snapshot run that cannot start still writes its status (and prints it), like fail_early."""
     out.mkdir(parents=True, exist_ok=True)
     return fail_early(out, line, leg="snapshot")
 
@@ -598,21 +621,20 @@ def snapshot_gate(ref, args, root, out):
         sha = git_list(root, "snapshot: cannot resolve %s" % ref, "rev-parse", "--verify", "--end-of-options",
                        ref + "^{commit}")[0].strip()
         tree = git_list(root, "snapshot: cannot read the tree of %s" % ref, "rev-parse", sha + "^{tree}")[0].strip()
+        snapshot = snapshot_path(root, sha)
     except (TreeError, IndexError) as error:
         return snapshot_refused(out, str(error) if isinstance(error, TreeError) else "snapshot: cannot resolve %s" % ref)
-    holder = tempfile.mkdtemp(prefix="rigger-gate-")
-    snapshot = Path(holder) / sha[:12]
     try:
-        try:
-            git_list(root, "snapshot: cannot create the worktree", "worktree", "add", "--detach", str(snapshot), sha)
-        except TreeError as error:
-            return snapshot_refused(out, str(error))
+        git_list(root, "snapshot: cannot create the worktree", "worktree", "add", "--detach", str(snapshot), sha)
+    except TreeError as error:
+        return snapshot_refused(out, str(error))  # nothing of ours to remove: the path did not exist
+    try:
         if not (snapshot / "scripts" / "gate.py").is_file():
             return snapshot_refused(out, "snapshot: %s has no scripts/gate.py" % sha)
         print("# snapshot %s tree %s at %s" % (sha, tree, snapshot), flush=True)
         return run_snapshot_child(snapshot, snapshot_argv(args, out))
     finally:
-        print(remove_snapshot(root, holder, snapshot), flush=True)
+        print(remove_snapshot(root, snapshot), flush=True)
 
 
 def build_parser():
@@ -627,7 +649,7 @@ def build_parser():
     )
     parser.add_argument("--base", default=None, help="with --changed-modules: the change starts at the merge base with this (default: main)")
     parser.add_argument("--into", default=None, help="with --verify: the branch the change merges into (default: main)")
-    parser.add_argument("--snapshot", metavar="REF", help="gate this commit in a detached temporary worktree")
+    parser.add_argument("--snapshot", metavar="REF", help="gate this commit in a detached worktree under .claude/worktrees")
     return parser
 
 
