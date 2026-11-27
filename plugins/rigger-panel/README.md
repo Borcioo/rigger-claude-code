@@ -118,7 +118,8 @@ id itself is invalid; `*` when `panel.tabs` is not a list).
 - `select` (at most 3): `id` like a tab id, `label` 1-40 characters, `type` `"string"` (the default) or
   `"number"`. `options` is a source (`mcp` or `command`, with no `{select:…}` in it) plus `pattern`
   with a `value` group (required) and a `label` group (else the value); the same bounds, at most 200
-  options, a repeated value kept once; a number select whose value is not a number fails. `default`: a
+  options, a repeated value kept once, a value that starts with `-` or holds a control character
+  dropped (it would reach a command's argv); a number select whose value is not a number fails. `default`: a
   dot path into the session folder's `.claude/environments.json`; the option whose value equals that
   value as a string is chosen first. A missing file, a missing key, invalid JSON or a value that is no
   option picks the first option. The choice is kept for the session (in state, not the store) and a
