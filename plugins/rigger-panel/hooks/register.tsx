@@ -43,7 +43,7 @@ import { EMPTY_ISSUES, askSession, detectStartTool, loadIssues, refreshIssues, s
 import { cutLine, emptyText, shortTitle } from './issues'
 import { registerInbox } from './inbox/view'
 import { NO_MODULE_TABS, chooseOption, loadModuleTab, reloadModuleTabs } from './module-tabs'
-import { TABS, loadTabs, openTabs, recheckTabs, toggleTab } from './tabs'
+import { TABS, loadTabs, openPanes, openTabs, recheckTabs, tabLabel, toggleTab } from './tabs'
 
 const PANE = 'rigger-panel'
 const ISSUES_PANE = 'rigger-issues'
@@ -178,6 +178,12 @@ const refresh = async ($: EngineInterface) => {
     updatedAt: now,
   }))
 }
+
+// The tabs the person can switch, as the Tabs row and the right-click menu list them.
+const switchable = (modules: { tabs: { pane: string; title: string }[] }) => [
+  ...TABS,
+  ...modules.tabs.map(tab => ({ id: tab.pane, title: tab.title })),
+]
 
 export const register: Register = on => {
   registerInbox(on)
@@ -434,8 +440,9 @@ export const register: Register = on => {
     const Svg = svgOf(elements, e.surface)
     const now = await read($, snapshot)
     const shown = await read($, tabs)
+    const open = await openPanes($)
     const modules = await read($, moduleTabs)
-    const listed = [...TABS, ...modules.tabs.map(tab => ({ id: tab.pane, title: tab.title }))]
+    const listed = switchable(modules)
     const width = labelWidth(HARNESS_LABELS)
     const line = (label: string, value: string) => textRow(elements, width, label, value)
     // The context figures and, under them, a bar of how full the window is.
@@ -467,7 +474,7 @@ export const register: Register = on => {
           <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
             {listed.map(tab => (
               <Button key={`tab-${tab.id}`} onPress={() => void toggleTab($, tab.id)}>
-                {`${shown.on.includes(tab.id) ? '[x]' : '[ ]'} ${tab.title}`}
+                {tabLabel(tab, shown.on.includes(tab.id), open)}
               </Button>
             ))}
           </Box>
@@ -475,6 +482,33 @@ export const register: Register = on => {
             <Text dimColor>{line}</Text>
           ))}
         </Box>
+      </Box>
+    )
+  })
+
+  // A pane the person closes with its close mark stays on: the Tabs row and the menu are drawn again so its
+  // row says it is closed. The pane still closes (`next`).
+  on('ui.close', async ($, e, next) => {
+    const result = await next(e)
+    if (e.origin.kind === 'person') $.ui.invalidate('ui.render')
+    return result
+  })
+
+  // The transcript's right-click menu (raised on the desktop app only) gets a row per tab: a pane header has
+  // no room for one, and a press switches the tab as the Tabs row does. The engine asks each plugin for its
+  // own rows and keeps every other plugin's, so this hook answers only the panel's.
+  on('ui.render', { component: 'ContextMenu' }, async ($, e) => {
+    const { Box, Button } = $.ui.resolve(e)
+    const shown = await read($, tabs)
+    const open = await openPanes($)
+    const listed = switchable(await read($, moduleTabs))
+    return (
+      <Box flexDirection="column">
+        {listed.map(tab => (
+          <Button key={`menu-tab-${tab.id}`} onPress={() => void toggleTab($, tab.id)}>
+            {tabLabel(tab, shown.on.includes(tab.id), open)}
+          </Button>
+        ))}
       </Box>
     )
   })

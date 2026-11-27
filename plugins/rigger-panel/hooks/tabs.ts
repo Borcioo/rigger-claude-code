@@ -144,14 +144,35 @@ export async function recheckTabs($: EngineInterface) {
   ])
 }
 
-// Switches one tab for the session's project: stored first, then the pane opens or closes.
+// The ids of this plugin's open panes, as the engine records them; undefined when it cannot list them, and
+// then every tab counts as open.
+export async function openPanes($: EngineInterface): Promise<Set<string> | undefined> {
+  try {
+    return new Set((await $.ui.panes()).map(pane => pane.id))
+  } catch {
+    return undefined
+  }
+}
+
+// A tab's row in the Tabs row and the right-click menu. A tab that is on but whose pane the person closed
+// with its close mark says so: a press opens it again.
+export const tabLabel = (tab: Tab, isOn: boolean, open: Set<string> | undefined) =>
+  `${isOn ? '[x]' : '[ ]'} ${tab.title}${isOn && open !== undefined && !open.has(tab.id) ? ' (closed)' : ''}`
+
+// Switches one tab for the session's project: stored first, then the pane opens or closes. A tab that is on
+// but closed by hand is opened again and stays on.
 export async function toggleTab($: EngineInterface, id: string) {
   const listed = await allTabs($)
   const tab = listed.find(item => item.id === id)
   if (tab === undefined) return
   const project = await projectKey($)
-  const [tabsOff, choice] = await Promise.all([readTabsOff($), readChoice($, project)])
+  const [tabsOff, choice, open] = await Promise.all([readTabsOff($), readChoice($, project), openPanes($)])
   const turnOn = !isTabOn(id, tabsOff, choice)
+  if (!turnOn && open !== undefined && !open.has(id)) {
+    await $.ui.open({ id: tab.id, title: tab.title })
+    $.ui.invalidate('ui.render')
+    return
+  }
   const without = (list: string[]) => list.filter(item => item !== id)
   const next: TabChoice = turnOn
     ? { on: [...without(choice.on), id], off: without(choice.off) }

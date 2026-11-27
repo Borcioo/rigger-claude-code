@@ -66,6 +66,8 @@ type WorldOpts = {
   uname?: string
   openerFails?: string
   mtimes?: Record<string, number>
+  // What list_sessions answers: its JSON text, or a failure; unset, the app lists no session.
+  sessions?: string | { isError: string } | 'throw' | 'hang'
 }
 
 // The world beneath the plugin: an inbox folder, the app's session tools and the system opener.
@@ -108,10 +110,19 @@ const world = (on: On, files: Record<string, string>, opts: WorldOpts = {}) => {
     files[path.slice(DIR.length + 1)] = e.text
     return { value: undefined }
   })
+  const listings: unknown[] = []
   on('mcp.call', (_, e) => {
     if (e.server === 'ccd_session_mgmt' && e.tool === 'get_session') {
       const self = { sessionId: 'local_me', title: 'Me', cwd: '/work/me', link: 'claude://x/local_me' }
       return { value: { content: [{ type: 'text', text: JSON.stringify(self) }], isError: false } }
+    }
+    if (e.server === 'ccd_session_mgmt' && e.tool === 'list_sessions') {
+      listings.push(e.args)
+      const answer = opts.sessions ?? '[]'
+      if (answer === 'throw') throw new Error('no app here')
+      if (answer === 'hang') return new Promise<never>(() => {})
+      if (typeof answer === 'object') return { value: { content: [{ type: 'text', text: answer.isError }], isError: true } }
+      return { value: { content: [{ type: 'text', text: answer }], isError: false } }
     }
     return { deny: 'not in this test' }
   })
@@ -132,7 +143,7 @@ const world = (on: On, files: Record<string, string>, opts: WorldOpts = {}) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
-  return { files, runs, unames, clock, registered, opened, reads }
+  return { files, runs, unames, clock, registered, opened, reads, listings }
 }
 
 const open = async ($: Engine, surface: 'terminal' | 'desktop' = 'desktop') => {
@@ -230,6 +241,72 @@ test('an entry whose session id carries junk before local_ is not shown and open
   expect((await ui.find({ type: 'Text', text: /Nothing|Crafted/ }))?.text).toBe('Nothing waiting.')
   expect(await ui.find({ type: 'Button', key: `open-${id}` })).toBeUndefined()
   expect(runs).toEqual([])
+  await ui.unmount()
+})
+
+const TWO = () => ({
+  'local_alpha.json': entry('local_alpha', 'Alpha', NOW - 1000),
+  'local_beta.json': entry('local_beta', 'Beta', NOW - 2000),
+})
+const row = (sessionId: string, isArchived: boolean) => ({ sessionId, title: sessionId, isArchived, isRunning: false })
+const shown = async (ui: Awaited<ReturnType<typeof open>>) =>
+  (await ui.findAll({ type: 'Text', text: / · / })).map(text => text.text)
+
+test("an archived session's entry is hidden, an active one's shows", async ($, on) => {
+  const { listings } = world(on, TWO(), { sessions: JSON.stringify([row('local_alpha', false), row('local_beta', true)]) })
+  const ui = await open($)
+  expect(await shown(ui)).toEqual(['❓ Alpha · alpha · now'])
+  expect(listings[0]).toEqual({ include_archived: true, limit: 200 })
+  await ui.unmount()
+})
+
+// The entry is a notice: when the app cannot say which sessions are archived, every entry shows.
+const BETA_ARCHIVED = JSON.stringify([row('local_beta', true)])
+for (const [name, sessions] of [
+  ['an error, whatever its text', { isError: BETA_ARCHIVED }],
+  ['a throw', 'throw'],
+  ['text that is not JSON', 'not json'],
+  ['JSON that is not a list', JSON.stringify({ sessionId: 'local_beta', isArchived: true })],
+  ['a row whose isArchived is not true', JSON.stringify([{ sessionId: 'local_beta', isArchived: 'yes' }])],
+] as const) {
+  test(`a list_sessions that answers ${name} hides nothing`, async ($, on) => {
+    world(on, TWO(), { sessions })
+    const ui = await open($)
+    expect(await shown(ui)).toEqual(['❓ Beta · beta · now', '❓ Alpha · alpha · now'])
+    await ui.unmount()
+  })
+}
+
+// One odd row neither hides the others nor drops the archived ones beside it.
+test('rows of the wrong shape are skipped and an archived row beside them still hides its entry', async ($, on) => {
+  const rows = [null, 'local_beta', 7, { sessionId: 7, isArchived: true }, row('local_alpha', true)]
+  world(on, TWO(), { sessions: JSON.stringify(rows) })
+  const ui = await open($)
+  expect(await shown(ui)).toEqual(['❓ Beta · beta · now'])
+  await ui.unmount()
+})
+
+test('a list_sessions that never answers is given up after 5 s and hides nothing', async ($, on) => {
+  const { clock } = world(on, TWO(), { sessions: 'hang' })
+  const opening = open($)
+  await clock.advance(5000)
+  const ui = await opening
+  expect(await shown(ui)).toEqual(['❓ Beta · beta · now', '❓ Alpha · alpha · now'])
+  await ui.unmount()
+})
+
+test('the archive check is asked at most once in 30 s, and not at all with nothing to show', async ($, on) => {
+  const { files, clock, listings } = world(on, {}, { sessions: JSON.stringify([row('local_beta', true)]) })
+  const ui = await open($)
+  expect(listings).toHaveLength(0)
+  Object.assign(files, TWO())
+  await clock.advance(5000)
+  expect(listings).toHaveLength(1)
+  expect(await shown(ui)).toEqual(['❓ Alpha · alpha · now'])
+  await clock.advance(20_000)
+  expect(listings).toHaveLength(1)
+  await clock.advance(10_000)
+  expect(listings).toHaveLength(2)
   await ui.unmount()
 })
 

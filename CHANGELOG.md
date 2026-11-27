@@ -9,6 +9,13 @@ format. Releases are tagged `v<version>`.
 
 - rigger-panel: a module tab's select `default` also matches an option's `key` group, and an optional `all` label
   adds a first option that leaves the select's argument out of the call.
+- rigger-panel: the desktop app's right-click menu in the transcript switches panel tabs on and off, like the
+  Tabs row; a tab whose pane was closed with its close mark shows `(closed)`, and a press opens it again.
+
+### Changed
+
+- rigger-panel: an Inbox entry also closes when its session receives another session's message, and an entry
+  of a session archived in the desktop app is hidden.
 
 ## [0.9.0] - 2026-11-27
 

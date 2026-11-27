@@ -58,12 +58,23 @@ function wrapFields(e: unknown, result: ToolCallResult): WrapFields {
 // closed once a tool call runs after it (the approval was given) or the turn ends without wrap_up.
 let turn = { wrapped: false, permission: false }
 
-// Whether the last prompt submitted came from the owner: typed (`composer`; the desktop app's own
-// input arrives as `sdk`), from a phone (`bridge`, `slack-ping`) or a click on the app's own buttons
-// (`auto-continuation`). A message from another session, a task notification, a schedule or a
-// plugin starts a turn too, but answers nothing the entry asked.
-const OWNER_ORIGINS = new Set<PromptOrigin['kind']>(['composer', 'sdk', 'bridge', 'slack-ping', 'auto-continuation'])
-let isOwnerPrompt = false
+// Whether the last prompt submitted answers the entry: the owner's, typed (`composer`; the desktop
+// app's own input arrives as `sdk`), from a phone (`bridge`, `slack-ping`) or a click on the app's own
+// buttons (`auto-continuation`), or another session's message (`peer`, `peer-send-message`) or a
+// coordinating session's (`projects-relay`, `coordinator`). A task notification, a schedule, a
+// channel or a plugin starts a turn too, but answers nothing the entry asked.
+const ANSWER_ORIGINS = new Set<PromptOrigin['kind']>([
+  'composer',
+  'sdk',
+  'bridge',
+  'slack-ping',
+  'auto-continuation',
+  'peer',
+  'peer-send-message',
+  'projects-relay',
+  'coordinator',
+])
+let isAnswer = false
 
 // Writer work never breaks the session: it runs after `next` and swallows its own failure. Without
 // the app's identity nothing is written and nothing is said; a write that fails is named on the
@@ -92,7 +103,7 @@ const close = ($: EngineInterface) => quietly($, async id => closeAt($, id.sessi
 export function registerInbox(on: On) {
   // Recorded before `next`, which resolves only once the prompt's turn has started.
   on('prompt.submit', { text: EVERY }, async (_$, e, next) => {
-    isOwnerPrompt = OWNER_ORIGINS.has(e.origin.kind)
+    isAnswer = ANSWER_ORIGINS.has(e.origin.kind)
     return next(e)
   })
 
@@ -101,10 +112,10 @@ export function registerInbox(on: On) {
     if (e.agentId !== undefined) return result
     nextTurn()
     turn = { wrapped: false, permission: false }
-    const isOwner = isOwnerPrompt
-    isOwnerPrompt = false
-    // The owner wrote in the session itself: whatever its entry asked is answered there.
-    if (isOwner && e.text.trim() !== '') await close($)
+    const answers = isAnswer
+    isAnswer = false
+    // The owner or another session wrote to the session itself: whatever its entry asked is answered.
+    if (answers && e.text.trim() !== '') await close($)
     return result
   })
 

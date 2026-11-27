@@ -31,6 +31,8 @@ type World = {
   gitDirs: Record<string, string>
   files: Record<string, string>
   store?: Record<string, unknown>
+  // `$.ui.panes()` is refused.
+  panesFail?: boolean
 }
 
 // The world beneath the plugin, with what it opened and closed recorded in order.
@@ -48,14 +50,23 @@ const world = (on: On, given: Partial<World> = {}) => {
   })
   on('env.get', (_, e) => ({ value: e.name === 'CLAUDE_CONFIG_DIR' ? CONFIG : undefined }))
   on('command.register', () => ({ value: { command: 'harness' } }))
+  // The engine's record of the open panes, which `$.ui.panes()` lists; a person's close mark removes one.
+  const open = new Set<string>()
   on('ui.open', (_, e) => {
     opened.push(e.id)
+    open.add(e.id)
     return { value: { isPlaced: true } }
   })
   on('ui.close', (_, e) => {
     closed.push(e.id)
+    open.delete(e.id)
     return { value: undefined }
   })
+  on('ui.panes', () =>
+    given.panesFail
+      ? { deny: 'not served here' }
+      : { value: [...open].map(id => ({ id, title: id, isShown: false, isFocused: false, isPlaced: true })) },
+  )
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: state.cwd }))
   on('session.id', () => ({ value: SESSION }))
@@ -74,7 +85,7 @@ const world = (on: On, given: Partial<World> = {}) => {
     const text = state.files[norm(e.path)]
     return text === undefined ? { deny: 'missing' } : { value: text }
   })
-  return Object.assign(state, { opened, closed, stored: store, clock })
+  return Object.assign(state, { opened, closed, open, stored: store, clock })
 }
 
 // A session start, and the reads it set going settled, so none outlives the test.
@@ -126,6 +137,82 @@ test('switching a tab off closes its pane and stores it, and the next session op
   await press($, 'rigger-issues')
   expect(w.opened.at(-1)).toBe('rigger-issues')
   expect(w.stored['tabs:/repo']).toEqual({ on: ['rigger-issues'], off: [] })
+})
+
+const MENU = { plugin: 'rigger-panel', surface: 'desktop', component: 'ContextMenu', props: {} } as const
+
+// The transcript's right-click menu lists every switchable tab, and a press switches it like the Tabs row.
+test("the right-click menu has a row per tab that switches it, beside another plugin's rows", async ($, on) => {
+  const w = world(on)
+  // Another plugin's row in the same menu.
+  on('ui.render', ($$, e) => {
+    const { Button } = $$.ui.resolve(e)
+    return (
+      <Button key="other-row" onPress={() => undefined}>
+        Copy
+      </Button>
+    )
+  })
+  await start($, w)
+  await press($, 'rigger-inbox')
+  const ui = await $.ui.mount(MENU as never)
+  const rows = await ui.findAll({ type: 'Button' })
+  // The engine places the rows beneath; only which rows there are is this plugin's.
+  expect(rows.map(row => row.text).sort()).toEqual(['Copy', '[ ] Inbox', '[x] Environments', '[x] Issues', '[x] Plan'])
+  await ui.press({ key: 'menu-tab-rigger-issues' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.closed).toEqual(['rigger-inbox', 'rigger-issues'])
+  expect(w.stored['tabs:/repo']).toEqual({ on: [], off: ['rigger-inbox', 'rigger-issues'] })
+  const again = await $.ui.mount(MENU as never)
+  await again.press({ key: 'menu-tab-rigger-inbox' })
+  await w.clock.settle()
+  await again.unmount()
+  expect(w.opened.at(-1)).toBe('rigger-inbox')
+  expect(await buttonText($, 'rigger-issues')).toBe('[ ] Issues')
+})
+
+const menuText = async ($: Engine, id: string) => {
+  const ui = await $.ui.mount(MENU as never)
+  const text = (await ui.find({ key: `menu-tab-${id}` }))?.text
+  await ui.unmount()
+  return text
+}
+
+// A pane closed with its close mark is hidden, not switched off: its tab stays on, says it is closed, and a
+// press in the menu or the Tabs row opens it again instead of switching it off.
+test('a tab whose pane the person closed is marked closed, and a press opens it again and keeps it on', async ($, on) => {
+  const w = world(on)
+  await start($, w)
+  w.open.delete('rigger-inbox')
+  expect(await menuText($, 'rigger-inbox')).toBe('[x] Inbox (closed)')
+  expect(await buttonText($, 'rigger-inbox')).toBe('[x] Inbox (closed)')
+  expect(await menuText($, 'rigger-issues')).toBe('[x] Issues')
+  w.opened.length = 0
+  const ui = await $.ui.mount(MENU as never)
+  await ui.press({ key: 'menu-tab-rigger-inbox' })
+  await w.clock.settle()
+  await ui.unmount()
+  expect(w.opened).toEqual(['rigger-inbox'])
+  expect(w.closed).toEqual([])
+  expect(w.stored['tabs:/repo']).toBeUndefined()
+  expect(await menuText($, 'rigger-inbox')).toBe('[x] Inbox')
+  w.open.delete('rigger-inbox')
+  await press($, 'rigger-inbox')
+  await w.clock.settle()
+  expect(w.opened).toEqual(['rigger-inbox', 'rigger-inbox'])
+  expect(w.stored['tabs:/repo']).toBeUndefined()
+})
+
+// Without the engine's pane list every tab counts as open: the marks and presses work as before.
+test('when the open panes cannot be listed, a press switches the tab as before', async ($, on) => {
+  const w = world(on, { panesFail: true })
+  await start($, w)
+  expect(await menuText($, 'rigger-inbox')).toBe('[x] Inbox')
+  await press($, 'rigger-inbox')
+  await w.clock.settle()
+  expect(w.closed).toEqual(['rigger-inbox'])
+  expect(w.stored['tabs:/repo']).toEqual({ on: [], off: ['rigger-inbox'] })
 })
 
 test('a worktree of the same repository shares the choice, and a folder outside git keys by itself', async ($, on) => {

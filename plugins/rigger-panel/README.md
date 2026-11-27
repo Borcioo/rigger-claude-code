@@ -39,6 +39,11 @@ The pane redraws every 30 seconds and after each turn. On a graphical surface th
 The Rigger pane ends with a **Tabs** row: one button per tab (Issues, Plan, Environments, Inbox), `[x]` when
 it is on, `[ ]` when it is off. A press switches the tab for this project and opens or closes its pane
 at once; session start and `/harness` open only the tabs that are on. The Rigger pane is always on.
+In the desktop app the transcript's right-click menu holds the same rows (`[x] Issues`, `[ ] Inbox`, ...)
+beside the menu's other rows, and a press there does the same. Closing a pane with its close mark only
+hides it: the tab stays on and its row says `[x] Inbox (closed)`; a press on that row, or `/harness`,
+opens it again and keeps it on. Which panes are open comes from the engine (`$.ui.panes()`); when it
+cannot list them, every tab counts as open.
 
 - **Where the choice is kept:** the plugin's own store (`$.store`, in the Claude Code config dir,
   outside any repository), key `tabs:<project>`, value `{ "on": [ids], "off": [ids] }`: the tab ids
@@ -172,8 +177,8 @@ Each row shows `#N`, the title (cut at 60 characters) and the state.
   call to a server other than the session app, and each pattern is proven against planted lines. The
   one exception is the module tab's source: one MCP call and one program start in
   `hooks/module-tabs.ts`, at one spelling each, allowed there and nowhere else. The [inbox](#inbox) has
-  the only others: its `get_session` call to the desktop app's `ccd_session_mgmt` server (in
-  `hooks/inbox/writer.ts`; no other tool of that server) and the system opener (`open`,
+  the only others: its `get_session` and `list_sessions` calls to the desktop app's `ccd_session_mgmt`
+  server (in `hooks/inbox/writer.ts`; no other tool of that server) and the system opener (`open`,
   `cmd /c start`, `xdg-open`) with `uname -s` (in `hooks/inbox/reader.ts`), each at one spelling,
   with the server, the tool and the opener's argument vectors pinned. The tests also check
   every command the plugin starts against that list.
@@ -323,12 +328,16 @@ session reads the others'. `/inbox` opens the pane.
 - **Where:** `<config dir>/rigger-panel/inbox/<session id>.json`, one file per session, replaced by its
   next entry. `$.fs` cannot delete, so an entry is closed by `<session id>.closed`, which holds a time:
   every entry written before it is hidden, the session's next entry shows again.
-- **What closes it:** a prompt you send in that session (typed, from the desktop app, from a phone or
-  a click on the app's own buttons; a message from another session, a task notification, a schedule
-  or a plugin does not), the next tool call after an approval entry or a turn that ends after it, and
-  `Close` on the item.
+- **What closes it:** the next prompt that session receives from you (typed, from the desktop app,
+  from a phone or a click on the app's own buttons) or from another session (a message, a
+  coordinating session's delivery or hand-off; a task notification, a schedule, a channel or a plugin
+  does not), the next tool call after an approval entry or a turn that ends after it, and `Close` on
+  the item. A session waiting in a permission dialog starts no new turn, so its approval entry stays.
 - **What is shown:** the other sessions' open entries younger than 7 days, oldest first, each with
   its title, folder, age, text, question, `Open` and `Close`; `Nothing waiting.` when there are none.
+  An entry of a session the desktop app lists as archived is hidden (`list_sessions` on
+  `ccd_session_mgmt`, bounded at 5 seconds, asked at most once in 30 seconds and only while an entry
+  would show); when the app does not answer, every entry shows.
   The folder is read again every 5 seconds. While anything waits, a band above the prompt says
   `📥 N waiting · oldest: <title>, <age>` with an `Inbox` button.
 - **`Open`:** the desktop app draws a non-https link as plain text, so the entry's session link
